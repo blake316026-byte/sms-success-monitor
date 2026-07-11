@@ -1,0 +1,21 @@
+{
+  "name": "sms-success-monitor-windows",
+  "version": "0.2.0",
+  "description": "Windows client for multi-platform SMS success-rate monitoring",
+  "main": "src/main.mjs",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build:ui": "node scripts/build-ui.mjs",
+    "start": "npm run build:ui && electron .",
+    "test": "node ../shared/test-shared.mjs && node scripts/check-package.mjs",
+    "package:windows": "npm run build:ui && node scripts/package-windows.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.0.2",
+    "archiver": "8.0.0",
+    "electron": "43.1.0",
+    "esbuild": "0.28.1",
+    "lucide": "1.24.0"
+  }
+}

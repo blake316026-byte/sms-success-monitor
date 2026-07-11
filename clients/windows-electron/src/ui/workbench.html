@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短信后台工作台</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="workbench-body">
+    <header class="workbench-shell">
+      <div class="tab-strip" id="tabs" role="tablist"></div>
+      <div class="browser-toolbar">
+        <button class="icon-button" id="back" title="后退" aria-label="后退"><i data-lucide="chevron-left"></i></button>
+        <button class="icon-button" id="forward" title="前进" aria-label="前进"><i data-lucide="chevron-right"></i></button>
+        <button class="icon-button" id="reload" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
+        <form id="address-form" class="address-form">
+          <i data-lucide="lock-keyhole"></i>
+          <input id="address" aria-label="后台地址" autocomplete="off" spellcheck="false">
+        </form>
+        <button class="icon-button" id="scan" title="扫描当前后台" aria-label="扫描当前后台"><i data-lucide="radar"></i></button>
+        <button class="icon-button" id="detail" title="监控总览" aria-label="监控总览"><i data-lucide="table-properties"></i></button>
+        <button class="icon-button" id="add" title="新增独立页面" aria-label="新增独立页面"><i data-lucide="plus"></i></button>
+        <button class="icon-button" id="close-page" title="关闭自定义页面" aria-label="关闭自定义页面"><i data-lucide="x"></i></button>
+      </div>
+    </header>
+
+    <dialog id="add-dialog" class="page-dialog">
+      <form method="dialog" id="add-form">
+        <div class="dialog-heading">
+          <h2>新增独立后台页面</h2>
+          <button type="button" class="icon-button" id="cancel-add" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <label>页面名称<input id="page-name" required placeholder="例如：代理 A"></label>
+        <label>后台地址<input id="page-url" required placeholder="https://example.com/login"></label>
+        <p class="dialog-error" id="dialog-error"></p>
+        <div class="dialog-actions">
+          <button type="button" class="secondary-button" id="cancel-add-bottom">取消</button>
+          <button type="submit" class="primary-button">创建页面</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="workbench.js"></script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+.build/
+.build-arm64/
+.build-x86_64/
+dist/
+.DS_Store
+clients/windows-electron/build/
+clients/windows-electron/node_modules/
+clients/windows-electron/.package-output/
+clients/android/.gradle/
+clients/android/app/build/
+clients/android/local.properties

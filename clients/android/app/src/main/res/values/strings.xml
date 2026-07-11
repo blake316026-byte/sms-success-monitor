@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">短信成功率监控</string>
+    <string name="monitor_channel">短信监控运行状态</string>
+    <string name="alert_channel">短信成功率报警</string>
+</resources>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短信监控</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="widget-body">
+    <main class="widget" id="widget">
+      <div class="widget-header drag-zone">
+        <i data-lucide="radio-tower"></i>
+        <strong id="widget-name">启动中</strong>
+        <span id="widget-badge">等待</span>
+      </div>
+      <button class="gauge" id="open-detail" aria-label="打开监控总览">
+        <div class="gauge-center">
+          <strong id="widget-value">启动中</strong>
+          <span id="widget-sample">等待首次扫描</span>
+        </div>
+      </button>
+      <button class="widget-footer" id="open-detail-footer">
+        <i id="widget-footer-icon" data-lucide="clock"></i>
+        <span id="widget-footer-text">正在建立连接</span>
+      </button>
+    </main>
+    <script src="widget.js"></script>
+  </body>
+</html>
