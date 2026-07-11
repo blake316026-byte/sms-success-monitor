@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短信监控总览</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="detail-body">
+    <header class="detail-header">
+      <div><h1>全部后台</h1><p id="coverage">等待首次扫描</p></div>
+      <div class="summary-strip">
+        <span class="summary-alert" id="alert-count">报警 0</span>
+        <span class="summary-healthy" id="healthy-count">正常 0</span>
+        <span class="summary-auth" id="auth-count">需登录 0</span>
+        <span class="summary-error" id="error-count">异常 0</span>
+      </div>
+    </header>
+    <div class="detail-table-wrap">
+      <table class="detail-table">
+        <thead><tr><th>后台</th><th>状态</th><th>成功率</th><th>成功 / 样本</th><th>未成功</th><th>最近扫描</th></tr></thead>
+        <tbody id="module-rows"></tbody>
+      </table>
+    </div>
+    <footer class="detail-footer">
+      <div><strong id="selected-name">--</strong><p id="selected-detail">--</p></div>
+      <div class="detail-actions">
+        <button class="icon-button" id="scan-all" title="立即扫描全部后台"><i data-lucide="refresh-ccw"></i></button>
+        <button class="icon-button" id="scan-selected" title="扫描选中后台"><i data-lucide="refresh-cw"></i></button>
+        <button class="icon-button" id="open-selected" title="打开选中后台"><i data-lucide="globe"></i></button>
+      </div>
+    </footer>
+    <script src="detail.js"></script>
+  </body>
+</html>
