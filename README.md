@@ -4,6 +4,16 @@
 
 固定后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`。
 
+## 立即下载
+
+<p align="center">
+  <a href="https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-macOS-universal.zip"><img alt="下载 macOS 客户端" src="https://img.shields.io/badge/下载-macOS-171A21?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
+  <a href="https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Windows-x64.zip"><img alt="下载 Windows 客户端" src="https://img.shields.io/badge/下载-Windows-1976D2?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
+  <a href="https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Android.apk"><img alt="下载 Android 客户端" src="https://img.shields.io/badge/下载-Android-00A66C?style=for-the-badge&amp;logo=android&amp;logoColor=white"></a>
+</p>
+
+macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
+
 ## 固定监控口径
 
 - 数据源：每个后台自身域名下的 `/api/sms_record/page`
@@ -20,6 +30,7 @@
 ### macOS
 
 - 原生 Swift/AppKit + WebKit 客户端
+- Universal 2 架构，同时支持 Apple Silicon 和 Intel Mac
 - 9 个固定后台使用独立持久化资料库，可同时保持不同账号登录
 - 支持额外独立页面、标准复制粘贴快捷键、总览表、常驻最上层浮窗和本机通知
 - 红色报警时显示呼吸光、闪烁和抖动；右键浮窗可扫描、打开工作台、静音或退出
@@ -44,7 +55,7 @@
 ## 已打包产物
 
 ```text
-dist/macos/SMS-Success-Monitor-macOS-arm64.zip
+dist/macos/SMS-Success-Monitor-macOS-universal.zip
 dist/windows/SMS-Success-Monitor-Windows-x64.zip
 dist/android/SMS-Success-Monitor-Android.apk
 ```
