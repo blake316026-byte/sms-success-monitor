@@ -1,0 +1,76 @@
+name: Publish client release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: clients/windows-electron/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefix clients/windows-electron
+      - name: Run shared checks
+        run: npm test --prefix clients/windows-electron
+      - name: Package Windows client
+        run: npm run package:windows --prefix clients/windows-electron
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-client
+          path: dist/windows/SMS-Success-Monitor-Windows-x64.zip
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-client
+          path: release-assets
+      - name: Add verified macOS and Android clients
+        run: |
+          cp release-seed/SMS-Success-Monitor-macOS-universal.zip release-assets/
+          cp release-seed/SMS-Success-Monitor-Android.apk release-assets/
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum SMS-Success-Monitor-* > SHA256SUMS.txt
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## 三端客户端下载
+
+          - **macOS**：Universal 2，同时支持 Apple Silicon 和 Intel Mac
+          - **Windows**：64 位 Windows 10/11，完整解压 ZIP 后运行
+          - **Android**：Android 8.0 及以上，安装 APK 后授权通知和悬浮窗
+
+          每个平台每分钟扫描最新 200 条短信，只有 `SUCCESS` 计为成功；成功率低于 50% 报警，多个报警时展示最低值，未登录平台不覆盖有效监控结果。
+
+          这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
+          NOTES
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          release-assets/SMS-Success-Monitor-macOS-universal.zip
+          release-assets/SMS-Success-Monitor-Windows-x64.zip
+          release-assets/SMS-Success-Monitor-Android.apk
+          release-assets/SHA256SUMS.txt
+          --repo "${GITHUB_REPOSITORY}"
+          --verify-tag
+          --title "SMS Success Monitor ${GITHUB_REF_NAME}"
+          --notes-file release-notes.md

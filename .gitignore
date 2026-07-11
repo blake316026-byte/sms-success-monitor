@@ -1,4 +1,5 @@
 .build/
+.build-arm64/
 .build-x86_64/
 dist/
 .DS_Store
