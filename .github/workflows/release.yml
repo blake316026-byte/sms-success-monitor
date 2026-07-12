@@ -27,11 +27,21 @@ jobs:
         run: npm ci --prefix clients/windows-electron
       - name: Run shared checks
         run: npm test --prefix clients/windows-electron
-      - name: Verify local OCR and TOTP runtime
-        timeout-minutes: 3
-        run: npm run test:local-automation --prefix clients/windows-electron
       - name: Package Windows client
         run: npm run package:windows --prefix clients/windows-electron
+      - name: Verify packaged Windows DPAPI, OCR and TOTP runtime
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $checkRoot = Join-Path $PWD "dist/windows-self-test"
+          $resultPath = Join-Path $checkRoot "result.txt"
+          Expand-Archive -Path "dist/windows/SMS-Success-Monitor-Windows-x64.zip" -DestinationPath $checkRoot -Force
+          $exePath = Join-Path $checkRoot "SMS Success Monitor/SMS Success Monitor.exe"
+          $env:SMS_MONITOR_LOCAL_AUTOMATION_CHECK = "1"
+          $env:SMS_MONITOR_LOCAL_AUTOMATION_RESULT = $resultPath
+          $process = Start-Process -FilePath $exePath -Wait -PassThru
+          if (Test-Path $resultPath) { Get-Content $resultPath }
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-client
@@ -68,7 +78,7 @@ jobs:
 
           同一后台连续两次扫描异常时，客户端会自动重载该后台连接并立即重试，不清除登录状态，也不影响其他后台。
 
-          **v0.3.1 自动登录**：用户可在每个后台的钥匙图标中，把账号、密码和可选 Google 密钥保存到设备系统安全存储。Token 失效后，客户端在本地识别图片验证码、生成 Google 动态码并自动获取新 Token；所有凭据与 Token 均不上传数据库。
+          **v0.3.2 自动登录**：用户可在每个后台的钥匙图标中，把账号、密码和可选 Google 密钥保存到设备系统安全存储。Token 失效后，客户端在本地识别图片验证码、生成 Google 动态码并自动获取新 Token；所有凭据与 Token 均不上传数据库。
 
           这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
           NOTES

@@ -169,6 +169,55 @@ async function callLocalAutomation(method, ...args) {
   ]);
 }
 
+async function performPackagedLocalAutomationCheck() {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Windows DPAPI safeStorage is unavailable');
+  }
+  const encrypted = safeStorage.encryptString('local-only');
+  if (safeStorage.decryptString(encrypted) !== 'local-only') {
+    throw new Error('Windows DPAPI safeStorage round trip failed');
+  }
+
+  await startLocalAutomationRuntime();
+  const fixture = await fsPromises.readFile(
+    path.join(sharedRoot, 'auto-login/fixtures/nRVr.jpg')
+  );
+  const captcha = await callLocalAutomation(
+    'recognize',
+    `data:image/jpeg;base64,${fixture.toString('base64')}`
+  );
+  const totp = await callLocalAutomation(
+    'generateTotp',
+    'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
+    59_000
+  );
+  const totpUri = await callLocalAutomation(
+    'generateTotp',
+    'otpauth://totp/SMSMonitor?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
+    59_000
+  );
+  if (captcha !== 'nRVr' || totp !== '287082' || totpUri !== '287082') {
+    throw new Error('Packaged local OCR or TOTP self-test returned an unexpected result');
+  }
+}
+
+async function runPackagedLocalAutomationCheck() {
+  let timeout;
+  try {
+    await Promise.race([
+      performPackagedLocalAutomationCheck(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Packaged Windows local automation check exceeded 90 seconds')),
+          90_000
+        );
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function profileFor(id) {
   const profile = credentialProfiles[id];
   return profile && typeof profile === 'object' ? profile : null;
@@ -1091,6 +1140,24 @@ function registerIPC() {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.local.sms-success-monitor');
+  if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
+    const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
+    let exitCode = 0;
+    let message = 'PASS: packaged Windows DPAPI, OCR and TOTP checks passed';
+    try {
+      await runPackagedLocalAutomationCheck();
+    } catch (error) {
+      exitCode = 1;
+      message = `FAIL: ${error.message}`;
+    }
+    if (resultPath) {
+      try { await fsPromises.writeFile(resultPath, `${message}\n`, 'utf8'); } catch (_) {}
+    }
+    localAutomationWindow?.destroy();
+    localAutomationServer?.close();
+    app.exit(exitCode);
+    return;
+  }
   if (process.platform === 'win32' && app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   }
