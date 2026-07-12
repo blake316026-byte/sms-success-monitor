@@ -17,7 +17,9 @@ import {
   isAlert,
   percentageText,
   SAMPLE_LIMIT,
+  SCAN_FAILURE_RELOAD_THRESHOLD,
   SCAN_INTERVAL_MS,
+  shouldReloadAfterFailure,
   summarize
 } from '../build/monitor-core.mjs';
 
@@ -51,6 +53,7 @@ for (const module of modules) {
     scannedAt: null,
     nextScanAt: null,
     scanning: false,
+    consecutiveScanFailures: 0,
     needsImmediateScan: true
   });
 }
@@ -107,15 +110,25 @@ function createRemotePage(page) {
   view.webContents.on('did-finish-load', () => handlePageFinished(page.id));
   view.webContents.on('did-navigate', () => broadcastSnapshot());
   view.webContents.on('did-navigate-in-page', () => broadcastSnapshot());
-  view.webContents.on('did-fail-load', (_event, code, description, validatedURL, isMainFrame) => {
-    if (!isMainFrame || code === -3 || !page.monitored) return;
+  view.webContents.on('render-process-gone', () => {
+    if (quitting || !page.monitored) return;
     updateModule(page.id, {
       status: 'error',
-      message: `页面加载失败：${description}`,
+      message: '平台页面进程已重启，正在恢复。',
+      scanning: false,
+      consecutiveScanFailures: 0,
+      needsImmediateScan: true,
       scannedAt: Date.now(),
       nextScanAt: Date.now() + SCAN_INTERVAL_MS
     });
-    if (!validatedURL) view.webContents.loadURL(page.url);
+    setTimeout(() => {
+      if (!view.webContents.isDestroyed()) view.webContents.reload();
+    }, 500);
+  });
+  view.webContents.on('did-fail-load', (_event, code, description, validatedURL, isMainFrame) => {
+    if (!isMainFrame || code === -3 || !page.monitored) return;
+    const recovering = handleScanFailure(page.id, `页面加载失败：${description}`);
+    if (!recovering && !validatedURL) view.webContents.loadURL(page.url);
   });
   pages.set(page.id, { ...page, view });
   view.webContents.loadURL(page.url);
@@ -135,6 +148,7 @@ async function handlePageFinished(id) {
       status: 'auth',
       message: '请完成平台登录',
       metrics: null,
+      consecutiveScanFailures: 0,
       needsImmediateScan: true,
       nextScanAt: Date.now() + SCAN_INTERVAL_MS
     });
@@ -156,6 +170,33 @@ function updateModule(id, changes, changedId = id) {
   broadcastSnapshot(changedId);
 }
 
+function handleScanFailure(id, message) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page) return false;
+
+  state.scanning = false;
+  state.consecutiveScanFailures += 1;
+  state.status = 'error';
+  state.message = message;
+  state.scannedAt = Date.now();
+  state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
+
+  if (shouldReloadAfterFailure(
+    state.consecutiveScanFailures,
+    SCAN_FAILURE_RELOAD_THRESHOLD
+  )) {
+    state.consecutiveScanFailures = 0;
+    state.needsImmediateScan = true;
+    state.message = `${message}；正在自动重载后台连接。`;
+    page.view.webContents.reload();
+    broadcastSnapshot(id);
+    return true;
+  }
+  broadcastSnapshot(id);
+  return false;
+}
+
 async function scanModule(id) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
@@ -167,6 +208,7 @@ async function scanModule(id) {
       status: 'auth',
       message: '请完成平台登录',
       metrics: null,
+      consecutiveScanFailures: 0,
       needsImmediateScan: true,
       nextScanAt: Date.now() + SCAN_INTERVAL_MS
     });
@@ -202,6 +244,7 @@ async function scanModule(id) {
         status: 'auth',
         message: result.message || '平台登录已失效',
         metrics: null,
+        consecutiveScanFailures: 0,
         needsImmediateScan: true
       });
     } else if (result.kind === 'ok') {
@@ -211,24 +254,17 @@ async function scanModule(id) {
         status: isAlert(metrics, ALERT_THRESHOLD) ? 'alert' : 'healthy',
         message: isAlert(metrics, ALERT_THRESHOLD) ? '成功率低于 50%' : '成功率正常',
         metrics,
+        consecutiveScanFailures: 0,
         scannedAt: Date.now(),
         nextScanAt: Date.now() + SCAN_INTERVAL_MS
       });
     } else {
-      Object.assign(state, {
-        status: 'error',
-        message: result.message || '短信记录接口扫描失败',
-        scannedAt: Date.now()
-      });
+      handleScanFailure(id, result.message || '短信记录接口扫描失败');
+      return;
     }
   } catch (error) {
-    Object.assign(state, {
-      scanning: false,
-      status: 'error',
-      message: `扫描失败：${error.message}`,
-      scannedAt: Date.now(),
-      nextScanAt: Date.now() + SCAN_INTERVAL_MS
-    });
+    handleScanFailure(id, `扫描失败：${error.message}`);
+    return;
   }
   broadcastSnapshot(id);
   maybeNotify(id);

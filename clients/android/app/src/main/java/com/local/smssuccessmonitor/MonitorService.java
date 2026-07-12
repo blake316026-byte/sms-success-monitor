@@ -99,6 +99,7 @@ public final class MonitorService extends Service {
     private static final long SCAN_INTERVAL_MS = 60_000L;
     private static final long SCAN_POLL_MS = 400L;
     private static final int MAX_SCAN_POLLS = 140;
+    private static final int SCAN_FAILURE_RELOAD_THRESHOLD = 2;
 
     private final IBinder binder = new LocalBinder();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -217,12 +218,7 @@ public final class MonitorService extends Service {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (!request.isForMainFrame()) return;
-                page.state.scanning = false;
-                page.state.status = "error";
-                page.state.message = "页面加载失败：" + error.getDescription();
-                page.state.scannedAt = System.currentTimeMillis();
-                page.state.nextScanAt = page.state.scannedAt + SCAN_INTERVAL_MS;
-                refreshOutputs();
+                finishScanError(page, "页面加载失败：" + error.getDescription());
             }
         });
         webView.loadUrl(module.url);
@@ -407,6 +403,7 @@ public final class MonitorService extends Service {
         String kind = result.optString("kind", "error");
 
         if ("auth".equals(kind)) {
+            page.state.consecutiveScanFailures = 0;
             markAuthenticationRequired(page, result.optString("message", "平台登录已失效"));
             return;
         }
@@ -429,6 +426,7 @@ public final class MonitorService extends Service {
         }
 
         page.state.hasMetrics = true;
+        page.state.consecutiveScanFailures = 0;
         page.state.sampleCount = sampleCount;
         page.state.successCount = successCount;
         page.state.nonSuccessCount = sampleCount - successCount;
@@ -444,17 +442,26 @@ public final class MonitorService extends Service {
     private void finishScanError(ManagedPage page, String message) {
         page.state.scanning = false;
         page.scanToken = null;
+        page.state.consecutiveScanFailures += 1;
         page.state.status = "error";
         page.state.message = message;
         page.state.scannedAt = System.currentTimeMillis();
         page.state.nextScanAt = page.state.scannedAt + SCAN_INTERVAL_MS;
+        boolean shouldReload = page.state.consecutiveScanFailures >= SCAN_FAILURE_RELOAD_THRESHOLD;
+        if (shouldReload) {
+            page.state.consecutiveScanFailures = 0;
+            page.state.needsImmediateScan = true;
+            page.state.message = message + "；正在自动重载后台连接。";
+        }
         alertSignatures.remove(page.state.module.id);
         refreshOutputs();
+        if (shouldReload) mainHandler.post(page.webView::reload);
     }
 
     private void markAuthenticationRequired(ManagedPage page, String message) {
         page.state.scanning = false;
         page.scanToken = null;
+        page.state.consecutiveScanFailures = 0;
         page.state.status = "auth";
         page.state.message = message;
         page.state.clearMetrics();

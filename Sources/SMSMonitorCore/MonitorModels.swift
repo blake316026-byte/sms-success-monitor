@@ -1,5 +1,16 @@
 import Foundation
 
+public enum ScanRecoveryPolicy {
+  public static let defaultFailureThreshold = 2
+
+  public static func shouldReload(
+    consecutiveFailures: Int,
+    threshold: Int = defaultFailureThreshold
+  ) -> Bool {
+    threshold > 0 && consecutiveFailures >= threshold
+  }
+}
+
 public struct MonitorConfiguration: Equatable, Sendable {
   public let id: String
   public let displayName: String
