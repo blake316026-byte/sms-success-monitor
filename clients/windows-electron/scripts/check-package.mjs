@@ -28,4 +28,10 @@ assert.match(mainSource, /settings:set-sample-limit/, 'main process exposes loca
 assert.match(mainSource, /monitor-settings\.json/, 'sample settings persist in the local user directory');
 assert.match(preloadSource, /setSampleLimit/, 'preload exposes the sample setting command');
 assert.match(workbenchSource, /id="sample-limit"/, 'workbench renders the sample count input');
+assert.match(mainSource, /workbench:zoom/, 'main process exposes workbench zoom controls');
+assert.match(mainSource, /workbenchZoomFactor/, 'workbench zoom persists in local settings');
+assert.match(preloadSource, /changeWorkbenchZoom/, 'preload exposes workbench zoom commands');
+assert.match(workbenchSource, /id="zoom-out"/, 'workbench renders zoom out');
+assert.match(workbenchSource, /id="zoom-reset"/, 'workbench renders the zoom percentage');
+assert.match(workbenchSource, /id="zoom-in"/, 'workbench renders zoom in');
 console.log('Windows Electron package structure checks passed');

@@ -22,6 +22,11 @@
           <input id="sample-limit" type="number" min="10" max="500" step="10" aria-label="样本条数">
           <span>条</span>
         </label>
+        <div class="zoom-control" role="group" aria-label="后台页面缩放">
+          <button id="zoom-out" title="缩小后台页面（Ctrl -）" aria-label="缩小后台页面"><i data-lucide="zoom-out"></i></button>
+          <button class="zoom-value" id="zoom-reset" title="恢复 100%（Ctrl 0）" aria-label="恢复实际大小">100%</button>
+          <button id="zoom-in" title="放大后台页面（Ctrl +）" aria-label="放大后台页面"><i data-lucide="zoom-in"></i></button>
+        </div>
         <button class="icon-button" id="scan" title="扫描当前后台" aria-label="扫描当前后台"><i data-lucide="radar"></i></button>
         <button class="icon-button" id="detail" title="监控总览" aria-label="监控总览"><i data-lucide="table-properties"></i></button>
         <button class="icon-button" id="credentials" title="自动登录设置" aria-label="自动登录设置"><i data-lucide="key-round"></i></button>

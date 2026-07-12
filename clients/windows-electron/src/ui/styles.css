@@ -130,6 +130,32 @@ button { cursor: default; }
 .sample-limit-control input { width: 48px; min-width: 0; border: 0; outline: 0; color: #303744; background: transparent; text-align: right; }
 .sample-limit-control span { font-size: 11px; }
 
+.zoom-control {
+  display: inline-grid;
+  grid-template-columns: 32px 48px 32px;
+  flex: 0 0 auto;
+  height: 36px;
+  overflow: hidden;
+  border: 1px solid #cfd5de;
+  border-radius: 6px;
+  background: #fff;
+}
+.zoom-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: #394150;
+  background: #fff;
+}
+.zoom-control button + button { border-left: 1px solid #e0e4ea; }
+.zoom-control button:hover:not(:disabled) { background: #f3f6f9; }
+.zoom-control button:disabled { opacity: 0.36; }
+.zoom-control svg { width: 15px; height: 15px; }
+.zoom-control .zoom-value { color: #596273; font: 600 11px/1 "Consolas", "Segoe UI", sans-serif; }
+
 .page-dialog {
   width: min(480px, calc(100vw - 40px));
   border: 1px solid #cfd5de;

@@ -27,6 +27,13 @@ import {
   shouldReloadAfterFailure,
   summarize
 } from '../build/monitor-core.mjs';
+import {
+  DEFAULT_WORKBENCH_ZOOM_FACTOR,
+  MAX_WORKBENCH_ZOOM_FACTOR,
+  MIN_WORKBENCH_ZOOM_FACTOR,
+  nextWorkbenchZoomFactor,
+  normalizeWorkbenchZoomFactor
+} from './workbench-zoom.mjs';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.resolve(currentDirectory, '..');
@@ -56,6 +63,7 @@ let credentialsPath;
 let settingsPath;
 let credentialProfiles = {};
 let sampleLimit = SAMPLE_LIMIT;
+let workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
 let localAutomationServer;
 let localAutomationWindow;
 let localAutomationReady;
@@ -182,6 +190,25 @@ async function performPackagedLocalAutomationCheck() {
   if (safeStorage.decryptString(encrypted) !== 'local-only') {
     throw new Error('Windows DPAPI safeStorage round trip failed');
   }
+  if (
+    nextWorkbenchZoomFactor(1, 'in') !== 1.1
+    || nextWorkbenchZoomFactor(1, 'out') !== 0.9
+    || nextWorkbenchZoomFactor(1.5, 'reset') !== 1
+  ) {
+    throw new Error('Windows workbench zoom runtime check failed');
+  }
+  const zoomCheckView = new WebContentsView({
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  try {
+    await zoomCheckView.webContents.loadURL('about:blank');
+    zoomCheckView.webContents.setZoomFactor(1.25);
+    if (Math.abs(zoomCheckView.webContents.getZoomFactor() - 1.25) > 0.001) {
+      throw new Error('Windows WebContentsView zoom factor did not apply');
+    }
+  } finally {
+    zoomCheckView.webContents.close();
+  }
 
   await startLocalAutomationRuntime();
   const fixture = await fsPromises.readFile(
@@ -267,8 +294,10 @@ async function loadMonitorSettings() {
   try {
     const stored = JSON.parse(await fsPromises.readFile(settingsPath, 'utf8'));
     sampleLimit = normalizeSampleLimit(stored?.sampleLimit);
+    workbenchZoomFactor = normalizeWorkbenchZoomFactor(stored?.workbenchZoomFactor);
   } catch (_) {
     sampleLimit = SAMPLE_LIMIT;
+    workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
   }
 }
 
@@ -276,7 +305,7 @@ async function saveMonitorSettings() {
   await fsPromises.mkdir(path.dirname(settingsPath), { recursive: true });
   await fsPromises.writeFile(
     settingsPath,
-    `${JSON.stringify({ version: 1, sampleLimit }, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, sampleLimit, workbenchZoomFactor }, null, 2)}\n`,
     { mode: 0o600 }
   );
 }
@@ -324,6 +353,35 @@ function isConfiguredOrigin(module, value) {
   }
 }
 
+function applyWorkbenchZoom() {
+  for (const page of pages.values()) {
+    if (!page.view.webContents.isDestroyed()) {
+      page.view.webContents.setZoomFactor(workbenchZoomFactor);
+    }
+  }
+}
+
+async function changeWorkbenchZoom(direction) {
+  const nextFactor = nextWorkbenchZoomFactor(workbenchZoomFactor, direction);
+  if (nextFactor === workbenchZoomFactor) {
+    return { ok: true, zoomPercent: Math.round(workbenchZoomFactor * 100) };
+  }
+
+  const previousFactor = workbenchZoomFactor;
+  workbenchZoomFactor = nextFactor;
+  applyWorkbenchZoom();
+  broadcastSnapshot();
+  try {
+    await saveMonitorSettings();
+  } catch (error) {
+    workbenchZoomFactor = previousFactor;
+    applyWorkbenchZoom();
+    broadcastSnapshot();
+    return { ok: false, message: `无法保存缩放设置：${error.message}` };
+  }
+  return { ok: true, zoomPercent: Math.round(workbenchZoomFactor * 100) };
+}
+
 function createRemotePage(page) {
   const view = new WebContentsView({
     webPreferences: {
@@ -342,9 +400,15 @@ function createRemotePage(page) {
     view.webContents.loadURL(url);
     return { action: 'deny' };
   });
-  view.webContents.on('did-finish-load', () => handlePageFinished(page.id));
+  view.webContents.on('did-finish-load', () => {
+    view.webContents.setZoomFactor(workbenchZoomFactor);
+    handlePageFinished(page.id);
+  });
   view.webContents.on('did-navigate', () => broadcastSnapshot());
   view.webContents.on('did-navigate-in-page', () => broadcastSnapshot());
+  view.webContents.on('zoom-changed', (_event, direction) => {
+    void changeWorkbenchZoom(direction);
+  });
   view.webContents.on('render-process-gone', () => {
     if (quitting || !page.monitored) return;
     updateModule(page.id, {
@@ -828,6 +892,9 @@ function buildSnapshot() {
     sampleLimit,
     minimumSampleLimit: MIN_SAMPLE_LIMIT,
     maximumSampleLimit: MAX_SAMPLE_LIMIT,
+    workbenchZoomPercent: Math.round(workbenchZoomFactor * 100),
+    minimumWorkbenchZoomPercent: Math.round(MIN_WORKBENCH_ZOOM_FACTOR * 100),
+    maximumWorkbenchZoomPercent: Math.round(MAX_WORKBENCH_ZOOM_FACTOR * 100),
     summary: {
       alertCount: summary.alertCount,
       healthyCount: summary.healthyCount,
@@ -992,6 +1059,26 @@ function createApplicationMenu() {
       ]
     },
     {
+      label: '查看',
+      submenu: [
+        {
+          label: '放大后台页面',
+          accelerator: 'CmdOrCtrl+=',
+          click: () => { void changeWorkbenchZoom('in'); }
+        },
+        {
+          label: '缩小后台页面',
+          accelerator: 'CmdOrCtrl+-',
+          click: () => { void changeWorkbenchZoom('out'); }
+        },
+        {
+          label: '恢复实际大小',
+          accelerator: 'CmdOrCtrl+0',
+          click: () => { void changeWorkbenchZoom('reset'); }
+        }
+      ]
+    },
+    {
       label: '窗口',
       submenu: [
         { role: 'minimize', label: '最小化' },
@@ -1142,6 +1229,12 @@ function registerIPC() {
     modules.forEach((module) => scanModule(module.id));
     return { ok: true, sampleLimit };
   });
+  ipcMain.handle('workbench:zoom', (_event, direction) => {
+    if (!['in', 'out', 'reset'].includes(direction)) {
+      return { ok: false, message: '无法识别缩放操作' };
+    }
+    return changeWorkbenchZoom(direction);
+  });
   ipcMain.handle('credentials:get', (_event, id) => {
     const page = pages.get(id);
     if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
@@ -1207,7 +1300,7 @@ app.whenReady().then(async () => {
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
-    let message = 'PASS: packaged Windows DPAPI, OCR and TOTP checks passed';
+    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP and workbench zoom checks passed';
     try {
       await runPackagedLocalAutomationCheck();
     } catch (error) {

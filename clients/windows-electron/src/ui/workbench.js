@@ -15,6 +15,8 @@ import {
   TriangleAlert,
   WifiOff,
   X,
+  ZoomIn,
+  ZoomOut,
   createIcons
 } from 'lucide';
 
@@ -34,7 +36,9 @@ const iconSet = {
   TableProperties,
   TriangleAlert,
   WifiOff,
-  X
+  X,
+  ZoomIn,
+  ZoomOut
 };
 let snapshot;
 
@@ -46,6 +50,9 @@ const reloadButton = document.querySelector('#reload');
 const closeButton = document.querySelector('#close-page');
 const credentialsButton = document.querySelector('#credentials');
 const sampleLimitInput = document.querySelector('#sample-limit');
+const zoomOutButton = document.querySelector('#zoom-out');
+const zoomResetButton = document.querySelector('#zoom-reset');
+const zoomInButton = document.querySelector('#zoom-in');
 const dialog = document.querySelector('#add-dialog');
 const pageName = document.querySelector('#page-name');
 const pageURL = document.querySelector('#page-url');
@@ -104,6 +111,9 @@ function render() {
     sampleLimitInput.min = String(snapshot.minimumSampleLimit);
     sampleLimitInput.max = String(snapshot.maximumSampleLimit);
   }
+  zoomResetButton.textContent = `${snapshot.workbenchZoomPercent}%`;
+  zoomOutButton.disabled = snapshot.workbenchZoomPercent <= snapshot.minimumWorkbenchZoomPercent;
+  zoomInButton.disabled = snapshot.workbenchZoomPercent >= snapshot.maximumWorkbenchZoomPercent;
   createIcons({ icons: iconSet, attrs: { 'stroke-width': 2 } });
 }
 
@@ -143,6 +153,9 @@ sampleLimitInput.addEventListener('change', async () => {
   sampleLimitInput.setCustomValidity('');
   sampleLimitInput.value = String(result.sampleLimit);
 });
+zoomOutButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('out'));
+zoomResetButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('reset'));
+zoomInButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('in'));
 document.querySelector('#scan').addEventListener('click', () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
   window.smsApi.scan(selected?.monitored ? selected.id : null);

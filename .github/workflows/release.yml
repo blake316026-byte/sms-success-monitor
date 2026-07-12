@@ -29,7 +29,7 @@ jobs:
         run: npm test --prefix clients/windows-electron
       - name: Package Windows client
         run: npm run package:windows --prefix clients/windows-electron
-      - name: Verify packaged Windows DPAPI, OCR and TOTP runtime
+      - name: Verify packaged Windows DPAPI, OCR, TOTP and workbench zoom runtime
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -81,6 +81,8 @@ jobs:
           **v0.3.2 自动登录**：用户可在每个后台的钥匙图标中，把账号、密码和可选 Google 密钥保存到设备系统安全存储。Token 失效后，客户端在本地识别图片验证码、生成 Google 动态码并自动获取新 Token；所有凭据与 Token 均不上传数据库。
 
           **v0.3.3 样本设置**：macOS、Windows 和 Android 均可人工设置样本条数，客户端会自动翻页取得完整样本，并在修改后立即重新扫描全部已登录后台。
+
+          **v0.3.4 Windows 工作台缩放**：Windows 后台页面支持 50%–200% 缩放，可使用工作台工具栏、`Ctrl +`、`Ctrl -`、`Ctrl 0` 或 `Ctrl + 鼠标滚轮`；缩放比例只保存在当前设备。
 
           这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
           NOTES
