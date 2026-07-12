@@ -88,6 +88,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   WKUIDelegate
 {
   let window: NSWindow
+  var onAutoLoginSettings: ((String) -> Void)?
 
   private enum ToolbarIdentifier {
     static let toolbar = NSToolbar.Identifier("SMSMonitorPlatformToolbar")
@@ -95,6 +96,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     static let forward = NSToolbarItem.Identifier("SMSMonitorPlatformForward")
     static let reload = NSToolbarItem.Identifier("SMSMonitorPlatformReload")
     static let address = NSToolbarItem.Identifier("SMSMonitorPlatformAddress")
+    static let autoLogin = NSToolbarItem.Identifier("SMSMonitorPlatformAutoLogin")
     static let addPage = NSToolbarItem.Identifier("SMSMonitorPlatformAddPage")
     static let closePage = NSToolbarItem.Identifier("SMSMonitorPlatformClosePage")
   }
@@ -109,6 +111,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   private var backItem: NSToolbarItem?
   private var forwardItem: NSToolbarItem?
   private var reloadItem: NSToolbarItem?
+  private var autoLoginItem: NSToolbarItem?
   private var closePageItem: NSToolbarItem?
 
   init(monitoredPages: [MonitoredPlatformPage]) {
@@ -282,6 +285,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     backItem?.isEnabled = page.webView.canGoBack
     forwardItem?.isEnabled = page.webView.canGoForward
     closePageItem?.isEnabled = !page.isMonitored
+    autoLoginItem?.isEnabled = page.isMonitored
 
     let isLoading = page.webView.isLoading
     reloadItem?.image = NSImage(
@@ -366,6 +370,11 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       webView.reload()
     }
     updateToolbar()
+  }
+
+  @objc private func configureAutoLogin() {
+    guard let monitorID = selectedPage?.monitorID else { return }
+    onAutoLoginSettings?(monitorID)
   }
 
   @objc private func navigateFromAddressField(_ sender: NSTextField) {
@@ -486,6 +495,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.reload,
       .flexibleSpace,
       ToolbarIdentifier.address,
+      ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
     ]
@@ -498,6 +508,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.reload,
       ToolbarIdentifier.address,
       .flexibleSpace,
+      ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
     ]
@@ -556,6 +567,17 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       item.label = "后台地址"
       item.paletteLabel = "后台地址"
       item.view = field
+      return item
+
+    case ToolbarIdentifier.autoLogin:
+      let item = toolbarButton(
+        identifier: itemIdentifier,
+        label: "自动登录",
+        symbol: "key.fill",
+        toolTip: "设置当前后台的本地自动登录",
+        action: #selector(configureAutoLogin)
+      )
+      autoLoginItem = item
       return item
 
     case ToolbarIdentifier.addPage:

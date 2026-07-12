@@ -100,6 +100,10 @@ public final class MonitorService extends Service {
     private static final long SCAN_POLL_MS = 400L;
     private static final int MAX_SCAN_POLLS = 140;
     private static final int SCAN_FAILURE_RELOAD_THRESHOLD = 2;
+    private static final long AUTO_LOGIN_POLL_MS = 300L;
+    private static final int MAX_AUTO_LOGIN_POLLS = 80;
+    private static final int MAX_AUTO_LOGIN_ATTEMPTS = 5;
+    private static final long AUTO_LOGIN_COOLDOWN_MS = 5 * 60_000L;
 
     private final IBinder binder = new LocalBinder();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -117,6 +121,9 @@ public final class MonitorService extends Service {
     private NotificationManager notificationManager;
     private SharedPreferences preferences;
     private String scanSource;
+    private String loginAutomationSource;
+    private LocalCredentialStore credentialStore;
+    private LocalAutomationRuntime automationRuntime;
     private WindowManager windowManager;
     private GaugeView overlayView;
     private WindowManager.LayoutParams overlayParams;
@@ -128,6 +135,10 @@ public final class MonitorService extends Service {
         final WebView webView;
         String scanToken;
         int pollCount;
+        String pageAutomationToken;
+        int pageAutomationPollCount;
+        String autoLoginStage = "";
+        Runnable autoLoginOutcome;
 
         ManagedPage(ModuleState state, MutableContextWrapper context, WebView webView) {
             this.state = state;
@@ -136,18 +147,25 @@ public final class MonitorService extends Service {
         }
     }
 
+    private interface PageAutomationCallback {
+        void complete(Object value, String error);
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
         notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         preferences = getSharedPreferences("monitor-preferences", MODE_PRIVATE);
+        credentialStore = new LocalCredentialStore(this);
+        automationRuntime = new LocalAutomationRuntime(this);
         overlayEnabled = preferences.getBoolean("overlay-enabled", true);
         createNotificationChannels();
         startForegroundMonitor(buildForegroundNotification(null));
 
         try {
             scanSource = readAsset("scan.js");
+            loginAutomationSource = readAsset("auto-login/login-page.js");
             for (ModuleConfig module : ModuleConfig.load(this)) createPage(module);
             refreshOutputs();
             mainHandler.postDelayed(periodicScan, 5_000L);
@@ -171,8 +189,9 @@ public final class MonitorService extends Service {
 
     @Override
     public void onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null);
         removeOverlay();
+        if (automationRuntime != null) automationRuntime.destroy();
+        mainHandler.removeCallbacksAndMessages(null);
         for (ManagedPage page : pages.values()) page.webView.destroy();
         pages.clear();
         super.onDestroy();
@@ -226,13 +245,15 @@ public final class MonitorService extends Service {
 
     private void handlePageFinished(ManagedPage page, String url) {
         if (isAuthenticationUrl(url)) {
-            markAuthenticationRequired(page, "请完成平台登录");
+            handleAuthenticationRequired(page, "平台需要重新登录。");
             return;
         }
         if (!sameOrigin(page.state.module.url, url)) {
             refreshOutputs();
             return;
         }
+        resetAutoLogin(page);
+        persistCurrentToken(page);
         refreshOutputs();
         if (page.state.needsImmediateScan) {
             page.state.needsImmediateScan = false;
@@ -323,6 +344,58 @@ public final class MonitorService extends Service {
         }
     }
 
+    public LocalCredentialStore.Summary credentialSummary(String id) {
+        return credentialStore.summary(id);
+    }
+
+    public String saveCredentials(
+            String id,
+            String username,
+            String passwordInput,
+            String totpInput,
+            boolean clearTotp,
+            boolean autoLoginEnabled
+    ) {
+        ManagedPage page = pages.get(id);
+        if (page == null) return "当前后台不存在";
+        LocalCredentialStore.Profile existing = credentialStore.get(id);
+        String normalizedUsername = username == null ? "" : username.trim();
+        String password = passwordInput == null || passwordInput.isEmpty()
+                ? existing == null ? "" : existing.password
+                : passwordInput;
+        if (normalizedUsername.isEmpty() || password.isEmpty()) return "账号和密码不能为空";
+        String totpSecret = clearTotp
+                ? ""
+                : totpInput == null || totpInput.trim().isEmpty()
+                        ? existing == null ? "" : existing.totpSecret
+                        : totpInput.trim();
+        String token = existing == null ? "" : existing.token;
+        boolean saved = credentialStore.save(id, new LocalCredentialStore.Profile(
+                normalizedUsername,
+                password,
+                totpSecret,
+                token,
+                autoLoginEnabled
+        ));
+        if (!saved) return "无法写入 Android 本地安全存储";
+        resetAutoLogin(page);
+        persistCurrentToken(page);
+        if (isAuthenticationUrl(page.webView.getUrl())) {
+            handleAuthenticationRequired(page, "自动登录配置已更新。");
+        }
+        return "";
+    }
+
+    public void removeCredentials(String id) {
+        credentialStore.remove(id);
+        ManagedPage page = pages.get(id);
+        if (page == null) return;
+        resetAutoLogin(page);
+        if (isAuthenticationUrl(page.webView.getUrl())) {
+            handleAuthenticationRequired(page, "自动登录配置已删除。");
+        }
+    }
+
     public void scanAll() {
         for (ManagedPage page : pages.values()) scan(page.state.module.id);
     }
@@ -333,7 +406,7 @@ public final class MonitorService extends Service {
         String currentUrl = page.webView.getUrl();
         if (currentUrl == null || currentUrl.isEmpty()) return;
         if (isAuthenticationUrl(currentUrl)) {
-            markAuthenticationRequired(page, "请完成平台登录");
+            handleAuthenticationRequired(page, "平台登录已失效。");
             return;
         }
         if (!sameOrigin(page.state.module.url, currentUrl)) {
@@ -404,7 +477,7 @@ public final class MonitorService extends Service {
 
         if ("auth".equals(kind)) {
             page.state.consecutiveScanFailures = 0;
-            markAuthenticationRequired(page, result.optString("message", "平台登录已失效"));
+            handleAuthenticationRequired(page, result.optString("message", "平台登录已失效。"));
             return;
         }
         if (!"ok".equals(kind)) {
@@ -458,17 +531,369 @@ public final class MonitorService extends Service {
         if (shouldReload) mainHandler.post(page.webView::reload);
     }
 
-    private void markAuthenticationRequired(ManagedPage page, String message) {
+    private void handleAuthenticationRequired(ManagedPage page, String message) {
         page.state.scanning = false;
         page.scanToken = null;
         page.state.consecutiveScanFailures = 0;
-        page.state.status = "auth";
-        page.state.message = message;
         page.state.clearMetrics();
         page.state.needsImmediateScan = true;
         page.state.nextScanAt = System.currentTimeMillis() + SCAN_INTERVAL_MS;
         alertSignatures.remove(page.state.module.id);
+
+        LocalCredentialStore.Profile profile = credentialStore.get(page.state.module.id);
+        if (profile == null || !profile.canAutoLogin()) {
+            page.state.status = "auth";
+            page.state.message = message + " 请打开对应后台标签完成登录。";
+            refreshOutputs();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (page.state.autoLoginCooldownUntil > 0 && page.state.autoLoginCooldownUntil <= now) {
+            page.state.autoLoginAttempts = 0;
+            page.state.autoLoginCooldownUntil = 0;
+        }
+        if (page.state.autoLoginCooldownUntil > now) {
+            page.state.status = "auth";
+            page.state.message = "自动登录连续失败，已暂停至 "
+                    + formatTime(page.state.autoLoginCooldownUntil) + "。";
+            refreshOutputs();
+            return;
+        }
+
+        page.state.status = "starting";
+        page.state.message = "Token 已失效，正在自动登录";
         refreshOutputs();
+        String currentUrl = page.webView.getUrl();
+        if (isAuthenticationUrl(currentUrl)) attemptAutoLogin(page, currentUrl);
+        else page.webView.loadUrl(loginUrl(page.state.module.url));
+    }
+
+    private void attemptAutoLogin(ManagedPage page, String currentUrl) {
+        LocalCredentialStore.Profile profile = credentialStore.get(page.state.module.id);
+        if (profile == null || !profile.canAutoLogin() || page.state.autoLoginInProgress) return;
+        long now = System.currentTimeMillis();
+        if (page.state.autoLoginCooldownUntil > now) return;
+        if (page.state.autoLoginAttempts >= MAX_AUTO_LOGIN_ATTEMPTS) {
+            pauseAutoLogin(page, "");
+            return;
+        }
+        String path = currentUrl == null ? "" : Uri.parse(currentUrl).getPath();
+        if ("/unlock-ip".equals(path)) {
+            page.state.status = "auth";
+            page.state.message = "平台要求人工完成 IP 解锁，自动登录已暂停。";
+            refreshOutputs();
+            return;
+        }
+
+        page.state.autoLoginInProgress = true;
+        page.state.status = "starting";
+        page.state.message = "正在自动登录（" + (page.state.autoLoginAttempts + 1)
+                + "/" + MAX_AUTO_LOGIN_ATTEMPTS + "）";
+        refreshOutputs();
+        runPageAutomation(page, "globalThis.smsLoginAutomation.snapshot()", (value, error) -> {
+            if (!error.isEmpty()) {
+                retryAutoLogin(page, "无法读取登录页面：" + error);
+                return;
+            }
+            if (!(value instanceof JSONObject)) {
+                retryAutoLogin(page, "登录页面状态无法识别");
+                return;
+            }
+            JSONObject snapshot = (JSONObject) value;
+            String token = snapshot.optString("token");
+            if (!token.isEmpty()) credentialStore.updateToken(page.state.module.id, token);
+            String kind = snapshot.optString("kind");
+            if ("login".equals(kind)) {
+                solveCaptchaAndSubmit(page, profile, snapshot.optString("captchaDataUrl"));
+            } else if ("totp".equals(kind)) {
+                generateAndSubmitTotp(page, profile);
+            } else if ("authenticated".equals(kind)) {
+                completeAutoLogin(page, token);
+            } else {
+                page.state.autoLoginInProgress = false;
+                page.state.status = "auth";
+                page.state.message = "平台要求人工完成 IP 解锁，自动登录已暂停。";
+                refreshOutputs();
+            }
+        });
+    }
+
+    private void solveCaptchaAndSubmit(
+            ManagedPage page,
+            LocalCredentialStore.Profile profile,
+            String dataUrl
+    ) {
+        if (dataUrl == null || dataUrl.isEmpty()) {
+            retryAutoLogin(page, "验证码图片尚未加载");
+            return;
+        }
+        automationRuntime.recognize(dataUrl, (captcha, error) -> {
+            if (!error.isEmpty()) {
+                retryAutoLogin(page, "本地验证码识别失败：" + error);
+                return;
+            }
+            if (captcha == null || !captcha.matches("^[0-9A-Za-z]{4,8}$")) {
+                refreshCaptcha(page);
+                retryAutoLogin(page, "本地验证码识别结果无效");
+                return;
+            }
+            try {
+                JSONObject input = new JSONObject();
+                input.put("username", profile.username);
+                input.put("password", profile.password);
+                input.put("captcha", captcha);
+                runPageAutomation(
+                        page,
+                        "globalThis.smsLoginAutomation.submitLogin(" + input + ")",
+                        (value, submitError) -> {
+                            if (!submitError.isEmpty() || !(value instanceof JSONObject)
+                                    || !((JSONObject) value).optBoolean("submitted")) {
+                                String detail = value instanceof JSONObject
+                                        ? ((JSONObject) value).optString("message") : submitError;
+                                retryAutoLogin(page, detail.isEmpty()
+                                        ? "登录表单尚未准备完成" : detail);
+                                return;
+                            }
+                            page.autoLoginStage = "login";
+                            scheduleAutoLoginOutcomeCheck(page);
+                        }
+                );
+            } catch (Exception exception) {
+                retryAutoLogin(page, "登录参数无法处理");
+            }
+        });
+    }
+
+    private void generateAndSubmitTotp(
+            ManagedPage page,
+            LocalCredentialStore.Profile profile
+    ) {
+        String secret = profile.totpSecret.trim();
+        if (secret.isEmpty()) {
+            page.state.autoLoginInProgress = false;
+            page.state.status = "auth";
+            page.state.message = "账号密码已通过，但本地未配置 Google 密钥，请人工完成二次验证。";
+            refreshOutputs();
+            return;
+        }
+        int[] offsets = new int[]{0, -210, 210, -180, 180};
+        int offset = offsets[Math.min(page.state.autoLoginAttempts, offsets.length - 1)];
+        long adjustedSeconds = System.currentTimeMillis() / 1000L + offset;
+        long delayMs = Math.floorMod(adjustedSeconds, 30L) > 24L ? 6_500L : 0L;
+        mainHandler.postDelayed(() -> generateAndSubmitTotpCode(page, secret, offset), delayMs);
+    }
+
+    private void generateAndSubmitTotpCode(ManagedPage page, String secret, int offset) {
+        if (!page.state.autoLoginInProgress) return;
+        automationRuntime.generateTotp(secret, System.currentTimeMillis() + offset * 1000L, (code, error) -> {
+            if (!error.isEmpty()) {
+                retryAutoLogin(page, "Google 动态码生成失败：" + error);
+                return;
+            }
+            try {
+                JSONObject input = new JSONObject();
+                input.put("code", code);
+                runPageAutomation(
+                        page,
+                        "globalThis.smsLoginAutomation.submitTotp(" + input + ")",
+                        (value, submitError) -> {
+                            if (!submitError.isEmpty() || !(value instanceof JSONObject)
+                                    || !((JSONObject) value).optBoolean("submitted")) {
+                                String detail = value instanceof JSONObject
+                                        ? ((JSONObject) value).optString("message") : submitError;
+                                retryAutoLogin(page, detail.isEmpty()
+                                        ? "Google 验证页面尚未准备完成" : detail);
+                                return;
+                            }
+                            page.autoLoginStage = "totp";
+                            scheduleAutoLoginOutcomeCheck(page);
+                        }
+                );
+            } catch (Exception exception) {
+                retryAutoLogin(page, "Google 验证参数无法处理");
+            }
+        });
+    }
+
+    private void scheduleAutoLoginOutcomeCheck(ManagedPage page) {
+        if (page.autoLoginOutcome != null) mainHandler.removeCallbacks(page.autoLoginOutcome);
+        page.autoLoginOutcome = () -> {
+            page.state.autoLoginInProgress = false;
+            String currentUrl = page.webView.getUrl();
+            if (isAuthenticationUrl(currentUrl)) {
+                if ("/ga-auth".equals(Uri.parse(currentUrl).getPath())
+                        && !"totp".equals(page.autoLoginStage)) {
+                    page.autoLoginStage = "";
+                    attemptAutoLogin(page, currentUrl);
+                } else if ("/ga-auth".equals(Uri.parse(currentUrl).getPath())) {
+                    retryAutoLogin(page, "Google 验证未通过，正在尝试备用时间窗口");
+                } else {
+                    refreshCaptcha(page);
+                    retryAutoLogin(page, "登录尚未通过，正在更换验证码重试");
+                }
+                return;
+            }
+            completeAutoLogin(page, "");
+        };
+        mainHandler.postDelayed(page.autoLoginOutcome, 7_000L);
+    }
+
+    private void retryAutoLogin(ManagedPage page, String message) {
+        page.state.autoLoginInProgress = false;
+        page.autoLoginStage = "";
+        page.state.autoLoginAttempts += 1;
+        if (page.state.autoLoginAttempts >= MAX_AUTO_LOGIN_ATTEMPTS) {
+            pauseAutoLogin(page, message);
+            return;
+        }
+        page.state.status = "starting";
+        page.state.message = message + "，稍后自动重试";
+        refreshOutputs();
+        mainHandler.postDelayed(() -> attemptAutoLogin(page, page.webView.getUrl()), 1_500L);
+    }
+
+    private void pauseAutoLogin(ManagedPage page, String detail) {
+        page.state.autoLoginInProgress = false;
+        page.autoLoginStage = "";
+        page.state.autoLoginCooldownUntil = System.currentTimeMillis() + AUTO_LOGIN_COOLDOWN_MS;
+        page.state.status = "auth";
+        page.state.message = "自动登录已连续失败 " + MAX_AUTO_LOGIN_ATTEMPTS + " 次"
+                + (detail == null || detail.isEmpty() ? "" : "（" + detail + "）")
+                + "，暂停至 " + formatTime(page.state.autoLoginCooldownUntil) + "。";
+        refreshOutputs();
+    }
+
+    private void completeAutoLogin(ManagedPage page, String token) {
+        resetAutoLogin(page);
+        page.state.needsImmediateScan = true;
+        if (token != null && !token.isEmpty()) {
+            credentialStore.updateToken(page.state.module.id, token);
+        }
+        persistCurrentToken(page);
+        page.state.status = "starting";
+        page.state.message = "自动登录成功，正在恢复监控";
+        refreshOutputs();
+        String currentUrl = page.webView.getUrl();
+        if (!sameOrigin(page.state.module.url, currentUrl)) {
+            page.webView.loadUrl(page.state.module.url);
+            return;
+        }
+        mainHandler.postDelayed(() -> scan(page.state.module.id), 900L);
+    }
+
+    private void resetAutoLogin(ManagedPage page) {
+        page.state.autoLoginAttempts = 0;
+        page.state.autoLoginInProgress = false;
+        page.autoLoginStage = "";
+        page.state.autoLoginCooldownUntil = 0;
+        if (page.autoLoginOutcome != null) mainHandler.removeCallbacks(page.autoLoginOutcome);
+        page.autoLoginOutcome = null;
+    }
+
+    private void refreshCaptcha(ManagedPage page) {
+        runPageAutomation(
+                page,
+                "globalThis.smsLoginAutomation.refreshCaptcha()",
+                (value, error) -> { }
+        );
+    }
+
+    private void persistCurrentToken(ManagedPage page) {
+        if (credentialStore.get(page.state.module.id) == null) return;
+        runPageAutomation(
+                page,
+                "globalThis.smsLoginAutomation.extractToken()",
+                (value, error) -> {
+                    String token = error.isEmpty() && value instanceof String ? (String) value : "";
+                    if (!token.isEmpty()) {
+                        credentialStore.updateToken(page.state.module.id, token);
+                    } else {
+                        persistCookieToken(page);
+                    }
+                }
+        );
+    }
+
+    private void persistCookieToken(ManagedPage page) {
+        String currentUrl = page.webView.getUrl();
+        if (currentUrl == null || currentUrl.isEmpty()) return;
+        String header = CookieManager.getInstance().getCookie(currentUrl);
+        if (header == null || header.isEmpty()) return;
+        for (String item : header.split(";")) {
+            String[] parts = item.trim().split("=", 2);
+            if (parts.length == 2 && "token".equalsIgnoreCase(parts[0].trim())
+                    && parts[1].trim().length() > 12) {
+                credentialStore.updateToken(page.state.module.id, parts[1].trim());
+                return;
+            }
+        }
+    }
+
+    private void runPageAutomation(
+            ManagedPage page,
+            String expression,
+            PageAutomationCallback callback
+    ) {
+        page.pageAutomationToken = UUID.randomUUID().toString();
+        page.pageAutomationPollCount = 0;
+        String token = JSONObject.quote(page.pageAutomationToken);
+        String script = "(function(){try{" + loginAutomationSource
+                + "window.__smsAutoLoginResult=null;"
+                + "Promise.resolve(" + expression + ").then(function(result){"
+                + "window.__smsAutoLoginResult=JSON.stringify({token:" + token + ",result:result});"
+                + "}).catch(function(error){window.__smsAutoLoginResult=JSON.stringify({token:" + token
+                + ",error:String(error&&error.message||error)});});"
+                + "return true;}catch(error){window.__smsAutoLoginResult=JSON.stringify({token:" + token
+                + ",error:String(error&&error.message||error)});return false;}})()";
+        page.webView.evaluateJavascript(script, ignored -> mainHandler.postDelayed(
+                () -> pollPageAutomation(page, callback),
+                AUTO_LOGIN_POLL_MS
+        ));
+    }
+
+    private void pollPageAutomation(ManagedPage page, PageAutomationCallback callback) {
+        String expectedToken = page.pageAutomationToken;
+        if (expectedToken == null) return;
+        page.pageAutomationPollCount += 1;
+        if (page.pageAutomationPollCount > MAX_AUTO_LOGIN_POLLS) {
+            page.pageAutomationToken = null;
+            callback.complete(null, "登录页面操作超过 24 秒");
+            return;
+        }
+        page.webView.evaluateJavascript("window.__smsAutoLoginResult || null", value -> {
+            try {
+                String payload = decodeJavascriptString(value);
+                if (payload == null || payload.isEmpty()) {
+                    mainHandler.postDelayed(
+                            () -> pollPageAutomation(page, callback),
+                            AUTO_LOGIN_POLL_MS
+                    );
+                    return;
+                }
+                JSONObject envelope = new JSONObject(payload);
+                if (!expectedToken.equals(envelope.optString("token"))) {
+                    mainHandler.postDelayed(
+                            () -> pollPageAutomation(page, callback),
+                            AUTO_LOGIN_POLL_MS
+                    );
+                    return;
+                }
+                page.pageAutomationToken = null;
+                page.webView.evaluateJavascript("window.__smsAutoLoginResult=null", null);
+                String error = envelope.optString("error");
+                Object result = envelope.opt("result");
+                if (result == JSONObject.NULL) result = null;
+                callback.complete(result, error);
+            } catch (Exception exception) {
+                page.pageAutomationToken = null;
+                callback.complete(null, "登录页面结果无法识别：" + exception.getMessage());
+            }
+        });
+    }
+
+    private String loginUrl(String value) {
+        Uri uri = Uri.parse(value);
+        return uri.buildUpon().path("/login").clearQuery().build().toString();
     }
 
     private MonitorSnapshot buildSnapshot() {

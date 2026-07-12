@@ -30,6 +30,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -255,6 +256,10 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         });
         navigation.addView(reload, square(dp(38)));
 
+        ImageButton credentials = iconButton(android.R.drawable.ic_lock_lock, "自动登录设置");
+        credentials.setOnClickListener(view -> showLoginSettings());
+        navigation.addView(credentials, square(dp(38)));
+
         addressBar = new EditText(this);
         addressBar.setSingleLine(true);
         addressBar.setTextSize(12);
@@ -441,6 +446,92 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         });
         populateOverview(lastSnapshot);
         overviewDialog.show();
+    }
+
+    private void showLoginSettings() {
+        if (!bound || selectedModuleId == null || lastSnapshot == null) {
+            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        ModuleState state = lastSnapshot.find(selectedModuleId);
+        if (state == null) return;
+        LocalCredentialStore.Summary summary = monitorService.credentialSummary(selectedModuleId);
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(4), dp(20), 0);
+
+        EditText username = new EditText(this);
+        username.setHint("后台账号");
+        username.setSingleLine(true);
+        username.setText(summary.username);
+        username.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        form.addView(username, matchWidth(dp(48)));
+
+        EditText password = new EditText(this);
+        password.setHint(summary.passwordConfigured ? "密码已保存，留空保持不变" : "后台密码");
+        password.setSingleLine(true);
+        password.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(password, matchWidth(dp(48)));
+
+        EditText totp = new EditText(this);
+        totp.setHint(summary.totpConfigured
+                ? "Google 密钥已保存，留空保持不变"
+                : "Google 密钥（没有二次验证可留空）");
+        totp.setSingleLine(true);
+        totp.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(totp, matchWidth(dp(48)));
+
+        CheckBox clearTotp = new CheckBox(this);
+        clearTotp.setText("清除已保存的 Google 密钥");
+        clearTotp.setVisibility(summary.totpConfigured ? View.VISIBLE : View.GONE);
+        form.addView(clearTotp, matchWidth(dp(38)));
+
+        CheckBox enabled = new CheckBox(this);
+        enabled.setText("Token 失效时自动登录并恢复监控");
+        enabled.setChecked(summary.configured ? summary.autoLoginEnabled : true);
+        form.addView(enabled, matchWidth(dp(38)));
+
+        TextView localNotice = new TextView(this);
+        localNotice.setText((summary.tokenConfigured ? "本地 Token：已加密保存\n" : "本地 Token：登录成功后自动保存\n")
+                + "账号、密码、Google 密钥和 Token 只保存在本机 Keystore。");
+        localNotice.setTextSize(12);
+        localNotice.setTextColor(COLOR_MUTED);
+        localNotice.setPadding(0, dp(8), 0, 0);
+        form.addView(localNotice, matchWidth(dp(48)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(state.module.name + " 自动登录")
+                .setView(form)
+                .setPositiveButton("保存", null)
+                .setNeutralButton("删除配置", null)
+                .setNegativeButton("取消", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                String error = monitorService.saveCredentials(
+                        selectedModuleId,
+                        username.getText().toString(),
+                        password.getText().toString(),
+                        totp.getText().toString(),
+                        clearTotp.isChecked(),
+                        enabled.isChecked()
+                );
+                if (!error.isEmpty()) {
+                    Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                dialog.dismiss();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setEnabled(summary.configured);
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
+                monitorService.removeCredentials(selectedModuleId);
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
     }
 
     private void populateOverview(MonitorService.MonitorSnapshot snapshot) {

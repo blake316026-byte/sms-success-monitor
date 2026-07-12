@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SMSMonitorCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
@@ -6,11 +7,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
   private var widgetController: StatusWidgetController!
   private var monitorController: MonitorController!
   private var alertNotifier: AlertNotifier!
+  private var localAutomationCheckRuntime: LocalAutomationRuntime?
   private var currentSnapshot = FleetMonitorSnapshot.initial(
     configurations: MonitorConfiguration.allModules
   )
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    if ProcessInfo.processInfo.environment["SMS_MONITOR_LOCAL_AUTOMATION_CHECK"] == "1" {
+      runLocalAutomationCheck()
+      return
+    }
     alertNotifier = AlertNotifier()
     widgetController = StatusWidgetController(configurations: configurations)
     monitorController = MonitorController(configurations: configurations)
@@ -71,5 +77,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
       snapshot: currentSnapshot,
       muteDescription: alertNotifier.muteDescription
     )
+  }
+
+  private func runLocalAutomationCheck() {
+    let credentialStore = LocalCredentialStore()
+    let testModuleID = "__local-automation-self-test__"
+    let testProfile = LocalLoginProfile(
+      username: "self-test",
+      password: "local-only",
+      totpSecret: "",
+      token: "self-test-token",
+      autoLoginEnabled: true
+    )
+    guard credentialStore.save(testProfile, for: testModuleID),
+      credentialStore.profile(for: testModuleID) == testProfile
+    else {
+      fputs("Local Keychain check failed\n", stderr)
+      exit(1)
+    }
+    credentialStore.remove(moduleID: testModuleID)
+
+    guard let fixtureURL = Bundle.main.resourceURL?
+      .appendingPathComponent("auto-login/fixtures/nRVr.jpg"),
+      let data = try? Data(contentsOf: fixtureURL)
+    else {
+      fputs("Local automation fixture is missing\n", stderr)
+      exit(1)
+    }
+
+    let runtime = LocalAutomationRuntime()
+    localAutomationCheckRuntime = runtime
+    runtime.recognize(dataURL: "data:image/jpeg;base64,\(data.base64EncodedString())") {
+      [weak self] result in
+      switch result {
+      case .failure(let error):
+        let details = String(reflecting: error)
+        fputs("Local OCR check failed: \(details)\n", stderr)
+        exit(1)
+      case .success(let captcha):
+        guard captcha == "nRVr" else {
+          fputs("Local OCR check returned \(captcha)\n", stderr)
+          exit(1)
+        }
+        runtime.generateTOTP(
+          secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+          timestamp: Date(timeIntervalSince1970: 59)
+        ) { totpResult in
+          guard case .success(let code) = totpResult, code == "287082" else {
+            fputs("Local TOTP check failed\n", stderr)
+            exit(1)
+          }
+          runtime.generateTOTP(
+            secret: "otpauth://totp/SMSMonitor?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            timestamp: Date(timeIntervalSince1970: 59)
+          ) { uriResult in
+            guard case .success(let uriCode) = uriResult, uriCode == "287082" else {
+              fputs("Local otpauth TOTP check failed\n", stderr)
+              exit(1)
+            }
+            print("Local OCR and TOTP runtime checks passed")
+            self?.localAutomationCheckRuntime = nil
+            NSApp.terminate(nil)
+          }
+        }
+      }
+    }
   }
 }
