@@ -26,6 +26,7 @@ lipo -create \
   "${X86_BUILD_DIR}/x86_64-apple-macosx/release/SMSMonitorApp" \
   -output "${APP_DIR}/Contents/MacOS/SMSMonitorApp"
 cp "${ROOT_DIR}/Resources/Info.plist" "${APP_DIR}/Contents/Info.plist"
+cp -R "${ROOT_DIR}/clients/shared/auto-login" "${APP_DIR}/Contents/Resources/auto-login"
 
 codesign --force --deep --sign - "${APP_DIR}" >/dev/null
 echo "${APP_DIR}"

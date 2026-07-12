@@ -19,6 +19,7 @@
         </form>
         <button class="icon-button" id="scan" title="扫描当前后台" aria-label="扫描当前后台"><i data-lucide="radar"></i></button>
         <button class="icon-button" id="detail" title="监控总览" aria-label="监控总览"><i data-lucide="table-properties"></i></button>
+        <button class="icon-button" id="credentials" title="自动登录设置" aria-label="自动登录设置"><i data-lucide="key-round"></i></button>
         <button class="icon-button" id="add" title="新增独立页面" aria-label="新增独立页面"><i data-lucide="plus"></i></button>
         <button class="icon-button" id="close-page" title="关闭自定义页面" aria-label="关闭自定义页面"><i data-lucide="x"></i></button>
       </div>
@@ -36,6 +37,32 @@
         <div class="dialog-actions">
           <button type="button" class="secondary-button" id="cancel-add-bottom">取消</button>
           <button type="submit" class="primary-button">创建页面</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="credentials-dialog" class="page-dialog">
+      <form method="dialog" id="credentials-form">
+        <div class="dialog-heading">
+          <h2 id="credentials-title">自动登录设置</h2>
+          <button type="button" class="icon-button" id="cancel-credentials" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <label>后台账号<input id="credential-username" required autocomplete="off"></label>
+        <label>后台密码<input id="credential-password" type="password" autocomplete="new-password"></label>
+        <label>Google 密钥<input id="credential-totp" type="password" autocomplete="off" placeholder="没有二次验证可留空"></label>
+        <label class="checkbox-row" id="clear-totp-row" hidden>
+          <input id="credential-clear-totp" type="checkbox">清除已保存的 Google 密钥
+        </label>
+        <label class="checkbox-row">
+          <input id="credential-enabled" type="checkbox" checked>Token 失效时自动登录并恢复监控
+        </label>
+        <p class="credential-status" id="credential-status"></p>
+        <p class="dialog-error" id="credentials-error"></p>
+        <div class="dialog-actions split-actions">
+          <button type="button" class="secondary-button danger-button" id="remove-credentials">删除配置</button>
+          <span></span>
+          <button type="button" class="secondary-button" id="cancel-credentials-bottom">取消</button>
+          <button type="submit" class="primary-button">保存</button>
         </div>
       </form>
     </dialog>

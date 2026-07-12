@@ -19,6 +19,8 @@ let package = Package(
       dependencies: ["SMSMonitorCore"],
       linkerSettings: [
         .linkedFramework("AppKit"),
+        .linkedFramework("Network"),
+        .linkedFramework("Security"),
         .linkedFramework("WebKit"),
         .linkedFramework("UserNotifications"),
       ]

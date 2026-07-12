@@ -129,9 +129,14 @@ button { cursor: default; }
 .page-dialog label input:focus { border-color: var(--blue); }
 .dialog-error { min-height: 19px; color: var(--red); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-actions.split-actions { display: grid; grid-template-columns: auto 1fr auto auto; }
 .primary-button, .secondary-button { height: 34px; padding: 0 16px; border-radius: 5px; }
 .primary-button { color: #fff; border: 1px solid #0d61bc; background: var(--blue); }
 .secondary-button { color: var(--text); border: 1px solid var(--border); background: #fff; }
+.danger-button { color: var(--red); }
+.page-dialog label.checkbox-row { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.page-dialog label.checkbox-row input { width: 16px; height: 16px; padding: 0; }
+.credential-status { min-height: 18px; margin: 12px 0 0; color: var(--gray); font-size: 12px; }
 
 .widget-body {
   overflow: hidden;

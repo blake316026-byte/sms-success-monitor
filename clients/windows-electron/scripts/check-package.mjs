@@ -9,7 +9,14 @@ for (const file of [
   'src/preload.cjs',
   'src/ui/workbench.html',
   'src/ui/widget.html',
-  'src/ui/detail.html'
+  'src/ui/detail.html',
+  '../shared/auto-login/runtime.html',
+  '../shared/auto-login/runtime.js',
+  '../shared/auto-login/login-page.js',
+  '../shared/auto-login/common_old.onnx',
+  '../shared/auto-login/vendor/ort.wasm.min.js',
+  '../shared/auto-login/vendor/ort-wasm-simd-threaded.mjs',
+  '../shared/auto-login/vendor/ort-wasm-simd-threaded.wasm'
 ]) {
   assert.equal(fs.existsSync(path.join(root, file)), true, `missing ${file}`);
 }

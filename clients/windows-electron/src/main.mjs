@@ -4,11 +4,13 @@ import {
   ipcMain,
   Menu,
   Notification,
+  safeStorage,
   WebContentsView
 } from 'electron';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -30,7 +32,13 @@ const sharedRoot = app.isPackaged
   : path.resolve(clientRoot, '../shared');
 const modules = JSON.parse(fs.readFileSync(path.join(sharedRoot, 'modules.json'), 'utf8'));
 const scanSource = fs.readFileSync(path.join(sharedRoot, 'scan.js'), 'utf8');
+const loginAutomationSource = fs.readFileSync(
+  path.join(sharedRoot, 'auto-login/login-page.js'),
+  'utf8'
+);
 const shellHeight = 112;
+const maximumAutoLoginAttempts = 5;
+const autoLoginCooldownMs = 5 * 60_000;
 
 const pages = new Map();
 const moduleStates = new Map();
@@ -41,6 +49,12 @@ let selectedPageId = modules[0].id;
 let attachedView;
 let quitting = false;
 let customPagesPath;
+let credentialsPath;
+let credentialProfiles = {};
+let localAutomationServer;
+let localAutomationWindow;
+let localAutomationReady;
+let localAutomationError;
 let scanTimer;
 
 for (const module of modules) {
@@ -54,8 +68,156 @@ for (const module of modules) {
     nextScanAt: null,
     scanning: false,
     consecutiveScanFailures: 0,
+    autoLoginAttempts: 0,
+    autoLoginInProgress: false,
+    autoLoginStage: '',
+    autoLoginCooldownUntil: 0,
+    autoLoginTimer: null,
     needsImmediateScan: true
   });
+}
+
+function contentType(filePath) {
+  return {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.wasm': 'application/wasm',
+    '.onnx': 'application/octet-stream',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png'
+  }[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+}
+
+async function startLocalAutomationRuntime() {
+  const runtimeRoot = path.join(sharedRoot, 'auto-login');
+  const pathToken = crypto.randomUUID();
+  localAutomationServer = http.createServer((request, response) => {
+    let requestPath = '';
+    try {
+      requestPath = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
+    } catch (_) {
+      response.writeHead(400).end();
+      return;
+    }
+    const prefix = `/${pathToken}/`;
+    if (request.method !== 'GET' || !requestPath.startsWith(prefix)) {
+      response.writeHead(404).end();
+      return;
+    }
+    const relativePath = requestPath.slice(prefix.length);
+    const filePath = path.resolve(runtimeRoot, relativePath);
+    if (!relativePath || !filePath.startsWith(`${runtimeRoot}${path.sep}`)) {
+      response.writeHead(400).end();
+      return;
+    }
+    const stream = fs.createReadStream(filePath);
+    stream.once('error', () => {
+      if (!response.headersSent) response.writeHead(404);
+      response.end();
+    });
+    stream.once('open', () => {
+      response.writeHead(200, {
+        'Content-Type': contentType(filePath),
+        'Cache-Control': 'no-store'
+      });
+      stream.pipe(response);
+    });
+  });
+  await new Promise((resolve, reject) => {
+    localAutomationServer.once('error', reject);
+    localAutomationServer.listen(0, '127.0.0.1', resolve);
+  });
+  const address = localAutomationServer.address();
+  const runtimeURL = `http://127.0.0.1:${address.port}/${pathToken}/runtime.html`;
+  localAutomationWindow = new BrowserWindow({
+    show: false,
+    skipTaskbar: true,
+    webPreferences: {
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  localAutomationReady = localAutomationWindow.loadURL(runtimeURL)
+    .then(() => localAutomationWindow.webContents.executeJavaScript(
+      'globalThis.localAutomationRuntime.ready()'
+    ))
+    .then(() => true)
+    .catch((error) => {
+      localAutomationError = error;
+      return false;
+    });
+}
+
+async function callLocalAutomation(method, ...args) {
+  if (!localAutomationReady || !localAutomationWindow || localAutomationWindow.isDestroyed()) {
+    throw new Error('本地自动登录组件尚未就绪');
+  }
+  await localAutomationReady;
+  if (localAutomationError) throw localAutomationError;
+  return Promise.race([
+    localAutomationWindow.webContents.executeJavaScript(
+      `globalThis.localAutomationRuntime[${JSON.stringify(method)}](...${JSON.stringify(args)})`
+    ),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('本地自动登录操作超过 45 秒')),
+      45_000
+    ))
+  ]);
+}
+
+function profileFor(id) {
+  const profile = credentialProfiles[id];
+  return profile && typeof profile === 'object' ? profile : null;
+}
+
+function canAutoLogin(profile) {
+  return Boolean(
+    profile?.autoLoginEnabled
+    && String(profile.username || '').trim()
+    && String(profile.password || '')
+  );
+}
+
+async function loadCredentialProfiles() {
+  credentialsPath = path.join(app.getPath('userData'), 'local-login-profiles.json');
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return;
+    const envelope = JSON.parse(await fsPromises.readFile(credentialsPath, 'utf8'));
+    const decrypted = safeStorage.decryptString(Buffer.from(envelope.payload, 'base64'));
+    const stored = JSON.parse(decrypted);
+    credentialProfiles = stored && typeof stored === 'object' ? stored : {};
+  } catch (_) {
+    credentialProfiles = {};
+  }
+}
+
+async function saveCredentialProfiles() {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Windows 本地安全存储当前不可用');
+  }
+  const encrypted = safeStorage.encryptString(JSON.stringify(credentialProfiles));
+  await fsPromises.mkdir(path.dirname(credentialsPath), { recursive: true });
+  await fsPromises.writeFile(
+    credentialsPath,
+    `${JSON.stringify({ version: 1, payload: encrypted.toString('base64') })}\n`,
+    { mode: 0o600 }
+  );
+}
+
+async function updateStoredToken(id, token) {
+  const profile = profileFor(id);
+  const normalized = String(token || '').trim();
+  if (!profile || !normalized || normalized === profile.token) return;
+  profile.token = normalized;
+  try {
+    await saveCredentialProfiles();
+  } catch (error) {
+    console.error(`Unable to persist local token for ${id}: ${error.message}`);
+  }
 }
 
 function uiPath(name) {
@@ -118,6 +280,8 @@ function createRemotePage(page) {
       scanning: false,
       consecutiveScanFailures: 0,
       needsImmediateScan: true,
+      autoLoginInProgress: false,
+      autoLoginStage: '',
       scannedAt: Date.now(),
       nextScanAt: Date.now() + SCAN_INTERVAL_MS
     });
@@ -144,17 +308,12 @@ async function handlePageFinished(id) {
   const state = moduleStates.get(id);
   const currentURL = page.view.webContents.getURL();
   if (isAuthenticationURL(currentURL)) {
-    updateModule(id, {
-      status: 'auth',
-      message: '请完成平台登录',
-      metrics: null,
-      consecutiveScanFailures: 0,
-      needsImmediateScan: true,
-      nextScanAt: Date.now() + SCAN_INTERVAL_MS
-    });
+    handleAuthenticationRequired(id, '平台需要重新登录。');
     return;
   }
   if (!isConfiguredOrigin(state, currentURL)) return;
+  resetAutoLoginState(state);
+  persistCurrentToken(id);
   if (!state.needsImmediateScan) {
     broadcastSnapshot();
     return;
@@ -168,6 +327,292 @@ function updateModule(id, changes, changedId = id) {
   if (!state) return;
   Object.assign(state, changes);
   broadcastSnapshot(changedId);
+}
+
+function loginURLFor(state) {
+  const url = new URL(state.url);
+  url.pathname = '/login';
+  url.search = '';
+  return url.href;
+}
+
+function timeText(timestamp) {
+  return new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+async function runLoginPageAction(page, expression) {
+  return page.view.webContents.executeJavaScript(
+    `(async () => { ${loginAutomationSource}\nreturn await (${expression}); })()`
+  );
+}
+
+async function persistCurrentToken(id) {
+  const page = pages.get(id);
+  const state = moduleStates.get(id);
+  if (!page || !state || !profileFor(id)) return;
+  let token = '';
+  try {
+    token = await runLoginPageAction(
+      page,
+      'globalThis.smsLoginAutomation.extractToken()'
+    );
+  } catch (_) {
+    // The site WebView remains the primary local token store.
+  }
+  if (!token) {
+    try {
+      const cookies = await page.view.webContents.session.cookies.get({ url: state.url });
+      token = cookies.find((cookie) => (
+        cookie.name.toLowerCase() === 'token' && String(cookie.value || '').length > 12
+      ))?.value || '';
+    } catch (_) {
+      // Token persistence is best effort and never interrupts monitoring.
+    }
+  }
+  await updateStoredToken(id, token);
+}
+
+function resetAutoLoginState(state) {
+  state.autoLoginAttempts = 0;
+  state.autoLoginInProgress = false;
+  state.autoLoginStage = '';
+  state.autoLoginCooldownUntil = 0;
+  if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
+  state.autoLoginTimer = null;
+}
+
+function pauseAutoLogin(id, detail = '') {
+  const state = moduleStates.get(id);
+  if (!state) return;
+  state.autoLoginInProgress = false;
+  state.autoLoginStage = '';
+  state.autoLoginCooldownUntil = Date.now() + autoLoginCooldownMs;
+  const suffix = detail ? `（${detail}）` : '';
+  updateModule(id, {
+    status: 'auth',
+    message: `自动登录已连续失败 ${maximumAutoLoginAttempts} 次${suffix}，暂停至 ${timeText(state.autoLoginCooldownUntil)}。`,
+    metrics: null,
+    nextScanAt: Date.now() + SCAN_INTERVAL_MS
+  });
+}
+
+function retryAutoLogin(id, message) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page) return;
+  state.autoLoginInProgress = false;
+  state.autoLoginStage = '';
+  state.autoLoginAttempts += 1;
+  if (state.autoLoginAttempts >= maximumAutoLoginAttempts) {
+    pauseAutoLogin(id, message);
+    return;
+  }
+  updateModule(id, {
+    status: 'starting',
+    message: `${message}，稍后自动重试`,
+    nextScanAt: Date.now() + SCAN_INTERVAL_MS
+  });
+  state.autoLoginTimer = setTimeout(() => {
+    const currentURL = page.view.webContents.getURL();
+    attemptAutoLogin(id, currentURL);
+  }, 1500);
+}
+
+async function completeAutoLogin(id, token = '') {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page) return;
+  resetAutoLoginState(state);
+  state.needsImmediateScan = true;
+  if (token) await updateStoredToken(id, token);
+  await persistCurrentToken(id);
+  updateModule(id, {
+    status: 'starting',
+    message: '自动登录成功，正在恢复监控',
+    nextScanAt: Date.now() + SCAN_INTERVAL_MS
+  });
+  const currentURL = page.view.webContents.getURL();
+  if (!isConfiguredOrigin(state, currentURL)) {
+    page.view.webContents.loadURL(state.url);
+    return;
+  }
+  setTimeout(() => scanModule(id), 900);
+}
+
+function scheduleAutoLoginOutcomeCheck(id) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page) return;
+  if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
+  state.autoLoginTimer = setTimeout(async () => {
+    state.autoLoginInProgress = false;
+    const currentURL = page.view.webContents.getURL();
+    if (isAuthenticationURL(currentURL)) {
+      if (new URL(currentURL).pathname === '/ga-auth' && state.autoLoginStage !== 'totp') {
+        state.autoLoginStage = '';
+        attemptAutoLogin(id, currentURL);
+      } else if (new URL(currentURL).pathname === '/ga-auth') {
+        retryAutoLogin(id, 'Google 验证未通过，正在尝试备用时间窗口');
+      } else {
+        try {
+          await runLoginPageAction(page, 'globalThis.smsLoginAutomation.refreshCaptcha()');
+        } catch (_) {
+          // A subsequent attempt will wait for the next captcha image.
+        }
+        retryAutoLogin(id, '登录尚未通过，正在更换验证码重试');
+      }
+      return;
+    }
+    completeAutoLogin(id);
+  }, 7000);
+}
+
+async function attemptAutoLogin(id, currentURL) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  const profile = profileFor(id);
+  if (!state || !page || state.autoLoginInProgress || !canAutoLogin(profile)) return;
+
+  if (state.autoLoginCooldownUntil && state.autoLoginCooldownUntil <= Date.now()) {
+    state.autoLoginAttempts = 0;
+    state.autoLoginCooldownUntil = 0;
+  }
+  if (state.autoLoginCooldownUntil > Date.now()) {
+    updateModule(id, {
+      status: 'auth',
+      message: `自动登录连续失败，已暂停至 ${timeText(state.autoLoginCooldownUntil)}。`,
+      metrics: null
+    });
+    return;
+  }
+  if (state.autoLoginAttempts >= maximumAutoLoginAttempts) {
+    pauseAutoLogin(id);
+    return;
+  }
+
+  let pathName = '';
+  try { pathName = new URL(currentURL).pathname; } catch (_) {}
+  if (pathName === '/unlock-ip') {
+    updateModule(id, {
+      status: 'auth',
+      message: '平台要求人工完成 IP 解锁，自动登录已暂停。',
+      metrics: null
+    });
+    return;
+  }
+
+  state.autoLoginInProgress = true;
+  updateModule(id, {
+    status: 'starting',
+    message: `正在自动登录（${state.autoLoginAttempts + 1}/${maximumAutoLoginAttempts}）`,
+    metrics: null,
+    nextScanAt: Date.now() + SCAN_INTERVAL_MS
+  });
+
+  try {
+    const snapshot = await runLoginPageAction(
+      page,
+      'globalThis.smsLoginAutomation.snapshot()'
+    );
+    if (snapshot?.token) await updateStoredToken(id, snapshot.token);
+    if (snapshot?.kind === 'login') {
+      if (!snapshot.captchaDataUrl) {
+        retryAutoLogin(id, '验证码图片尚未加载');
+        return;
+      }
+      const captcha = await callLocalAutomation('recognize', snapshot.captchaDataUrl);
+      if (!/^[0-9A-Za-z]{4,8}$/.test(String(captcha || ''))) {
+        await runLoginPageAction(page, 'globalThis.smsLoginAutomation.refreshCaptcha()');
+        retryAutoLogin(id, '本地验证码识别结果无效');
+        return;
+      }
+      const submitted = await runLoginPageAction(
+        page,
+        `globalThis.smsLoginAutomation.submitLogin(${JSON.stringify({
+          username: profile.username,
+          password: profile.password,
+          captcha
+        })})`
+      );
+      if (!submitted?.submitted) {
+        retryAutoLogin(id, submitted?.message || '登录表单尚未准备完成');
+        return;
+      }
+      state.autoLoginStage = 'login';
+      scheduleAutoLoginOutcomeCheck(id);
+      return;
+    }
+    if (snapshot?.kind === 'totp') {
+      const secret = String(profile.totpSecret || '').trim();
+      if (!secret) {
+        state.autoLoginInProgress = false;
+        updateModule(id, {
+          status: 'auth',
+          message: '账号密码已通过，但本地未配置 Google 密钥，请人工完成二次验证。',
+          metrics: null
+        });
+        return;
+      }
+      const offsets = [0, -210, 210, -180, 180];
+      const offset = offsets[Math.min(state.autoLoginAttempts, offsets.length - 1)];
+      const cyclePosition = Math.floor((Date.now() / 1000 + offset) % 30);
+      if (cyclePosition > 24) {
+        await new Promise((resolve) => setTimeout(resolve, 6500));
+        if (!state.autoLoginInProgress) return;
+      }
+      const code = await callLocalAutomation('generateTotp', secret, Date.now() + offset * 1000);
+      const submitted = await runLoginPageAction(
+        page,
+        `globalThis.smsLoginAutomation.submitTotp(${JSON.stringify({ code })})`
+      );
+      if (!submitted?.submitted) {
+        retryAutoLogin(id, submitted?.message || 'Google 验证页面尚未准备完成');
+        return;
+      }
+      state.autoLoginStage = 'totp';
+      scheduleAutoLoginOutcomeCheck(id);
+      return;
+    }
+    if (snapshot?.kind === 'authenticated') {
+      await completeAutoLogin(id, snapshot.token || '');
+      return;
+    }
+    state.autoLoginInProgress = false;
+    updateModule(id, {
+      status: 'auth',
+      message: '平台要求人工完成 IP 解锁，自动登录已暂停。',
+      metrics: null
+    });
+  } catch (error) {
+    retryAutoLogin(id, `自动登录失败：${error.message}`);
+  }
+}
+
+function handleAuthenticationRequired(id, message) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page) return;
+  state.scanning = false;
+  state.consecutiveScanFailures = 0;
+  state.needsImmediateScan = true;
+  state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
+  const profile = profileFor(id);
+  if (!canAutoLogin(profile)) {
+    updateModule(id, {
+      status: 'auth',
+      message: `${message} 请打开对应后台标签完成登录。`,
+      metrics: null
+    });
+    return;
+  }
+  updateModule(id, {
+    status: 'starting',
+    message: 'Token 已失效，正在自动登录',
+    metrics: null
+  });
+  const currentURL = page.view.webContents.getURL();
+  if (isAuthenticationURL(currentURL)) attemptAutoLogin(id, currentURL);
+  else page.view.webContents.loadURL(loginURLFor(state));
 }
 
 function handleScanFailure(id, message) {
@@ -204,14 +649,7 @@ async function scanModule(id) {
   const currentURL = page.view.webContents.getURL();
   if (!currentURL) return;
   if (isAuthenticationURL(currentURL)) {
-    updateModule(id, {
-      status: 'auth',
-      message: '请完成平台登录',
-      metrics: null,
-      consecutiveScanFailures: 0,
-      needsImmediateScan: true,
-      nextScanAt: Date.now() + SCAN_INTERVAL_MS
-    });
+    handleAuthenticationRequired(id, '平台登录已失效。');
     return;
   }
   if (!isConfiguredOrigin(state, currentURL)) {
@@ -240,13 +678,8 @@ async function scanModule(id) {
       throw new Error('扫描结果无法识别');
     }
     if (result.kind === 'auth') {
-      Object.assign(state, {
-        status: 'auth',
-        message: result.message || '平台登录已失效',
-        metrics: null,
-        consecutiveScanFailures: 0,
-        needsImmediateScan: true
-      });
+      handleAuthenticationRequired(id, result.message || '平台登录已失效。');
+      return;
     } else if (result.kind === 'ok') {
       const metrics = calculateMetrics(result.statuses, SAMPLE_LIMIT);
       if (metrics.sampleCount === 0) throw new Error('短信记录接口未返回可统计记录');
@@ -514,6 +947,30 @@ async function saveCustomPages() {
   await fsPromises.writeFile(customPagesPath, `${JSON.stringify(custom, null, 2)}\n`);
 }
 
+function credentialSummary(id) {
+  const profile = profileFor(id);
+  return {
+    configured: Boolean(profile),
+    username: String(profile?.username || ''),
+    passwordConfigured: Boolean(profile?.password),
+    totpConfigured: Boolean(profile?.totpSecret),
+    tokenConfigured: Boolean(profile?.token),
+    autoLoginEnabled: Boolean(profile?.autoLoginEnabled)
+  };
+}
+
+function restartAutoLoginFor(id) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page) return;
+  resetAutoLoginState(state);
+  persistCurrentToken(id);
+  const currentURL = page.view.webContents.getURL();
+  if (isAuthenticationURL(currentURL)) {
+    handleAuthenticationRequired(id, '自动登录配置已更新。');
+  }
+}
+
 function registerIPC() {
   ipcMain.handle('snapshot:get', () => buildSnapshot());
   ipcMain.handle('page:select', (_event, id) => {
@@ -572,6 +1029,49 @@ function registerIPC() {
     if (id) scanModule(id);
     else modules.forEach((module) => scanModule(module.id));
   });
+  ipcMain.handle('credentials:get', (_event, id) => {
+    const page = pages.get(id);
+    if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
+    return { ok: true, profile: credentialSummary(id) };
+  });
+  ipcMain.handle('credentials:save', async (_event, id, input) => {
+    const page = pages.get(id);
+    if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
+    const existing = profileFor(id) || {};
+    const username = String(input?.username || '').trim();
+    const passwordInput = String(input?.password || '');
+    const password = passwordInput || String(existing.password || '');
+    if (!username || !password) return { ok: false, message: '账号和密码不能为空' };
+    const totpSecret = input?.clearTotp
+      ? ''
+      : String(input?.totpSecret || '').trim() || String(existing.totpSecret || '');
+    credentialProfiles[id] = {
+      username,
+      password,
+      totpSecret,
+      token: String(existing.token || ''),
+      autoLoginEnabled: Boolean(input?.autoLoginEnabled)
+    };
+    try {
+      await saveCredentialProfiles();
+      restartAutoLoginFor(id);
+      return { ok: true, profile: credentialSummary(id) };
+    } catch (error) {
+      return { ok: false, message: error.message };
+    }
+  });
+  ipcMain.handle('credentials:remove', async (_event, id) => {
+    const page = pages.get(id);
+    if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
+    delete credentialProfiles[id];
+    try {
+      await saveCredentialProfiles();
+      restartAutoLoginFor(id);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error.message };
+    }
+  });
   ipcMain.handle('window:workbench', (_event, id) => showWorkbench(id));
   ipcMain.handle('window:detail', () => showDetail());
   ipcMain.handle('app:quit', () => {
@@ -594,6 +1094,12 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32' && app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   }
+  await loadCredentialProfiles();
+  try {
+    await startLocalAutomationRuntime();
+  } catch (error) {
+    console.error(`Local automation runtime failed to start: ${error.message}`);
+  }
   createApplicationMenu();
   registerIPC();
   for (const module of modules) createRemotePage({ ...module, monitored: true });
@@ -609,6 +1115,11 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   quitting = true;
   if (scanTimer) clearInterval(scanTimer);
+  for (const state of moduleStates.values()) {
+    if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
+  }
+  localAutomationWindow?.destroy();
+  localAutomationServer?.close();
 });
 
 app.on('window-all-closed', () => {});
