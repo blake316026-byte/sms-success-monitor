@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { calculateMetrics, isAlert, percentageText, selectFocus } from './monitor-core.mjs';
+import {
+  calculateMetrics,
+  isAlert,
+  percentageText,
+  selectFocus,
+  shouldReloadAfterFailure
+} from './monitor-core.mjs';
 
 const modulesPath = fileURLToPath(new URL('./modules.json', import.meta.url));
 const modules = JSON.parse(fs.readFileSync(modulesPath, 'utf8'));
@@ -27,5 +33,8 @@ const lowestAlert = selectFocus([
   { id: 'b', status: 'alert', metrics: calculateMetrics(Array(82).fill('SUCCESS').concat(Array(118).fill('SENT'))), alertThreshold: 0.5 }
 ]);
 assert.equal(lowestAlert.id, 'a');
+
+assert.equal(shouldReloadAfterFailure(1), false);
+assert.equal(shouldReloadAfterFailure(2), true);
 
 console.log('All shared cross-platform checks passed');

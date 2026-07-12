@@ -13,6 +13,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var isScanning = false
   private var lastMetrics: ScanMetrics?
   private var needsImmediateScan = true
+  private var consecutiveScanFailures = 0
   private var mockScenario: String?
 
   init(configuration: MonitorConfiguration) {
@@ -69,6 +70,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     if requiresAuthentication(currentURL) {
+      consecutiveScanFailures = 0
       needsImmediateScan = true
       emit(
         .authenticationRequired("平台登录已失效，请打开对应后台标签完成登录。"),
@@ -113,14 +115,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
     switch result {
     case .failure(let error):
-      emit(
-        .error("扫描脚本执行失败：\(error.localizedDescription)", Date()),
-        nextScanAt: nextScanAt
-      )
+      handleScanFailure("扫描脚本执行失败：\(error.localizedDescription)")
 
     case .success(let rawValue):
       guard let payload = rawValue as? [String: Any], let kind = payload["kind"] as? String else {
-        emit(.error("短信记录接口返回了无法识别的数据。", Date()), nextScanAt: nextScanAt)
+        handleScanFailure("短信记录接口返回了无法识别的数据。")
         return
       }
 
@@ -132,10 +131,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           sampleLimit: configuration.sampleLimit
         )
         guard metrics.sampleCount > 0 else {
-          emit(.error("短信记录接口未返回可统计的记录。", Date()), nextScanAt: nextScanAt)
+          handleScanFailure("短信记录接口未返回可统计的记录。")
           return
         }
 
+        consecutiveScanFailures = 0
         lastMetrics = metrics
         let scannedAt = Date()
         if metrics.shouldAlert(threshold: configuration.alertThreshold) {
@@ -145,15 +145,43 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         }
 
       case "auth":
+        consecutiveScanFailures = 0
         needsImmediateScan = true
         let message = payload["message"] as? String ?? "平台登录已失效。"
         emit(.authenticationRequired(message), nextScanAt: nextScanAt)
 
       default:
         let message = payload["message"] as? String ?? "短信记录接口扫描失败。"
-        emit(.error(message, Date()), nextScanAt: nextScanAt)
+        handleScanFailure(message)
       }
     }
+  }
+
+  private func handleScanFailure(_ message: String) {
+    consecutiveScanFailures += 1
+    let shouldReload = ScanRecoveryPolicy.shouldReload(
+      consecutiveFailures: consecutiveScanFailures
+    )
+    NSLog(
+      "[SMSMonitor] %@ scan failure %ld/%ld: %@",
+      configuration.id,
+      consecutiveScanFailures,
+      ScanRecoveryPolicy.defaultFailureThreshold,
+      message
+    )
+
+    guard shouldReload else {
+      emit(.error(message, Date()), nextScanAt: nextScanAt)
+      return
+    }
+
+    consecutiveScanFailures = 0
+    needsImmediateScan = true
+    emit(
+      .error("\(message)；正在自动重载后台连接。", Date()),
+      nextScanAt: nextScanAt
+    )
+    webView.reload()
   }
 
   private func scheduleNextScan(after delay: TimeInterval) {
@@ -225,6 +253,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard let url = webView.url else { return }
 
     if requiresAuthentication(url) {
+      consecutiveScanFailures = 0
       needsImmediateScan = true
       emit(
         .authenticationRequired("请完成平台登录，成功后客户端会自动开始监控。"),
@@ -247,14 +276,16 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: Error
   ) {
-    emit(
-      .error("平台页面加载失败：\(error.localizedDescription)", Date()),
-      nextScanAt: nextScanAt
-    )
+    isScanning = false
+    needsImmediateScan = true
+    handleScanFailure("平台页面加载失败：\(error.localizedDescription)")
     scheduleNextScan(after: configuration.scanInterval)
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    isScanning = false
+    consecutiveScanFailures = 0
+    needsImmediateScan = true
     emit(.error("平台页面进程已重启，正在恢复。", Date()), nextScanAt: nextScanAt)
     webView.reload()
   }

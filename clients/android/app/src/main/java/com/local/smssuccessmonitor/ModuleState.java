@@ -14,6 +14,7 @@ public final class ModuleState {
     public long scannedAt;
     public long nextScanAt;
     public boolean scanning;
+    public int consecutiveScanFailures;
     public boolean needsImmediateScan = true;
 
     ModuleState(ModuleConfig module) {
@@ -32,6 +33,7 @@ public final class ModuleState {
         scannedAt = source.scannedAt;
         nextScanAt = source.nextScanAt;
         scanning = source.scanning;
+        consecutiveScanFailures = source.consecutiveScanFailures;
         needsImmediateScan = source.needsImmediateScan;
     }
 

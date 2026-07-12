@@ -1,6 +1,14 @@
 export const SAMPLE_LIMIT = 200;
 export const ALERT_THRESHOLD = 0.5;
 export const SCAN_INTERVAL_MS = 60_000;
+export const SCAN_FAILURE_RELOAD_THRESHOLD = 2;
+
+export function shouldReloadAfterFailure(
+  consecutiveFailures,
+  threshold = SCAN_FAILURE_RELOAD_THRESHOLD
+) {
+  return Number(threshold) > 0 && Number(consecutiveFailures) >= Number(threshold);
+}
 
 export function calculateMetrics(statuses, sampleLimit = SAMPLE_LIMIT) {
   const bounded = Array.from(statuses || []).slice(0, Math.max(0, sampleLimit));

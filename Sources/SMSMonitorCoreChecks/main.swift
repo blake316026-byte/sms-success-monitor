@@ -44,6 +44,15 @@ check(cappedSample.sampleCount == 200, "caps oversized responses at the configur
 let emptySample = MetricsCalculator.calculate(statuses: [], sampleLimit: 200)
 check(!emptySample.shouldAlert(threshold: 0.50), "does not alert for an empty sample")
 
+check(
+  !ScanRecoveryPolicy.shouldReload(consecutiveFailures: 1),
+  "keeps the normal retry path after one scan failure"
+)
+check(
+  ScanRecoveryPolicy.shouldReload(consecutiveFailures: 2),
+  "reloads the platform context after two consecutive scan failures"
+)
+
 let configuredModules = MonitorConfiguration.allModules
 check(configuredModules.count == 9, "configures all nine monitored platforms")
 check(
