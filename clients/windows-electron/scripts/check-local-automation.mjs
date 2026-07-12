@@ -23,7 +23,13 @@ function contentType(filePath) {
 }
 
 const server = http.createServer((request, response) => {
-  const requestPath = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
+  let requestPath = '';
+  try {
+    requestPath = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
+  } catch (_) {
+    response.writeHead(400).end();
+    return;
+  }
   const prefix = `/${pathToken}/`;
   const relativePath = requestPath.startsWith(prefix) ? requestPath.slice(prefix.length) : '';
   const filePath = path.resolve(sharedDirectory, 'auto-login', relativePath);
@@ -41,37 +47,42 @@ const server = http.createServer((request, response) => {
 });
 
 app.commandLine.appendSwitch('disable-gpu');
-await app.whenReady();
-assert.equal(safeStorage.isEncryptionAvailable(), true);
-const encryptedSecret = safeStorage.encryptString('local-only');
-assert.equal(safeStorage.decryptString(encryptedSecret), 'local-only');
-await new Promise((resolve, reject) => {
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', resolve);
-});
-const address = server.address();
-
-const window = new BrowserWindow({
-  show: false,
-  webPreferences: {
-    backgroundThrottling: false,
-    contextIsolation: true,
-    nodeIntegration: false,
-    sandbox: true
-  }
-});
-window.webContents.on('console-message', (_event, details) => {
-  console.error(`[runtime:${details.level}] ${details.message}`);
-});
-window.webContents.on('did-fail-load', (_event, code, description, url) => {
-  console.error(`Runtime page failed to load: ${code} ${description} ${url}`);
-});
+const watchdog = setTimeout(() => {
+  console.error('Local automation self-test exceeded 90 seconds');
+  app.exit(1);
+}, 90_000);
+let automationWindow;
+let exitCode = 0;
 
 try {
+  await app.whenReady();
+  assert.equal(safeStorage.isEncryptionAvailable(), true);
+  const encryptedSecret = safeStorage.encryptString('local-only');
+  assert.equal(safeStorage.decryptString(encryptedSecret), 'local-only');
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  automationWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  automationWindow.webContents.on('console-message', (_event, details) => {
+    console.error(`[runtime:${details.level}] ${details.message}`);
+  });
+  automationWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error(`Runtime page failed to load: ${code} ${description} ${url}`);
+  });
   console.log('Loading local automation page');
-  await window.loadURL(`http://127.0.0.1:${address.port}/${pathToken}/runtime.html`);
+  await automationWindow.loadURL(`http://127.0.0.1:${address.port}/${pathToken}/runtime.html`);
   console.log('Local automation page loaded');
-  const result = await window.webContents.executeJavaScript(`Promise.race([
+  const result = await automationWindow.webContents.executeJavaScript(`Promise.race([
     (async () => ({
       captcha: await globalThis.localAutomationRuntime.recognize(
         ${JSON.stringify(`data:image/jpeg;base64,${fixture}`)}
@@ -91,8 +102,12 @@ try {
   assert.equal(result.totp, '287082');
   assert.equal(result.totpUri, '287082');
   console.log('Local OCR and TOTP runtime checks passed');
+} catch (error) {
+  exitCode = 1;
+  console.error(error?.stack || error);
 } finally {
-  window.destroy();
-  server.close();
-  app.quit();
+  clearTimeout(watchdog);
+  if (automationWindow && !automationWindow.isDestroyed()) automationWindow.destroy();
+  if (server.listening) server.close();
+  app.exit(exitCode);
 }
