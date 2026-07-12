@@ -1,8 +1,7 @@
 # SMS Success Monitor
 
-独立短信成功率监控客户端，提供 macOS、Windows 和 Android 三个版本。项目与 AI Automation 的任务、数据库、调度器和生产发布流程完全分离。
+独立短信成功率监控客户端，提供 macOS、Windows 和 Android 三个版本。
 
-固定后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`。
 
 ## 立即下载
 
@@ -16,14 +15,12 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 ## 固定监控口径
 
-- 数据源：每个后台自身域名下的 `/api/sms_record/page`
 - 样本：按后台默认时间倒序读取最新 200 条；接口限制单页大小时自动翻页并去重，最多取 200 条
 - 成功：只有原始状态 `SUCCESS` 计为成功
 - 报警：`成功数 / 实际样本数 < 50%`
 - 周期：每 60 秒扫描一次，也可以手动扫描当前后台或全部后台
 - 聚合：只比较已经登录并取得统计值的后台；多个报警同时存在时展示成功率最低者，无报警时展示当前最低健康值
 - 登录态：未登录后台只在总览中标记，不会覆盖已有监控值；仅当全部后台都没有有效值时才显示“需登录”
-- 隐私：客户端只保存各后台自身的 Cookie、站点存储和状态计数，不保存手机号、验证码、Message ID 或短信正文
 
 ## 三端功能
 
@@ -69,31 +66,3 @@ macOS：解压后把 `SMS Success Monitor.app` 放入“应用程序”。首次
 Windows：把 ZIP 完整解压到固定目录，运行 `SMS Success Monitor.exe`。不要只把 EXE 单独拖出文件夹；首次出现 SmartScreen 时选择“更多信息”并确认运行。
 
 Android：把 APK 发送到设备并安装；系统询问时允许该来源安装应用。打开后完成 9 个后台登录和悬浮窗授权。
-
-## 本地构建
-
-全部验证并打包：
-
-```bash
-git clone https://github.com/blake316026-byte/sms-success-monitor.git
-cd sms-success-monitor
-./scripts/package-all.sh
-```
-
-单独构建：
-
-```bash
-./scripts/package-macos.sh
-./scripts/package-windows.sh
-./scripts/package-android.sh
-```
-
-依赖：macOS 13+ 与 Swift 工具链、Node.js 24、JDK 17、Android SDK 35。Windows 包可在 macOS 交叉生成，但最终签名和 Windows 实机验证应在 Windows 上完成。
-
-## 验证
-
-```bash
-./scripts/test.sh
-```
-
-该命令检查 Swift 核心规则、扫描脚本、共享模块配置和 Electron 工程结构。Android 打包脚本还会执行 Android Lint 和完整 APK 编译。
