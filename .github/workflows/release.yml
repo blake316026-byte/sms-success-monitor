@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: publish-client-release
+  cancel-in-progress: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -24,6 +28,7 @@ jobs:
       - name: Run shared checks
         run: npm test --prefix clients/windows-electron
       - name: Verify local OCR and TOTP runtime
+        timeout-minutes: 3
         run: npm run test:local-automation --prefix clients/windows-electron
       - name: Package Windows client
         run: npm run package:windows --prefix clients/windows-electron
@@ -63,7 +68,7 @@ jobs:
 
           同一后台连续两次扫描异常时，客户端会自动重载该后台连接并立即重试，不清除登录状态，也不影响其他后台。
 
-          **v0.3.0 自动登录**：用户可在每个后台的钥匙图标中，把账号、密码和可选 Google 密钥保存到设备系统安全存储。Token 失效后，客户端在本地识别图片验证码、生成 Google 动态码并自动获取新 Token；所有凭据与 Token 均不上传数据库。
+          **v0.3.1 自动登录**：用户可在每个后台的钥匙图标中，把账号、密码和可选 Google 密钥保存到设备系统安全存储。Token 失效后，客户端在本地识别图片验证码、生成 Google 动态码并自动获取新 Token；所有凭据与 Token 均不上传数据库。
 
           这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
           NOTES
