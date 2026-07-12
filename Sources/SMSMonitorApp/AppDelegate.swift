@@ -18,12 +18,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
       return
     }
     alertNotifier = AlertNotifier()
-    widgetController = StatusWidgetController(configurations: configurations)
     monitorController = MonitorController(configurations: configurations)
+    widgetController = StatusWidgetController(
+      configurations: configurations,
+      sampleLimit: monitorController.sampleLimit
+    )
 
     widgetController.actions = self
     monitorController.onStateChange = { [weak self] snapshot, changedModuleID in
       self?.handle(snapshot: snapshot, changedModuleID: changedModuleID)
+    }
+    monitorController.onSampleLimitChange = { [weak self] sampleLimit in
+      self?.widgetController.updateSampleLimit(sampleLimit)
     }
 
     widgetController.show()

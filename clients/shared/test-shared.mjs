@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import {
   calculateMetrics,
   isAlert,
+  MAX_SAMPLE_LIMIT,
+  MIN_SAMPLE_LIMIT,
+  normalizeSampleLimit,
   percentageText,
   selectFocus,
   shouldReloadAfterFailure
@@ -36,5 +39,9 @@ assert.equal(lowestAlert.id, 'a');
 
 assert.equal(shouldReloadAfterFailure(1), false);
 assert.equal(shouldReloadAfterFailure(2), true);
+assert.equal(normalizeSampleLimit('75'), 75);
+assert.equal(normalizeSampleLimit(1), MIN_SAMPLE_LIMIT);
+assert.equal(normalizeSampleLimit(10_000), MAX_SAMPLE_LIMIT);
+assert.equal(normalizeSampleLimit('invalid'), 200);
 
 console.log('All shared cross-platform checks passed');

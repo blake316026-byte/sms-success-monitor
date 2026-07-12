@@ -66,15 +66,22 @@ public final class MonitorService extends Service {
         public final int healthyCount;
         public final int authenticationCount;
         public final int errorCount;
+        public final int sampleLimit;
+        public final int minimumSampleLimit;
+        public final int maximumSampleLimit;
 
         MonitorSnapshot(List<ModuleState> modules, ModuleState focus, int alertCount,
-                        int healthyCount, int authenticationCount, int errorCount) {
+                        int healthyCount, int authenticationCount, int errorCount,
+                        int sampleLimit, int minimumSampleLimit, int maximumSampleLimit) {
             this.modules = Collections.unmodifiableList(modules);
             this.focus = focus;
             this.alertCount = alertCount;
             this.healthyCount = healthyCount;
             this.authenticationCount = authenticationCount;
             this.errorCount = errorCount;
+            this.sampleLimit = sampleLimit;
+            this.minimumSampleLimit = minimumSampleLimit;
+            this.maximumSampleLimit = maximumSampleLimit;
         }
 
         public ModuleState find(String id) {
@@ -95,7 +102,9 @@ public final class MonitorService extends Service {
     private static final String ALERT_CHANNEL_ID = "sms-monitor-alerts";
     private static final int FOREGROUND_NOTIFICATION_ID = 4101;
     private static final int ALERT_NOTIFICATION_BASE = 4200;
-    private static final int SAMPLE_LIMIT = 200;
+    private static final int DEFAULT_SAMPLE_LIMIT = 200;
+    private static final int MIN_SAMPLE_LIMIT = 10;
+    private static final int MAX_SAMPLE_LIMIT = 500;
     private static final long SCAN_INTERVAL_MS = 60_000L;
     private static final long SCAN_POLL_MS = 400L;
     private static final int MAX_SCAN_POLLS = 140;
@@ -128,12 +137,14 @@ public final class MonitorService extends Service {
     private GaugeView overlayView;
     private WindowManager.LayoutParams overlayParams;
     private boolean overlayEnabled;
+    private int sampleLimit;
 
     private static final class ManagedPage {
         final ModuleState state;
         final MutableContextWrapper context;
         final WebView webView;
         String scanToken;
+        int scanSampleLimit;
         int pollCount;
         String pageAutomationToken;
         int pageAutomationPollCount;
@@ -160,6 +171,9 @@ public final class MonitorService extends Service {
         credentialStore = new LocalCredentialStore(this);
         automationRuntime = new LocalAutomationRuntime(this);
         overlayEnabled = preferences.getBoolean("overlay-enabled", true);
+        sampleLimit = normalizeSampleLimit(
+                preferences.getInt("sample-limit", DEFAULT_SAMPLE_LIMIT)
+        );
         createNotificationChannels();
         startForegroundMonitor(buildForegroundNotification(null));
 
@@ -276,6 +290,33 @@ public final class MonitorService extends Service {
 
     public MonitorSnapshot getSnapshot() {
         return buildSnapshot();
+    }
+
+    public int getSampleLimit() {
+        return sampleLimit;
+    }
+
+    public String setSampleLimit(int value) {
+        if (value < MIN_SAMPLE_LIMIT || value > MAX_SAMPLE_LIMIT) {
+            return "样本条数必须在 " + MIN_SAMPLE_LIMIT + "–" + MAX_SAMPLE_LIMIT + " 之间";
+        }
+        if (value == sampleLimit) return "";
+        sampleLimit = value;
+        preferences.edit().putInt("sample-limit", sampleLimit).apply();
+        for (ManagedPage page : pages.values()) {
+            page.state.clearMetrics();
+            page.state.needsImmediateScan = true;
+            page.state.status = page.state.scanning ? "scanning" : "starting";
+            page.state.message = "样本已改为 " + sampleLimit + " 条，正在重新扫描";
+            alertSignatures.remove(page.state.module.id);
+        }
+        refreshOutputs();
+        scanAll();
+        return "";
+    }
+
+    private static int normalizeSampleLimit(int value) {
+        return Math.min(MAX_SAMPLE_LIMIT, Math.max(MIN_SAMPLE_LIMIT, value));
     }
 
     public WebView attachPage(String id, Activity activity, ViewGroup container) {
@@ -419,8 +460,10 @@ public final class MonitorService extends Service {
         }
 
         page.state.scanning = true;
+        int activeSampleLimit = sampleLimit;
+        page.scanSampleLimit = activeSampleLimit;
         page.state.status = "scanning";
-        page.state.message = "正在读取最新 200 条";
+        page.state.message = "正在读取最新 " + activeSampleLimit + " 条";
         page.state.nextScanAt = System.currentTimeMillis() + SCAN_INTERVAL_MS;
         page.scanToken = UUID.randomUUID().toString();
         page.pollCount = 0;
@@ -429,7 +472,7 @@ public final class MonitorService extends Service {
         String token = JSONObject.quote(page.scanToken);
         String script = "(function(){try{" + scanSource
                 + "window.__smsMonitorScanResult=null;"
-                + "Promise.resolve(globalThis.smsMonitorScan(" + SAMPLE_LIMIT + ")).then(function(result){"
+                + "Promise.resolve(globalThis.smsMonitorScan(" + activeSampleLimit + ")).then(function(result){"
                 + "window.__smsMonitorScanResult=JSON.stringify({token:" + token + ",result:result});"
                 + "}).catch(function(error){window.__smsMonitorScanResult=JSON.stringify({token:" + token
                 + ",result:{kind:'error',message:String(error&&error.message||error)}});});"
@@ -480,13 +523,19 @@ public final class MonitorService extends Service {
             handleAuthenticationRequired(page, result.optString("message", "平台登录已失效。"));
             return;
         }
+        if (page.scanSampleLimit != sampleLimit) {
+            page.scanSampleLimit = 0;
+            page.state.needsImmediateScan = false;
+            mainHandler.post(() -> scan(page.state.module.id));
+            return;
+        }
         if (!"ok".equals(kind)) {
             finishScanError(page, result.optString("message", "短信记录接口扫描失败"));
             return;
         }
 
         JSONArray statuses = result.optJSONArray("statuses");
-        int sampleCount = statuses == null ? 0 : Math.min(statuses.length(), SAMPLE_LIMIT);
+        int sampleCount = statuses == null ? 0 : Math.min(statuses.length(), page.scanSampleLimit);
         int successCount = 0;
         for (int index = 0; index < sampleCount; index += 1) {
             if ("SUCCESS".equals(statuses.optString(index).trim().toUpperCase(Locale.ROOT))) {
@@ -508,13 +557,24 @@ public final class MonitorService extends Service {
         page.state.message = page.state.isAlert() ? "成功率低于 50%" : "成功率正常";
         page.state.scannedAt = now;
         page.state.nextScanAt = now + SCAN_INTERVAL_MS;
+        page.scanSampleLimit = 0;
         refreshOutputs();
         notifyAlertIfNeeded(page.state);
     }
 
     private void finishScanError(ManagedPage page, String message) {
+        if (page.state.scanning && page.scanSampleLimit != 0
+                && page.scanSampleLimit != sampleLimit) {
+            page.state.scanning = false;
+            page.scanToken = null;
+            page.scanSampleLimit = 0;
+            page.state.needsImmediateScan = false;
+            mainHandler.post(() -> scan(page.state.module.id));
+            return;
+        }
         page.state.scanning = false;
         page.scanToken = null;
+        page.scanSampleLimit = 0;
         page.state.consecutiveScanFailures += 1;
         page.state.status = "error";
         page.state.message = message;
@@ -534,6 +594,7 @@ public final class MonitorService extends Service {
     private void handleAuthenticationRequired(ManagedPage page, String message) {
         page.state.scanning = false;
         page.scanToken = null;
+        page.scanSampleLimit = 0;
         page.state.consecutiveScanFailures = 0;
         page.state.clearMetrics();
         page.state.needsImmediateScan = true;
@@ -911,7 +972,17 @@ public final class MonitorService extends Service {
             if ("error".equals(copy.status)) errors += 1;
         }
         ModuleState focus = selectFocus(states);
-        return new MonitorSnapshot(states, focus, alerts, healthy, authentication, errors);
+        return new MonitorSnapshot(
+                states,
+                focus,
+                alerts,
+                healthy,
+                authentication,
+                errors,
+                sampleLimit,
+                MIN_SAMPLE_LIMIT,
+                MAX_SAMPLE_LIMIT
+        );
     }
 
     private ModuleState selectFocus(List<ModuleState> states) {
@@ -1037,7 +1108,7 @@ public final class MonitorService extends Service {
                 .setSmallIcon(R.drawable.ic_stat_monitor)
                 .setColor(getColor(R.color.brand_green))
                 .setContentTitle("短信成功率监控运行中")
-                .setContentText(text == null ? "扫描最新 200 条 · 每 1 分钟" : text)
+                .setContentText(text == null ? "扫描最新 " + sampleLimit + " 条 · 每 1 分钟" : text)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)

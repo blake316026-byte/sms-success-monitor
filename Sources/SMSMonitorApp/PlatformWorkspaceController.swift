@@ -89,6 +89,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
 {
   let window: NSWindow
   var onAutoLoginSettings: ((String) -> Void)?
+  var onSampleLimitSettings: (() -> Void)?
 
   private enum ToolbarIdentifier {
     static let toolbar = NSToolbar.Identifier("SMSMonitorPlatformToolbar")
@@ -97,6 +98,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     static let reload = NSToolbarItem.Identifier("SMSMonitorPlatformReload")
     static let address = NSToolbarItem.Identifier("SMSMonitorPlatformAddress")
     static let autoLogin = NSToolbarItem.Identifier("SMSMonitorPlatformAutoLogin")
+    static let sampleLimit = NSToolbarItem.Identifier("SMSMonitorPlatformSampleLimit")
     static let addPage = NSToolbarItem.Identifier("SMSMonitorPlatformAddPage")
     static let closePage = NSToolbarItem.Identifier("SMSMonitorPlatformClosePage")
   }
@@ -105,19 +107,22 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
 
   private let defaultInitialURL: URL
   private let monitoredPageCount: Int
+  private var sampleLimit: Int
   private let tabController = WorkspaceTabViewController()
   private var pages: [PlatformPageViewController] = []
   private var addressField: NSTextField?
   private var backItem: NSToolbarItem?
   private var forwardItem: NSToolbarItem?
   private var reloadItem: NSToolbarItem?
+  private var sampleLimitItem: NSToolbarItem?
   private var autoLoginItem: NSToolbarItem?
   private var closePageItem: NSToolbarItem?
 
-  init(monitoredPages: [MonitoredPlatformPage]) {
+  init(sampleLimit: Int, monitoredPages: [MonitoredPlatformPage]) {
     precondition(!monitoredPages.isEmpty)
     self.defaultInitialURL = monitoredPages[0].configuration.targetURL
     self.monitoredPageCount = monitoredPages.count
+    self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1260, height: 800),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -168,6 +173,12 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     )
   }
 
+  func updateSampleLimit(_ value: Int) {
+    sampleLimit = SampleLimitPolicy.normalize(value)
+    sampleLimitItem?.toolTip = "设置全部后台的监控样本条数（当前 \(sampleLimit) 条）"
+    updateWindowSubtitle()
+  }
+
   func stopAll() {
     for page in pages {
       page.webView.stopLoading()
@@ -183,7 +194,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
 
     window.contentViewController = tabController
     window.title = "短信后台工作台"
-    window.subtitle = "\(monitoredPageCount) 个监控后台 · 不同标签使用独立登录会话"
+    updateWindowSubtitle()
     window.minSize = NSSize(width: 940, height: 620)
     window.isReleasedWhenClosed = false
     window.tabbingMode = .disallowed
@@ -196,6 +207,11 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     toolbar.allowsUserCustomization = false
     toolbar.autosavesConfiguration = false
     window.toolbar = toolbar
+  }
+
+  private func updateWindowSubtitle() {
+    window.subtitle =
+      "\(monitoredPageCount) 个监控后台 · 样本 \(sampleLimit) 条 · 不同标签使用独立登录会话"
   }
 
   private func restoreAdditionalPages() {
@@ -377,6 +393,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     onAutoLoginSettings?(monitorID)
   }
 
+  @objc private func configureSampleLimit() {
+    onSampleLimitSettings?()
+  }
+
   @objc private func navigateFromAddressField(_ sender: NSTextField) {
     guard let page = selectedPage else { return }
     guard let url = Self.normalizedURL(from: sender.stringValue) else {
@@ -495,6 +515,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.reload,
       .flexibleSpace,
       ToolbarIdentifier.address,
+      ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
@@ -508,6 +529,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.reload,
       ToolbarIdentifier.address,
       .flexibleSpace,
+      ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
@@ -578,6 +600,17 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         action: #selector(configureAutoLogin)
       )
       autoLoginItem = item
+      return item
+
+    case ToolbarIdentifier.sampleLimit:
+      let item = toolbarButton(
+        identifier: itemIdentifier,
+        label: "样本条数",
+        symbol: "number.circle",
+        toolTip: "设置全部后台的监控样本条数（当前 \(sampleLimit) 条）",
+        action: #selector(configureSampleLimit)
+      )
+      sampleLimitItem = item
       return item
 
     case ToolbarIdentifier.addPage:

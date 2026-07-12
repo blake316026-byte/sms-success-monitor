@@ -396,7 +396,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
   private var snapshot = FleetMonitorSnapshot(modules: [])
   private var selectedModuleID: String?
 
-  init(moduleCount: Int) {
+  init(moduleCount: Int, sampleLimit: Int) {
     let window = NSPanel(
       contentRect: NSRect(x: 0, y: 0, width: 780, height: 540),
       styleMask: [.titled, .closable, .utilityWindow, .resizable],
@@ -404,13 +404,18 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       defer: false
     )
     window.title = "短信监控总览"
-    window.subtitle = "\(moduleCount) 个后台 · 每分钟扫描最新 200 条"
+    window.subtitle = "\(moduleCount) 个后台 · 每分钟扫描最新 \(sampleLimit) 条"
     window.level = .floating
     window.minSize = NSSize(width: 700, height: 440)
     window.isReleasedWhenClosed = false
     window.setFrameAutosaveName("SMSMonitorFleetDetailWindow")
     super.init(window: window)
     buildContent()
+  }
+
+  func updateSampleLimit(_ sampleLimit: Int) {
+    window?.subtitle =
+      "\(snapshot.modules.count) 个后台 · 每分钟扫描最新 \(sampleLimit) 条"
   }
 
   required init?(coder: NSCoder) {
@@ -720,7 +725,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     case .starting(let message), .authenticationRequired(let message), .error(let message, _):
       return message
     case .scanning:
-      return "正在读取最新 200 条短信记录"
+      return "正在读取设置的短信样本"
     case .healthy, .alert:
       return ""
     }
@@ -754,12 +759,15 @@ final class StatusWidgetController: NSWindowController {
   private var appObservers: [NSObjectProtocol] = []
   private var workspaceObservers: [NSObjectProtocol] = []
 
-  init(configurations: [MonitorConfiguration]) {
+  init(configurations: [MonitorConfiguration], sampleLimit: Int) {
     precondition(!configurations.isEmpty)
     let widgetSize = NSSize(width: 228, height: 236)
     self.currentSnapshot = .initial(configurations: configurations)
     self.widgetView = StatusWidgetView(frame: NSRect(origin: .zero, size: widgetSize))
-    self.detailController = DetailPanelController(moduleCount: configurations.count)
+    self.detailController = DetailPanelController(
+      moduleCount: configurations.count,
+      sampleLimit: sampleLimit
+    )
 
     let panel = FloatingPanel(
       contentRect: NSRect(origin: .zero, size: widgetSize),
@@ -841,6 +849,11 @@ final class StatusWidgetController: NSWindowController {
     ensureAlwaysOnTop()
   }
 
+  func updateSampleLimit(_ sampleLimit: Int) {
+    detailController.updateSampleLimit(sampleLimit)
+    update(snapshot: currentSnapshot, muteDescription: nil)
+  }
+
   fileprivate static func presentation(for state: AppMonitorState) -> WidgetPresentation {
     switch state {
     case .starting:
@@ -859,9 +872,9 @@ final class StatusWidgetController: NSWindowController {
       return WidgetPresentation(
         color: MonitorColors.scanning,
         primaryText: metrics?.percentageText ?? "扫描中",
-        sampleText: metrics.map { "样本 \($0.sampleCount)" } ?? "读取最新 200 条",
+        sampleText: metrics.map { "样本 \($0.sampleCount)" } ?? "读取设置样本",
         statusText: "正在扫描",
-        footerText: metrics.map { "正在更新 · 样本 \($0.sampleCount)" } ?? "正在读取最新 200 条",
+        footerText: metrics.map { "正在更新 · 样本 \($0.sampleCount)" } ?? "正在读取短信记录",
         footerSymbol: "arrow.triangle.2.circlepath",
         progress: CGFloat(metrics?.successRate ?? 0),
         isAlert: false,

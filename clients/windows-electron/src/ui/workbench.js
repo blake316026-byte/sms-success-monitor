@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileText,
+  Hash,
   KeyRound,
   Lock,
   LockKeyhole,
@@ -22,6 +23,7 @@ const iconSet = {
   ChevronLeft,
   ChevronRight,
   FileText,
+  Hash,
   KeyRound,
   Lock,
   LockKeyhole,
@@ -43,6 +45,7 @@ const forwardButton = document.querySelector('#forward');
 const reloadButton = document.querySelector('#reload');
 const closeButton = document.querySelector('#close-page');
 const credentialsButton = document.querySelector('#credentials');
+const sampleLimitInput = document.querySelector('#sample-limit');
 const dialog = document.querySelector('#add-dialog');
 const pageName = document.querySelector('#page-name');
 const pageURL = document.querySelector('#page-url');
@@ -96,6 +99,11 @@ function render() {
     credentialsButton.disabled = !selected.monitored;
     reloadButton.classList.toggle('loading', selected.loading);
   }
+  if (document.activeElement !== sampleLimitInput) {
+    sampleLimitInput.value = String(snapshot.sampleLimit);
+    sampleLimitInput.min = String(snapshot.minimumSampleLimit);
+    sampleLimitInput.max = String(snapshot.maximumSampleLimit);
+  }
   createIcons({ icons: iconSet, attrs: { 'stroke-width': 2 } });
 }
 
@@ -124,6 +132,17 @@ document.querySelector('#address-form').addEventListener('submit', (event) => {
 backButton.addEventListener('click', () => window.smsApi.goBack());
 forwardButton.addEventListener('click', () => window.smsApi.goForward());
 reloadButton.addEventListener('click', () => window.smsApi.reload());
+sampleLimitInput.addEventListener('change', async () => {
+  const result = await window.smsApi.setSampleLimit(sampleLimitInput.value);
+  if (!result.ok) {
+    sampleLimitInput.setCustomValidity(result.message);
+    sampleLimitInput.reportValidity();
+    sampleLimitInput.value = String(snapshot.sampleLimit);
+    return;
+  }
+  sampleLimitInput.setCustomValidity('');
+  sampleLimitInput.value = String(result.sampleLimit);
+});
 document.querySelector('#scan').addEventListener('click', () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
   window.smsApi.scan(selected?.monitored ? selected.id : null);

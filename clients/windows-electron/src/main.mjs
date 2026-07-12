@@ -17,6 +17,9 @@ import {
   ALERT_THRESHOLD,
   calculateMetrics,
   isAlert,
+  MAX_SAMPLE_LIMIT,
+  MIN_SAMPLE_LIMIT,
+  normalizeSampleLimit,
   percentageText,
   SAMPLE_LIMIT,
   SCAN_FAILURE_RELOAD_THRESHOLD,
@@ -50,7 +53,9 @@ let attachedView;
 let quitting = false;
 let customPagesPath;
 let credentialsPath;
+let settingsPath;
 let credentialProfiles = {};
+let sampleLimit = SAMPLE_LIMIT;
 let localAutomationServer;
 let localAutomationWindow;
 let localAutomationReady;
@@ -253,6 +258,25 @@ async function saveCredentialProfiles() {
   await fsPromises.writeFile(
     credentialsPath,
     `${JSON.stringify({ version: 1, payload: encrypted.toString('base64') })}\n`,
+    { mode: 0o600 }
+  );
+}
+
+async function loadMonitorSettings() {
+  settingsPath = path.join(app.getPath('userData'), 'monitor-settings.json');
+  try {
+    const stored = JSON.parse(await fsPromises.readFile(settingsPath, 'utf8'));
+    sampleLimit = normalizeSampleLimit(stored?.sampleLimit);
+  } catch (_) {
+    sampleLimit = SAMPLE_LIMIT;
+  }
+}
+
+async function saveMonitorSettings() {
+  await fsPromises.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fsPromises.writeFile(
+    settingsPath,
+    `${JSON.stringify({ version: 1, sampleLimit }, null, 2)}\n`,
     { mode: 0o600 }
   );
 }
@@ -712,17 +736,23 @@ async function scanModule(id) {
   }
 
   state.scanning = true;
+  const activeSampleLimit = sampleLimit;
   state.status = 'scanning';
-  state.message = '正在读取最新 200 条';
+  state.message = `正在读取最新 ${activeSampleLimit} 条`;
   state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
   broadcastSnapshot(id);
 
   try {
     const result = await page.view.webContents.executeJavaScript(
-      `(async () => { ${scanSource}\nreturn await globalThis.smsMonitorScan(${SAMPLE_LIMIT}); })()`,
+      `(async () => { ${scanSource}\nreturn await globalThis.smsMonitorScan(${activeSampleLimit}); })()`,
       true
     );
     state.scanning = false;
+    if (activeSampleLimit !== sampleLimit) {
+      state.needsImmediateScan = false;
+      setTimeout(() => scanModule(id), 0);
+      return;
+    }
     if (!result || typeof result !== 'object') {
       throw new Error('扫描结果无法识别');
     }
@@ -730,7 +760,7 @@ async function scanModule(id) {
       handleAuthenticationRequired(id, result.message || '平台登录已失效。');
       return;
     } else if (result.kind === 'ok') {
-      const metrics = calculateMetrics(result.statuses, SAMPLE_LIMIT);
+      const metrics = calculateMetrics(result.statuses, activeSampleLimit);
       if (metrics.sampleCount === 0) throw new Error('短信记录接口未返回可统计记录');
       Object.assign(state, {
         status: isAlert(metrics, ALERT_THRESHOLD) ? 'alert' : 'healthy',
@@ -745,6 +775,12 @@ async function scanModule(id) {
       return;
     }
   } catch (error) {
+    if (activeSampleLimit !== sampleLimit) {
+      state.scanning = false;
+      state.needsImmediateScan = false;
+      setTimeout(() => scanModule(id), 0);
+      return;
+    }
     handleScanFailure(id, `扫描失败：${error.message}`);
     return;
   }
@@ -789,6 +825,9 @@ function buildSnapshot() {
     modules: moduleList,
     pages: [...pages.values()].map(pageSnapshot),
     selectedPageId,
+    sampleLimit,
+    minimumSampleLimit: MIN_SAMPLE_LIMIT,
+    maximumSampleLimit: MAX_SAMPLE_LIMIT,
     summary: {
       alertCount: summary.alertCount,
       healthyCount: summary.healthyCount,
@@ -1078,6 +1117,31 @@ function registerIPC() {
     if (id) scanModule(id);
     else modules.forEach((module) => scanModule(module.id));
   });
+  ipcMain.handle('settings:set-sample-limit', async (_event, value) => {
+    const parsed = Math.round(Number(value));
+    if (!Number.isFinite(parsed) || parsed < MIN_SAMPLE_LIMIT || parsed > MAX_SAMPLE_LIMIT) {
+      return {
+        ok: false,
+        message: `样本条数必须在 ${MIN_SAMPLE_LIMIT}–${MAX_SAMPLE_LIMIT} 之间`
+      };
+    }
+    if (parsed === sampleLimit) return { ok: true, sampleLimit };
+    sampleLimit = parsed;
+    try {
+      await saveMonitorSettings();
+    } catch (error) {
+      return { ok: false, message: `无法保存本地设置：${error.message}` };
+    }
+    for (const state of moduleStates.values()) {
+      state.metrics = null;
+      state.needsImmediateScan = true;
+      state.status = state.scanning ? 'scanning' : 'starting';
+      state.message = `样本已改为 ${sampleLimit} 条，正在重新扫描`;
+    }
+    broadcastSnapshot();
+    modules.forEach((module) => scanModule(module.id));
+    return { ok: true, sampleLimit };
+  });
   ipcMain.handle('credentials:get', (_event, id) => {
     const page = pages.get(id);
     if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
@@ -1162,6 +1226,7 @@ app.whenReady().then(async () => {
     app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   }
   await loadCredentialProfiles();
+  await loadMonitorSettings();
   try {
     await startLocalAutomationRuntime();
   } catch (error) {

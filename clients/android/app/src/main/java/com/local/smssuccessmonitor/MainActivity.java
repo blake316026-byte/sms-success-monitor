@@ -260,6 +260,10 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         credentials.setOnClickListener(view -> showLoginSettings());
         navigation.addView(credentials, square(dp(38)));
 
+        ImageButton sampleLimit = iconButton(android.R.drawable.ic_menu_edit, "设置样本条数");
+        sampleLimit.setOnClickListener(view -> showSampleLimitSettings());
+        navigation.addView(sampleLimit, square(dp(38)));
+
         addressBar = new EditText(this);
         addressBar.setSingleLine(true);
         addressBar.setTextSize(12);
@@ -534,12 +538,52 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         dialog.show();
     }
 
+    private void showSampleLimitSettings() {
+        if (!bound) {
+            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setSelectAllOnFocus(true);
+        input.setText(String.valueOf(monitorService.getSampleLimit()));
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setPadding(dp(20), 0, dp(20), 0);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("设置监控样本条数")
+                .setMessage("全部已登录后台使用同一设置，可填写 10–500 条。保存后立即重新扫描。")
+                .setView(input)
+                .setPositiveButton("保存并重扫", null)
+                .setNegativeButton("取消", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                int value;
+                try {
+                    value = Integer.parseInt(input.getText().toString().trim());
+                } catch (NumberFormatException error) {
+                    input.setError("请输入整数");
+                    return;
+                }
+                String error = monitorService.setSampleLimit(value);
+                if (!error.isEmpty()) {
+                    input.setError(error);
+                    return;
+                }
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
+        input.requestFocus();
+    }
+
     private void populateOverview(MonitorService.MonitorSnapshot snapshot) {
         if (overviewContent == null) return;
         overviewContent.removeAllViews();
 
         TextView summary = new TextView(this);
-        summary.setText("报警 " + snapshot.alertCount + "   正常 " + snapshot.healthyCount
+        summary.setText("样本 " + snapshot.sampleLimit + " 条   报警 " + snapshot.alertCount + "   正常 " + snapshot.healthyCount
                 + "   待登录 " + snapshot.authenticationCount + "   异常 " + snapshot.errorCount);
         summary.setTextSize(14);
         summary.setTypeface(Typeface.DEFAULT, Typeface.BOLD);

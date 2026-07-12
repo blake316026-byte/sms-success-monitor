@@ -52,6 +52,15 @@ check(
   ScanRecoveryPolicy.shouldReload(consecutiveFailures: 2),
   "reloads the platform context after two consecutive scan failures"
 )
+check(SampleLimitPolicy.normalize(75) == 75, "keeps a valid custom sample limit")
+check(
+  SampleLimitPolicy.normalize(1) == SampleLimitPolicy.minimumValue,
+  "clamps sample limits below the supported range"
+)
+check(
+  SampleLimitPolicy.normalize(10_000) == SampleLimitPolicy.maximumValue,
+  "clamps sample limits above the supported range"
+)
 
 let configuredModules = MonitorConfiguration.allModules
 check(configuredModules.count == 9, "configures all nine monitored platforms")

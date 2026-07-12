@@ -17,7 +17,7 @@ function render(next) {
   snapshot = next;
   if (!selectedId || !snapshot.modules.some((module) => module.id === selectedId)) selectedId = snapshot.summary.focusId;
   const scanned = snapshot.summary.alertCount + snapshot.summary.healthyCount;
-  document.querySelector('#coverage').textContent = `已扫描 ${scanned}/${snapshot.modules.length} · 阈值低于 50%`;
+  document.querySelector('#coverage').textContent = `已扫描 ${scanned}/${snapshot.modules.length} · 样本 ${snapshot.sampleLimit} 条 · 阈值低于 50%`;
   document.querySelector('#alert-count').textContent = `报警 ${snapshot.summary.alertCount}`;
   document.querySelector('#healthy-count').textContent = `正常 ${snapshot.summary.healthyCount}`;
   document.querySelector('#auth-count').textContent = `需登录 ${snapshot.summary.authenticationCount}`;

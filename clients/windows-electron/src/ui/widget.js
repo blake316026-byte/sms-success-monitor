@@ -21,7 +21,7 @@ const footerIcon = document.querySelector('#widget-footer-icon');
 function render(snapshot) {
   const focus = snapshot.modules.find((module) => module.id === snapshot.summary.focusId);
   if (!focus) return;
-  const status = presentation(focus, snapshot.summary);
+  const status = presentation(focus, snapshot.summary, snapshot.sampleLimit);
   name.textContent = focus.name;
   badge.textContent = status.badge;
   value.textContent = status.value;
@@ -34,7 +34,7 @@ function render(snapshot) {
   createIcons({ icons, attrs: { 'stroke-width': 2.2 } });
 }
 
-function presentation(focus, summary) {
+function presentation(focus, summary, sampleLimit) {
   const rate = focus.percentageText || '--';
   const metrics = focus.metrics;
   if (focus.status === 'alert') {
@@ -53,7 +53,7 @@ function presentation(focus, summary) {
   if (focus.status === 'scanning') {
     return {
       kind: 'scanning', color: '#4599ff', badge: '扫描中', value: metrics ? rate : '扫描中',
-      sample: metrics ? `样本 ${metrics.sampleCount}` : '读取最新 200 条', footer: '正在更新监控数据', icon: 'refresh-cw'
+      sample: metrics ? `样本 ${metrics.sampleCount}` : `读取最新 ${sampleLimit} 条`, footer: '正在更新监控数据', icon: 'refresh-cw'
     };
   }
   if (focus.status === 'auth') {

@@ -112,6 +112,24 @@ button { cursor: default; }
 .address-form svg { width: 15px; height: 15px; color: #6b7482; }
 .address-form input { flex: 1; min-width: 0; border: 0; outline: 0; color: #303744; background: transparent; }
 
+.sample-limit-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  width: 96px;
+  height: 36px;
+  padding: 0 7px;
+  border: 1px solid #cfd5de;
+  border-radius: 6px;
+  color: #596273;
+  background: #fff;
+}
+.sample-limit-control:focus-within { border-color: var(--blue); box-shadow: 0 0 0 2px #146fd122; }
+.sample-limit-control svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.sample-limit-control input { width: 48px; min-width: 0; border: 0; outline: 0; color: #303744; background: transparent; text-align: right; }
+.sample-limit-control span { font-size: 11px; }
+
 .page-dialog {
   width: min(480px, calc(100vw - 40px));
   border: 1px solid #cfd5de;

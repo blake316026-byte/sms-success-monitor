@@ -1,5 +1,6 @@
 globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit) {
-  const requestedLimit = Math.max(1, Number(sampleLimit) || 200);
+  const requestedLimit = Math.min(500, Math.max(10, Math.round(Number(sampleLimit) || 200)));
+  const maximumPages = Math.max(1, Math.ceil(requestedLimit / 20));
 
   const readStoredValue = (suffix) => {
     for (const store of [window.localStorage, window.sessionStorage]) {
@@ -55,7 +56,7 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit) {
   const seen = new Set();
   let reportedTotal = null;
 
-  for (let pageNo = 1; pageNo <= 10 && collected.length < requestedLimit; pageNo += 1) {
+  for (let pageNo = 1; pageNo <= maximumPages && collected.length < requestedLimit; pageNo += 1) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 20000);
     let response;

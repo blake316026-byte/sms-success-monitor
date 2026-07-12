@@ -11,6 +11,16 @@ public enum ScanRecoveryPolicy {
   }
 }
 
+public enum SampleLimitPolicy {
+  public static let defaultValue = 200
+  public static let minimumValue = 10
+  public static let maximumValue = 500
+
+  public static func normalize(_ value: Int) -> Int {
+    min(maximumValue, max(minimumValue, value))
+  }
+}
+
 public struct MonitorConfiguration: Equatable, Sendable {
   public let id: String
   public let displayName: String

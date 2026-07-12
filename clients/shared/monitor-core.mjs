@@ -1,7 +1,15 @@
 export const SAMPLE_LIMIT = 200;
+export const MIN_SAMPLE_LIMIT = 10;
+export const MAX_SAMPLE_LIMIT = 500;
 export const ALERT_THRESHOLD = 0.5;
 export const SCAN_INTERVAL_MS = 60_000;
 export const SCAN_FAILURE_RELOAD_THRESHOLD = 2;
+
+export function normalizeSampleLimit(value) {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed)) return SAMPLE_LIMIT;
+  return Math.min(MAX_SAMPLE_LIMIT, Math.max(MIN_SAMPLE_LIMIT, parsed));
+}
 
 export function shouldReloadAfterFailure(
   consecutiveFailures,
@@ -11,7 +19,7 @@ export function shouldReloadAfterFailure(
 }
 
 export function calculateMetrics(statuses, sampleLimit = SAMPLE_LIMIT) {
-  const bounded = Array.from(statuses || []).slice(0, Math.max(0, sampleLimit));
+  const bounded = Array.from(statuses || []).slice(0, normalizeSampleLimit(sampleLimit));
   const successCount = bounded.reduce((count, status) => (
     String(status).trim().toUpperCase() === 'SUCCESS' ? count + 1 : count
   ), 0);

@@ -109,4 +109,18 @@ const cappedPages = await executeScan(200);
 check(cappedPages.statuses.length === 200, 'continues paging when the server caps each page at 20 rows');
 check(cappedPageCalls === 10, 'stops after collecting 200 rows across ten capped pages');
 
+let configuredPageCalls = 0;
+globalThis.window = makeWindow(async (_url, options) => {
+  configuredPageCalls += 1;
+  const pageNo = JSON.parse(options.body).query.pageNo;
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    id: `configured-${pageNo}-${index}`,
+    status: 'SUCCESS'
+  }));
+  return responseFor(rows, 1000);
+});
+const configuredPages = await executeScan(350);
+check(configuredPages.statuses.length === 350, 'returns the manually configured sample count');
+check(configuredPageCalls === 18, 'fetches enough capped pages for a configured sample count');
+
 console.log('All scan-script checks passed');

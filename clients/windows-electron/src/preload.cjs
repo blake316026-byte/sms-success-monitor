@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   addPage: (page) => ipcRenderer.invoke('page:add', page),
   closePage: (id) => ipcRenderer.invoke('page:close', id),
   scan: (id) => ipcRenderer.invoke('monitor:scan', id || null),
+  setSampleLimit: (value) => ipcRenderer.invoke('settings:set-sample-limit', value),
   getCredentials: (id) => ipcRenderer.invoke('credentials:get', id),
   saveCredentials: (id, profile) => ipcRenderer.invoke('credentials:save', id, profile),
   removeCredentials: (id) => ipcRenderer.invoke('credentials:remove', id),

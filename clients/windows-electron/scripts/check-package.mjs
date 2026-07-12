@@ -20,4 +20,12 @@ for (const file of [
 ]) {
   assert.equal(fs.existsSync(path.join(root, file)), true, `missing ${file}`);
 }
+
+const mainSource = fs.readFileSync(path.join(root, 'src/main.mjs'), 'utf8');
+const preloadSource = fs.readFileSync(path.join(root, 'src/preload.cjs'), 'utf8');
+const workbenchSource = fs.readFileSync(path.join(root, 'src/ui/workbench.html'), 'utf8');
+assert.match(mainSource, /settings:set-sample-limit/, 'main process exposes local sample settings');
+assert.match(mainSource, /monitor-settings\.json/, 'sample settings persist in the local user directory');
+assert.match(preloadSource, /setSampleLimit/, 'preload exposes the sample setting command');
+assert.match(workbenchSource, /id="sample-limit"/, 'workbench renders the sample count input');
 console.log('Windows Electron package structure checks passed');

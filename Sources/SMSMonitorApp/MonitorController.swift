@@ -17,6 +17,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var nextScanTimer: Timer?
   private var nextScanAt: Date?
   private var isScanning = false
+  private var sampleLimit: Int
   private var lastMetrics: ScanMetrics?
   private var needsImmediateScan = true
   private var consecutiveScanFailures = 0
@@ -29,11 +30,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   init(
     configuration: MonitorConfiguration,
+    sampleLimit: Int,
     credentialStore: LocalCredentialStore,
     automationRuntime: LocalAutomationRuntime,
     loginAutomation: LoginPageAutomation
   ) {
     self.configuration = configuration
+    self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.credentialStore = credentialStore
     self.automationRuntime = automationRuntime
     self.loginAutomation = loginAutomation
@@ -102,18 +105,31 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     isScanning = true
+    let activeSampleLimit = sampleLimit
     scheduleNextScan(after: configuration.scanInterval)
     emit(.scanning(lastMetrics), nextScanAt: nextScanAt)
 
     webView.callAsyncJavaScript(
       ScanScript.body,
-      arguments: ["sampleLimit": configuration.sampleLimit],
+      arguments: ["sampleLimit": activeSampleLimit],
       in: nil,
       in: .page
     ) { [weak self] result in
       DispatchQueue.main.async {
-        self?.finishScan(result)
+        self?.finishScan(result, sampleLimit: activeSampleLimit)
       }
+    }
+  }
+
+  func updateSampleLimit(_ value: Int) {
+    let normalized = SampleLimitPolicy.normalize(value)
+    guard normalized != sampleLimit else { return }
+    sampleLimit = normalized
+    lastMetrics = nil
+    needsImmediateScan = true
+    emit(.starting("样本已改为 \(normalized) 条，正在重新扫描"), nextScanAt: nil)
+    if !isScanning {
+      scanNow()
     }
   }
 
@@ -124,8 +140,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     webView.stopLoading()
   }
 
-  private func finishScan(_ result: Result<Any, Error>) {
+  private func finishScan(_ result: Result<Any, Error>, sampleLimit activeSampleLimit: Int) {
     isScanning = false
+
+    guard activeSampleLimit == sampleLimit else {
+      scanNow()
+      return
+    }
 
     switch result {
     case .failure(let error):
@@ -142,7 +163,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         let statuses = payload["statuses"] as? [String] ?? []
         let metrics = MetricsCalculator.calculate(
           statuses: statuses,
-          sampleLimit: configuration.sampleLimit
+          sampleLimit: activeSampleLimit
         )
         guard metrics.sampleCount > 0 else {
           handleScanFailure("短信记录接口未返回可统计的记录。")
@@ -519,16 +540,18 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       "bs01": 143,
     ]
     let defaultSuccessCount = scenario == "alert" ? 82 : 154
-    let successCount =
+    let configuredSuccessCount =
       scenario == "fleet"
       ? mockSuccessCounts[configuration.id, default: defaultSuccessCount]
       : defaultSuccessCount
+    let successRate = Double(configuredSuccessCount) / Double(configuration.sampleLimit)
+    let successCount = min(sampleLimit, Int((Double(sampleLimit) * successRate).rounded()))
     let statuses =
       Array(repeating: "SUCCESS", count: successCount)
-      + Array(repeating: "SENT", count: configuration.sampleLimit - successCount)
+      + Array(repeating: "SENT", count: sampleLimit - successCount)
     let metrics = MetricsCalculator.calculate(
       statuses: statuses,
-      sampleLimit: configuration.sampleLimit
+      sampleLimit: sampleLimit
     )
     lastMetrics = metrics
     let state: AppMonitorState =
@@ -596,7 +619,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 final class MonitorController {
   let configurations: [MonitorConfiguration]
   var onStateChange: ((FleetMonitorSnapshot, String?) -> Void)?
+  var onSampleLimitChange: ((Int) -> Void)?
+  private(set) var sampleLimit: Int
 
+  private static let sampleLimitDefaultsKey = "SMSMonitorSampleLimit.v1"
   private let credentialStore: LocalCredentialStore
   private let monitors: [ModuleMonitorController]
   private let workspaceController: PlatformWorkspaceController
@@ -605,6 +631,11 @@ final class MonitorController {
 
   init(configurations: [MonitorConfiguration]) {
     self.configurations = configurations
+    let storedLimit = UserDefaults.standard.integer(forKey: Self.sampleLimitDefaultsKey)
+    let initialSampleLimit = SampleLimitPolicy.normalize(
+      storedLimit == 0 ? SampleLimitPolicy.defaultValue : storedLimit
+    )
+    self.sampleLimit = initialSampleLimit
 
     let credentialStore = LocalCredentialStore()
     let automationRuntime = LocalAutomationRuntime()
@@ -613,6 +644,7 @@ final class MonitorController {
     let monitors = configurations.map {
       ModuleMonitorController(
         configuration: $0,
+        sampleLimit: initialSampleLimit,
         credentialStore: credentialStore,
         automationRuntime: automationRuntime,
         loginAutomation: loginAutomation
@@ -620,6 +652,7 @@ final class MonitorController {
     }
     self.monitors = monitors
     self.workspaceController = PlatformWorkspaceController(
+      sampleLimit: initialSampleLimit,
       monitoredPages: monitors.map {
         MonitoredPlatformPage(
           configuration: $0.configuration,
@@ -641,6 +674,9 @@ final class MonitorController {
     )
     self.workspaceController.onAutoLoginSettings = { [weak self] moduleID in
       self?.showAutoLoginSettings(moduleID: moduleID)
+    }
+    self.workspaceController.onSampleLimitSettings = { [weak self] in
+      self?.showSampleLimitSettings()
     }
 
     for monitor in monitors {
@@ -693,6 +729,55 @@ final class MonitorController {
       monitor.stop()
     }
     workspaceController.stopAll()
+  }
+
+  private func showSampleLimitSettings() {
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    alert.messageText = "设置监控样本条数"
+    alert.informativeText =
+      "全部已登录后台将按这个数量统计。可设置 \(SampleLimitPolicy.minimumValue)–\(SampleLimitPolicy.maximumValue) 条，保存后立即重新扫描。"
+    alert.addButton(withTitle: "保存并重扫")
+    alert.addButton(withTitle: "取消")
+
+    let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 36))
+    let label = NSTextField(labelWithString: "最新")
+    label.frame = NSRect(x: 18, y: 8, width: 42, height: 20)
+    label.alignment = .right
+
+    let field = NSTextField(frame: NSRect(x: 70, y: 4, width: 150, height: 28))
+    field.integerValue = sampleLimit
+    field.placeholderString = "200"
+    field.setAccessibilityLabel("样本条数")
+
+    let stepper = NSStepper(frame: NSRect(x: 224, y: 4, width: 20, height: 28))
+    stepper.minValue = Double(SampleLimitPolicy.minimumValue)
+    stepper.maxValue = Double(SampleLimitPolicy.maximumValue)
+    stepper.increment = 10
+    stepper.integerValue = sampleLimit
+
+    let suffix = NSTextField(labelWithString: "条")
+    suffix.frame = NSRect(x: 254, y: 8, width: 30, height: 20)
+
+    stepper.target = field
+    stepper.action = #selector(NSTextField.takeIntegerValueFrom(_:))
+    accessory.addSubview(label)
+    accessory.addSubview(field)
+    accessory.addSubview(stepper)
+    accessory.addSubview(suffix)
+    alert.accessoryView = accessory
+
+    alert.beginSheetModal(for: workspaceController.window) { [weak self] response in
+      guard response == .alertFirstButtonReturn, let self else { return }
+      let normalized = SampleLimitPolicy.normalize(field.integerValue)
+      self.sampleLimit = normalized
+      UserDefaults.standard.set(normalized, forKey: Self.sampleLimitDefaultsKey)
+      self.workspaceController.updateSampleLimit(normalized)
+      self.onSampleLimitChange?(normalized)
+      for monitor in self.monitors {
+        monitor.updateSampleLimit(normalized)
+      }
+    }
   }
 
   private func showAutoLoginSettings(moduleID: String) {
