@@ -1,12 +1,18 @@
 import AppKit
 
 enum ApplicationMenu {
+  private static var findMenuItem: NSMenuItem?
+
   static func make() -> NSMenu {
     let mainMenu = NSMenu()
     mainMenu.addItem(applicationMenuItem())
     mainMenu.addItem(editMenuItem())
     mainMenu.addItem(windowMenuItem())
     return mainMenu
+  }
+
+  static func setFindTarget(_ target: AnyObject?) {
+    findMenuItem?.target = target
   }
 
   private static func applicationMenuItem() -> NSMenuItem {
@@ -62,6 +68,13 @@ enum ApplicationMenu {
       modifiers: [.command, .shift]
     )
     menu.addItem(.separator())
+    findMenuItem = addItem(
+      to: menu,
+      title: "在当前后台中查找",
+      action: #selector(AppDelegate.findInCurrentBackend(_:)),
+      keyEquivalent: "f"
+    )
+    menu.addItem(.separator())
     addItem(to: menu, title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
     addItem(to: menu, title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
     addItem(to: menu, title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
@@ -92,16 +105,18 @@ enum ApplicationMenu {
     return rootItem
   }
 
+  @discardableResult
   private static func addItem(
     to menu: NSMenu,
     title: String,
     action: Selector,
     keyEquivalent: String = "",
     modifiers: NSEvent.ModifierFlags = [.command]
-  ) {
+  ) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
     item.keyEquivalentModifierMask = modifiers
     item.target = nil
     menu.addItem(item)
+    return item
   }
 }

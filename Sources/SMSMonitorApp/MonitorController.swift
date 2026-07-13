@@ -724,6 +724,10 @@ final class MonitorController {
     workspaceController.show(moduleID: moduleID)
   }
 
+  func focusFind() {
+    workspaceController.focusFind()
+  }
+
   func stop() {
     for monitor in monitors {
       monitor.stop()

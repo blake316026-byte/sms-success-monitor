@@ -85,7 +85,7 @@ private final class WorkspaceTabViewController: NSTabViewController {
 }
 
 final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigationDelegate,
-  WKUIDelegate
+  WKUIDelegate, NSSearchFieldDelegate
 {
   let window: NSWindow
   var onAutoLoginSettings: ((String) -> Void)?
@@ -97,6 +97,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     static let forward = NSToolbarItem.Identifier("SMSMonitorPlatformForward")
     static let reload = NSToolbarItem.Identifier("SMSMonitorPlatformReload")
     static let address = NSToolbarItem.Identifier("SMSMonitorPlatformAddress")
+    static let find = NSToolbarItem.Identifier("SMSMonitorPlatformFind")
     static let autoLogin = NSToolbarItem.Identifier("SMSMonitorPlatformAutoLogin")
     static let sampleLimit = NSToolbarItem.Identifier("SMSMonitorPlatformSampleLimit")
     static let addPage = NSToolbarItem.Identifier("SMSMonitorPlatformAddPage")
@@ -111,6 +112,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   private let tabController = WorkspaceTabViewController()
   private var pages: [PlatformPageViewController] = []
   private var addressField: NSTextField?
+  private var findField: NSSearchField?
+  private var findNavigationControl: NSSegmentedControl?
   private var backItem: NSToolbarItem?
   private var forwardItem: NSToolbarItem?
   private var reloadItem: NSToolbarItem?
@@ -179,6 +182,14 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     updateWindowSubtitle()
   }
 
+  func focusFind() {
+    show(moduleID: nil)
+    guard let findField else { return }
+    window.makeFirstResponder(findField)
+    findField.selectText(nil)
+    findInSelectedPage(backwards: false)
+  }
+
   func stopAll() {
     for page in pages {
       page.webView.stopLoading()
@@ -190,6 +201,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     tabController.canPropagateSelectedChildViewControllerTitle = false
     tabController.onSelectionChange = { [weak self] in
       self?.updateToolbar()
+      self?.findInSelectedPage(backwards: false)
     }
 
     window.contentViewController = tabController
@@ -397,6 +409,59 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     onSampleLimitSettings?()
   }
 
+  @objc private func navigateFindResult(_ sender: NSSegmentedControl) {
+    findInSelectedPage(backwards: sender.selectedSegment == 0)
+  }
+
+  private func findInSelectedPage(backwards: Bool) {
+    guard let webView = selectedPage?.webView, let findField else { return }
+    let query = findField.stringValue
+    findNavigationControl?.isEnabled = !query.isEmpty
+    guard !query.isEmpty else {
+      findField.textColor = .labelColor
+      findField.toolTip = "查找当前后台网页内容"
+      webView.find("", configuration: WKFindConfiguration()) { _ in }
+      return
+    }
+
+    let configuration = WKFindConfiguration()
+    configuration.backwards = backwards
+    configuration.caseSensitive = false
+    configuration.wraps = true
+    webView.find(query, configuration: configuration) { [weak self, weak webView] result in
+      guard let self, let webView, webView === self.selectedPage?.webView else { return }
+      guard query == self.findField?.stringValue else { return }
+      self.findField?.textColor = result.matchFound ? .labelColor : .systemRed
+      self.findField?.toolTip = result.matchFound ? "已找到匹配项" : "当前网页中未找到"
+      self.findNavigationControl?.isEnabled = result.matchFound
+    }
+  }
+
+  func controlTextDidChange(_ notification: Notification) {
+    guard let field = notification.object as? NSSearchField, field === findField else { return }
+    findInSelectedPage(backwards: false)
+  }
+
+  func control(
+    _ control: NSControl,
+    textView: NSTextView,
+    doCommandBy commandSelector: Selector
+  ) -> Bool {
+    guard control === findField else { return false }
+    if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+      let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+      findInSelectedPage(backwards: backwards)
+      return true
+    }
+    if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+      findField?.stringValue = ""
+      findInSelectedPage(backwards: false)
+      selectedPage?.webView.window?.makeFirstResponder(selectedPage?.webView)
+      return true
+    }
+    return false
+  }
+
   @objc private func navigateFromAddressField(_ sender: NSTextField) {
     guard let page = selectedPage else { return }
     guard let url = Self.normalizedURL(from: sender.stringValue) else {
@@ -515,6 +580,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.reload,
       .flexibleSpace,
       ToolbarIdentifier.address,
+      ToolbarIdentifier.find,
       ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
@@ -529,6 +595,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.reload,
       ToolbarIdentifier.address,
       .flexibleSpace,
+      ToolbarIdentifier.find,
       ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
@@ -600,6 +667,45 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         action: #selector(configureAutoLogin)
       )
       autoLoginItem = item
+      return item
+
+    case ToolbarIdentifier.find:
+      let field = NSSearchField(frame: NSRect(x: 0, y: 0, width: 164, height: 28))
+      field.placeholderString = "查找网页内容"
+      field.font = .systemFont(ofSize: 12.5)
+      field.delegate = self
+      field.setAccessibilityLabel("查找当前后台网页内容")
+      findField = field
+
+      let navigation = NSSegmentedControl(
+        images: [
+          NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "上一个匹配项")
+            ?? NSImage(),
+          NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "下一个匹配项")
+            ?? NSImage(),
+        ],
+        trackingMode: .momentary,
+        target: self,
+        action: #selector(navigateFindResult(_:))
+      )
+      navigation.setWidth(27, forSegment: 0)
+      navigation.setWidth(27, forSegment: 1)
+      navigation.setToolTip("上一个匹配项", forSegment: 0)
+      navigation.setToolTip("下一个匹配项", forSegment: 1)
+      navigation.isEnabled = false
+      findNavigationControl = navigation
+
+      let stack = NSStackView(views: [field, navigation])
+      stack.orientation = .horizontal
+      stack.alignment = .centerY
+      stack.spacing = 4
+      stack.frame = NSRect(x: 0, y: 0, width: 224, height: 28)
+
+      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+      item.label = "查找"
+      item.paletteLabel = "查找"
+      item.toolTip = "查找当前后台网页内容（Command-F）"
+      item.view = stack
       return item
 
     case ToolbarIdentifier.sampleLimit:

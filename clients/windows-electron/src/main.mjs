@@ -197,17 +197,49 @@ async function performPackagedLocalAutomationCheck() {
   ) {
     throw new Error('Windows workbench zoom runtime check failed');
   }
-  const zoomCheckView = new WebContentsView({
+  const workbenchCheckView = new WebContentsView({
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
+  const workbenchCheckWindow = new BrowserWindow({
+    width: 400,
+    height: 300,
+    show: false
+  });
+  workbenchCheckView.setBounds({ x: 0, y: 0, width: 400, height: 300 });
+  workbenchCheckWindow.contentView.addChildView(workbenchCheckView);
+  workbenchCheckWindow.showInactive();
   try {
-    await zoomCheckView.webContents.loadURL('about:blank');
-    zoomCheckView.webContents.setZoomFactor(1.25);
-    if (Math.abs(zoomCheckView.webContents.getZoomFactor() - 1.25) > 0.001) {
+    await workbenchCheckView.webContents.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent('<p>monitor find check</p><p>monitor find check</p>')}`
+    );
+    workbenchCheckView.webContents.focus();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    workbenchCheckView.webContents.setZoomFactor(1.25);
+    if (Math.abs(workbenchCheckView.webContents.getZoomFactor() - 1.25) > 0.001) {
       throw new Error('Windows WebContentsView zoom factor did not apply');
     }
+    const findResult = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        workbenchCheckView.webContents.removeListener('found-in-page', onFoundInPage);
+        reject(new Error('Windows WebContentsView page find timed out'));
+      }, 5_000);
+      const onFoundInPage = (_event, result) => {
+        if (!result.finalUpdate) return;
+        clearTimeout(timeout);
+        workbenchCheckView.webContents.removeListener('found-in-page', onFoundInPage);
+        resolve(result);
+      };
+      workbenchCheckView.webContents.on('found-in-page', onFoundInPage);
+      workbenchCheckView.webContents.findInPage('monitor find check', { findNext: true });
+    });
+    if (findResult.matches !== 2) {
+      throw new Error(`Windows WebContentsView page find returned ${findResult.matches} matches`);
+    }
+    workbenchCheckView.webContents.stopFindInPage('clearSelection');
   } finally {
-    zoomCheckView.webContents.close();
+    workbenchCheckWindow.contentView.removeChildView(workbenchCheckView);
+    workbenchCheckView.webContents.close();
+    workbenchCheckWindow.destroy();
   }
 
   await startLocalAutomationRuntime();
@@ -408,6 +440,10 @@ function createRemotePage(page) {
   view.webContents.on('did-navigate-in-page', () => broadcastSnapshot());
   view.webContents.on('zoom-changed', (_event, direction) => {
     void changeWorkbenchZoom(direction);
+  });
+  view.webContents.on('found-in-page', (_event, result) => {
+    if (page.id !== selectedPageId || !workbenchWindow || workbenchWindow.isDestroyed()) return;
+    workbenchWindow.webContents.send('find:result', { pageId: page.id, ...result });
   });
   view.webContents.on('render-process-gone', () => {
     if (quitting || !page.monitored) return;
@@ -1052,6 +1088,12 @@ function createApplicationMenu() {
         { role: 'undo', label: '撤销' },
         { role: 'redo', label: '重做' },
         { type: 'separator' },
+        {
+          label: '在当前后台中查找',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => showWorkbenchFind()
+        },
+        { type: 'separator' },
         { role: 'cut', label: '剪切' },
         { role: 'copy', label: '复制' },
         { role: 'paste', label: '粘贴' },
@@ -1089,6 +1131,11 @@ function createApplicationMenu() {
     }
   ]);
   Menu.setApplicationMenu(menu);
+}
+
+function showWorkbenchFind() {
+  showWorkbench();
+  workbenchWindow.webContents.send('find:show');
 }
 
 function showWorkbench(id) {
@@ -1150,6 +1197,7 @@ function registerIPC() {
   ipcMain.handle('snapshot:get', () => buildSnapshot());
   ipcMain.handle('page:select', (_event, id) => {
     if (!pages.has(id)) return false;
+    pages.get(selectedPageId)?.view.webContents.stopFindInPage('clearSelection');
     selectedPageId = id;
     attachSelectedView();
     return true;
@@ -1174,6 +1222,33 @@ function registerIPC() {
     if (history?.canGoForward()) history.goForward();
   });
   ipcMain.handle('page:reload', () => pages.get(selectedPageId)?.view.webContents.reload());
+  ipcMain.handle('page:find', (_event, query, options) => {
+    const page = pages.get(selectedPageId);
+    const text = String(query || '');
+    if (!page || page.view.webContents.isDestroyed()) {
+      return { ok: false, message: '当前后台页面不可用' };
+    }
+    if (!text) {
+      page.view.webContents.stopFindInPage('clearSelection');
+      return { ok: true, requestId: null };
+    }
+    const requestId = page.view.webContents.findInPage(text, {
+      forward: options?.forward !== false,
+      findNext: options?.findNext !== false,
+      matchCase: false
+    });
+    return { ok: true, requestId };
+  });
+  ipcMain.handle('page:stop-find', (_event, action = 'clearSelection') => {
+    const page = pages.get(selectedPageId);
+    if (!page || page.view.webContents.isDestroyed()) return false;
+    const normalizedAction = ['clearSelection', 'keepSelection', 'activateSelection'].includes(action)
+      ? action
+      : 'clearSelection';
+    page.view.webContents.stopFindInPage(normalizedAction);
+    page.view.webContents.focus();
+    return true;
+  });
   ipcMain.handle('page:add', async (_event, input) => {
     const url = normalizeURL(input?.url);
     const name = String(input?.name || '').trim();
@@ -1300,7 +1375,7 @@ app.whenReady().then(async () => {
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
-    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP and workbench zoom checks passed';
+    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP, workbench zoom and page find checks passed';
     try {
       await runPackagedLocalAutomationCheck();
     } catch (error) {

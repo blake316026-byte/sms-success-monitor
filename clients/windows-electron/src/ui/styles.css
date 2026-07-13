@@ -26,11 +26,57 @@ button { cursor: default; }
 }
 
 .workbench-shell {
+  position: relative;
   height: 112px;
   border-bottom: 1px solid var(--border);
   background: #f6f7f9;
   overflow: hidden;
 }
+
+.find-bar {
+  position: absolute;
+  z-index: 4;
+  top: 56px;
+  right: 12px;
+  display: grid;
+  grid-template-columns: 18px minmax(150px, 230px) 48px 30px 30px 30px;
+  align-items: center;
+  gap: 3px;
+  height: 43px;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid #cbd1da;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 6px 18px #2632472e;
+}
+.find-bar[hidden] { display: none; }
+.find-bar > svg { width: 15px; height: 15px; color: #6a7483; }
+.find-bar input {
+  min-width: 0;
+  height: 31px;
+  padding: 0 7px;
+  border: 0;
+  outline: 0;
+  color: #252c37;
+  background: transparent;
+}
+.find-bar input.not-found { color: var(--red); }
+.find-bar span { color: #737c89; font: 600 11px/1 "Consolas", "Segoe UI", sans-serif; text-align: center; }
+.find-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: #424b59;
+  background: transparent;
+}
+.find-bar button:hover { background: #eef1f5; }
+.find-bar button:disabled { opacity: 0.34; }
+.find-bar button svg { width: 15px; height: 15px; }
 
 .tab-strip {
   display: flex;

@@ -2,6 +2,8 @@ import {
   CircleCheck,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   FileText,
   Hash,
   KeyRound,
@@ -11,6 +13,7 @@ import {
   Plus,
   Radar,
   RefreshCw,
+  Search,
   TableProperties,
   TriangleAlert,
   WifiOff,
@@ -24,6 +27,8 @@ const iconSet = {
   CircleCheck,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   FileText,
   Hash,
   KeyRound,
@@ -33,6 +38,7 @@ const iconSet = {
   Plus,
   Radar,
   RefreshCw,
+  Search,
   TableProperties,
   TriangleAlert,
   WifiOff,
@@ -41,6 +47,9 @@ const iconSet = {
   ZoomOut
 };
 let snapshot;
+let lastSelectedPageId;
+let findTimer;
+let lastFindQuery = '';
 
 const tabs = document.querySelector('#tabs');
 const address = document.querySelector('#address');
@@ -53,6 +62,11 @@ const sampleLimitInput = document.querySelector('#sample-limit');
 const zoomOutButton = document.querySelector('#zoom-out');
 const zoomResetButton = document.querySelector('#zoom-reset');
 const zoomInButton = document.querySelector('#zoom-in');
+const findBar = document.querySelector('#find-bar');
+const findInput = document.querySelector('#find-input');
+const findCount = document.querySelector('#find-count');
+const findPreviousButton = document.querySelector('#find-previous');
+const findNextButton = document.querySelector('#find-next');
 const dialog = document.querySelector('#add-dialog');
 const pageName = document.querySelector('#page-name');
 const pageURL = document.querySelector('#page-url');
@@ -98,6 +112,8 @@ function render() {
   }));
 
   const selected = snapshot.pages.find((page) => page.id === snapshot.selectedPageId);
+  const selectionChanged = lastSelectedPageId && lastSelectedPageId !== snapshot.selectedPageId;
+  lastSelectedPageId = snapshot.selectedPageId;
   if (selected) {
     address.value = selected.currentURL;
     backButton.disabled = !selected.canGoBack;
@@ -115,6 +131,42 @@ function render() {
   zoomOutButton.disabled = snapshot.workbenchZoomPercent <= snapshot.minimumWorkbenchZoomPercent;
   zoomInButton.disabled = snapshot.workbenchZoomPercent >= snapshot.maximumWorkbenchZoomPercent;
   createIcons({ icons: iconSet, attrs: { 'stroke-width': 2 } });
+  if (selectionChanged && !findBar.hidden && findInput.value) {
+    runFind(true, true);
+  }
+}
+
+function openFind() {
+  findBar.hidden = false;
+  findInput.focus();
+  findInput.select();
+  if (findInput.value) runFind(true, true);
+}
+
+function closeFind() {
+  clearTimeout(findTimer);
+  lastFindQuery = '';
+  findBar.hidden = true;
+  findCount.textContent = '';
+  findInput.classList.remove('not-found');
+  window.smsApi.stopFindInPage('clearSelection');
+}
+
+function runFind(forward, findNext) {
+  const query = findInput.value;
+  findPreviousButton.disabled = !query;
+  findNextButton.disabled = !query;
+  if (!query) {
+    lastFindQuery = '';
+    findCount.textContent = '';
+    findInput.classList.remove('not-found');
+    window.smsApi.stopFindInPage('clearSelection');
+    return;
+  }
+  const beginNewSession = findNext || query !== lastFindQuery;
+  lastFindQuery = query;
+  findCount.textContent = '...';
+  window.smsApi.findInPage(query, { forward, findNext: beginNewSession });
 }
 
 function statusLabel(status) {
@@ -161,6 +213,7 @@ document.querySelector('#scan').addEventListener('click', () => {
   window.smsApi.scan(selected?.monitored ? selected.id : null);
 });
 document.querySelector('#detail').addEventListener('click', () => window.smsApi.showDetail());
+document.querySelector('#find').addEventListener('click', openFind);
 credentialsButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
   if (!selected?.monitored) return;
@@ -195,6 +248,29 @@ document.querySelector('#add').addEventListener('click', () => {
   pageName.select();
 });
 closeButton.addEventListener('click', () => window.smsApi.closePage(snapshot.selectedPageId));
+findInput.addEventListener('input', () => {
+  clearTimeout(findTimer);
+  findTimer = setTimeout(() => runFind(true, true), 120);
+});
+findInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeFind();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    clearTimeout(findTimer);
+    runFind(!event.shiftKey, false);
+  }
+});
+findPreviousButton.addEventListener('click', () => runFind(false, false));
+findNextButton.addEventListener('click', () => runFind(true, false));
+document.querySelector('#find-close').addEventListener('click', closeFind);
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    openFind();
+  }
+});
 
 for (const id of ['cancel-add', 'cancel-add-bottom']) {
   document.querySelector(`#${id}`).addEventListener('click', () => dialog.close());
@@ -238,6 +314,18 @@ removeCredentialsButton.addEventListener('click', async () => {
 });
 
 async function initialize() {
+  window.smsApi.onShowFind(openFind);
+  window.smsApi.onFindResult((result) => {
+    if (!snapshot || result.pageId !== snapshot.selectedPageId || findBar.hidden) return;
+    const matches = Number(result.matches) || 0;
+    const active = matches > 0 ? Number(result.activeMatchOrdinal) || 1 : 0;
+    findCount.textContent = `${active}/${matches}`;
+    findInput.classList.toggle('not-found', matches === 0 && result.finalUpdate);
+    if (result.finalUpdate) {
+      findPreviousButton.disabled = matches === 0;
+      findNextButton.disabled = matches === 0;
+    }
+  });
   window.smsApi.onSnapshot((next) => {
     snapshot = next;
     render();

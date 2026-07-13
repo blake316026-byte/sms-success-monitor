@@ -30,8 +30,17 @@
         <button class="icon-button" id="scan" title="扫描当前后台" aria-label="扫描当前后台"><i data-lucide="radar"></i></button>
         <button class="icon-button" id="detail" title="监控总览" aria-label="监控总览"><i data-lucide="table-properties"></i></button>
         <button class="icon-button" id="credentials" title="自动登录设置" aria-label="自动登录设置"><i data-lucide="key-round"></i></button>
+        <button class="icon-button" id="find" title="在当前后台中查找（Ctrl F）" aria-label="在当前后台中查找"><i data-lucide="search"></i></button>
         <button class="icon-button" id="add" title="新增独立页面" aria-label="新增独立页面"><i data-lucide="plus"></i></button>
         <button class="icon-button" id="close-page" title="关闭自定义页面" aria-label="关闭自定义页面"><i data-lucide="x"></i></button>
+      </div>
+      <div class="find-bar" id="find-bar" hidden>
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input id="find-input" type="search" autocomplete="off" spellcheck="false" aria-label="查找当前后台网页内容" placeholder="查找网页内容">
+        <span id="find-count" aria-live="polite"></span>
+        <button id="find-previous" title="上一个（Shift Enter）" aria-label="上一个匹配项"><i data-lucide="chevron-up"></i></button>
+        <button id="find-next" title="下一个（Enter）" aria-label="下一个匹配项"><i data-lucide="chevron-down"></i></button>
+        <button id="find-close" title="关闭（Esc）" aria-label="关闭查找栏"><i data-lucide="x"></i></button>
       </div>
     </header>
 

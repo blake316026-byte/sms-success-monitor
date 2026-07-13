@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('smsApi', {
   goBack: () => ipcRenderer.invoke('page:back'),
   goForward: () => ipcRenderer.invoke('page:forward'),
   reload: () => ipcRenderer.invoke('page:reload'),
+  findInPage: (query, options) => ipcRenderer.invoke('page:find', query, options),
+  stopFindInPage: (action) => ipcRenderer.invoke('page:stop-find', action),
   addPage: (page) => ipcRenderer.invoke('page:add', page),
   closePage: (id) => ipcRenderer.invoke('page:close', id),
   scan: (id) => ipcRenderer.invoke('monitor:scan', id || null),
@@ -23,5 +25,15 @@ contextBridge.exposeInMainWorld('smsApi', {
     const handler = (_event, snapshot) => callback(snapshot);
     ipcRenderer.on('snapshot:changed', handler);
     return () => ipcRenderer.removeListener('snapshot:changed', handler);
+  },
+  onShowFind: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('find:show', handler);
+    return () => ipcRenderer.removeListener('find:show', handler);
+  },
+  onFindResult: (callback) => {
+    const handler = (_event, result) => callback(result);
+    ipcRenderer.on('find:result', handler);
+    return () => ipcRenderer.removeListener('find:result', handler);
   }
 });

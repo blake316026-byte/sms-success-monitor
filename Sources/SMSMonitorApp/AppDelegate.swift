@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import SMSMonitorCore
+import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
   private let configurations = MonitorConfiguration.allModules
@@ -8,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
   private var monitorController: MonitorController!
   private var alertNotifier: AlertNotifier!
   private var localAutomationCheckRuntime: LocalAutomationRuntime?
+  private var localFindCheckWebView: WKWebView?
   private var currentSnapshot = FleetMonitorSnapshot.initial(
     configurations: MonitorConfiguration.allModules
   )
@@ -19,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
     }
     alertNotifier = AlertNotifier()
     monitorController = MonitorController(configurations: configurations)
+    ApplicationMenu.setFindTarget(self)
     widgetController = StatusWidgetController(
       configurations: configurations,
       sampleLimit: monitorController.sampleLimit
@@ -59,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
 
   func statusWidgetRequestedQuit() {
     NSApp.terminate(nil)
+  }
+
+  @objc func findInCurrentBackend(_ sender: Any?) {
+    monitorController?.focusFind()
   }
 
   private func handle(snapshot: FleetMonitorSnapshot, changedModuleID: String?) {
@@ -141,12 +148,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
               fputs("Local otpauth TOTP check failed\n", stderr)
               exit(1)
             }
-            print("Local OCR and TOTP runtime checks passed")
-            self?.localAutomationCheckRuntime = nil
-            NSApp.terminate(nil)
+            self?.runLocalFindCheck()
           }
         }
       }
+    }
+  }
+
+  private func runLocalFindCheck() {
+    let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+    localFindCheckWebView = webView
+    webView.navigationDelegate = self
+    webView.loadHTMLString("<html><body>monitor find check</body></html>", baseURL: nil)
+  }
+}
+
+extension AppDelegate: WKNavigationDelegate {
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard webView === localFindCheckWebView else { return }
+    let configuration = WKFindConfiguration()
+    configuration.caseSensitive = false
+    configuration.wraps = true
+    webView.find("find check", configuration: configuration) { [weak self] result in
+      guard result.matchFound else {
+        fputs("Local page find check failed\n", stderr)
+        exit(1)
+      }
+      print("Local OCR, TOTP and page find runtime checks passed")
+      self?.localAutomationCheckRuntime = nil
+      self?.localFindCheckWebView = nil
+      NSApp.terminate(nil)
     }
   }
 }

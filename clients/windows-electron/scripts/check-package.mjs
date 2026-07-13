@@ -34,4 +34,10 @@ assert.match(preloadSource, /changeWorkbenchZoom/, 'preload exposes workbench zo
 assert.match(workbenchSource, /id="zoom-out"/, 'workbench renders zoom out');
 assert.match(workbenchSource, /id="zoom-reset"/, 'workbench renders the zoom percentage');
 assert.match(workbenchSource, /id="zoom-in"/, 'workbench renders zoom in');
+assert.match(mainSource, /findInPage/, 'main process searches the selected backend page');
+assert.match(mainSource, /found-in-page/, 'main process forwards find result counts');
+assert.match(preloadSource, /findInPage/, 'preload exposes page find commands');
+assert.match(workbenchSource, /id="find-bar"/, 'workbench renders the page find bar');
+assert.match(workbenchSource, /id="find-previous"/, 'workbench renders previous match');
+assert.match(workbenchSource, /id="find-next"/, 'workbench renders next match');
 console.log('Windows Electron package structure checks passed');
