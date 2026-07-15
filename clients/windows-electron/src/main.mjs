@@ -569,6 +569,21 @@ function pauseAutoLogin(id, detail = '') {
   });
 }
 
+function pauseForManualLogin(id) {
+  const state = moduleStates.get(id);
+  if (!state) return;
+  state.autoLoginInProgress = false;
+  state.autoLoginStage = '';
+  if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
+  state.autoLoginTimer = null;
+  updateModule(id, {
+    status: 'auth',
+    message: '检测到人工输入，自动登录已暂停，请完成验证码登录。',
+    metrics: null,
+    nextScanAt: Date.now() + SCAN_INTERVAL_MS
+  });
+}
+
 function retryAutoLogin(id, message) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
@@ -688,13 +703,17 @@ async function attemptAutoLogin(id, currentURL) {
       'globalThis.smsLoginAutomation.snapshot()'
     );
     if (snapshot?.token) await updateStoredToken(id, snapshot.token);
+    if (snapshot?.kind === 'manual') {
+      pauseForManualLogin(id);
+      return;
+    }
     if (snapshot?.kind === 'login') {
       if (!snapshot.captchaDataUrl) {
         retryAutoLogin(id, '验证码图片尚未加载');
         return;
       }
       const captcha = await callLocalAutomation('recognize', snapshot.captchaDataUrl);
-      if (!/^[0-9A-Za-z]{4,8}$/.test(String(captcha || ''))) {
+      if (!/^[0-9A-Za-z]{4}$/.test(String(captcha || ''))) {
         await runLoginPageAction(page, 'globalThis.smsLoginAutomation.refreshCaptcha()');
         retryAutoLogin(id, '本地验证码识别结果无效');
         return;
@@ -707,6 +726,10 @@ async function attemptAutoLogin(id, currentURL) {
           captcha
         })})`
       );
+      if (submitted?.manual) {
+        pauseForManualLogin(id);
+        return;
+      }
       if (!submitted?.submitted) {
         retryAutoLogin(id, submitted?.message || '登录表单尚未准备完成');
         return;
@@ -726,14 +749,20 @@ async function attemptAutoLogin(id, currentURL) {
         });
         return;
       }
-      const offsets = [0, -210, 210, -180, 180];
-      const offset = offsets[Math.min(state.autoLoginAttempts, offsets.length - 1)];
-      const cyclePosition = Math.floor((Date.now() / 1000 + offset) % 30);
+      const rawServerOffset = Number(snapshot.clockOffsetMs);
+      const serverOffsetMs = Number.isFinite(rawServerOffset)
+        && Math.abs(rawServerOffset) <= 43_200_000
+        ? rawServerOffset
+        : 0;
+      const retryOffsetsMs = [0, -30_000, 30_000, -60_000, 60_000];
+      const offsetMs = serverOffsetMs
+        + retryOffsetsMs[Math.min(state.autoLoginAttempts, retryOffsetsMs.length - 1)];
+      const cyclePosition = Math.floor(((Date.now() + offsetMs) / 1000) % 30);
       if (cyclePosition > 24) {
         await new Promise((resolve) => setTimeout(resolve, 6500));
         if (!state.autoLoginInProgress) return;
       }
-      const code = await callLocalAutomation('generateTotp', secret, Date.now() + offset * 1000);
+      const code = await callLocalAutomation('generateTotp', secret, Date.now() + offsetMs);
       const submitted = await runLoginPageAction(
         page,
         `globalThis.smsLoginAutomation.submitTotp(${JSON.stringify({ code })})`
@@ -1259,6 +1288,15 @@ function registerIPC() {
     selectedPageId = page.id;
     attachSelectedView();
     return { ok: true, id: page.id };
+  });
+  ipcMain.handle('page:rename', async (_event, id, value) => {
+    const page = pages.get(id);
+    const name = String(value || '').trim();
+    if (!page || page.monitored || !name) return { ok: false, message: '只能修改自定义页面名称' };
+    page.name = name;
+    await saveCustomPages();
+    broadcastSnapshot();
+    return { ok: true };
   });
   ipcMain.handle('page:close', async (_event, id) => {
     const page = pages.get(id);

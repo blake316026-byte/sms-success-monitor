@@ -86,6 +86,8 @@ jobs:
 
           **v0.3.5 工作台网页查找**：Windows 使用 `Ctrl-F`、macOS 使用 `Command-F` 查找当前选中的后台网页内容，可切换上一个和下一个匹配项；切换后台标签后按当前关键词继续查找。
 
+          **v0.3.6 登录与页面管理**：修复图片验证码与 Google 动态码自动提交，macOS 后台钥匙串访问不再反复阻塞工作台；macOS 和 Windows 自定义页面支持重命名与删除。
+
           这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
           NOTES
       - name: Publish GitHub Release

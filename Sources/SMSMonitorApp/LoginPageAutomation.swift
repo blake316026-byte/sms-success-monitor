@@ -5,6 +5,13 @@ struct LoginPageSnapshot {
   let kind: String
   let captchaDataURL: String
   let token: String
+  let clockOffsetMilliseconds: Double
+}
+
+struct LoginPageSubmission {
+  let submitted: Bool
+  let manual: Bool
+  let message: String
 }
 
 final class LoginPageAutomation {
@@ -34,7 +41,8 @@ final class LoginPageAutomation {
           LoginPageSnapshot(
             kind: kind,
             captchaDataURL: payload["captchaDataUrl"] as? String ?? "",
-            token: payload["token"] as? String ?? ""
+            token: payload["token"] as? String ?? "",
+            clockOffsetMilliseconds: (payload["clockOffsetMs"] as? NSNumber)?.doubleValue ?? 0
           )
         )
       })
@@ -45,7 +53,7 @@ final class LoginPageAutomation {
     in webView: WKWebView,
     profile: LocalLoginProfile,
     captcha: String,
-    completion: @escaping (Result<Bool, Error>) -> Void
+    completion: @escaping (Result<LoginPageSubmission, Error>) -> Void
   ) {
     call(
       in: webView,
@@ -62,7 +70,7 @@ final class LoginPageAutomation {
         "captcha": captcha,
       ]
     ) { result in
-      completion(result.flatMap(Self.submittedResult))
+      completion(result.flatMap(Self.loginSubmissionResult))
     }
   }
 
@@ -123,5 +131,18 @@ final class LoginPageAutomation {
       return .failure(LocalAutomationRuntimeError.invalidResult)
     }
     return .success(payload["submitted"] as? Bool ?? false)
+  }
+
+  private static func loginSubmissionResult(_ value: Any) -> Result<LoginPageSubmission, Error> {
+    guard let payload = value as? [String: Any] else {
+      return .failure(LocalAutomationRuntimeError.invalidResult)
+    }
+    return .success(
+      LoginPageSubmission(
+        submitted: payload["submitted"] as? Bool ?? false,
+        manual: payload["manual"] as? Bool ?? false,
+        message: payload["message"] as? String ?? ""
+      )
+    )
   }
 }

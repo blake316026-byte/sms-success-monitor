@@ -291,7 +291,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         case "login":
           self.solveCaptchaAndSubmit(profile: profile, dataURL: snapshot.captchaDataURL)
         case "totp":
-          self.generateAndSubmitTOTP(profile: profile)
+          self.generateAndSubmitTOTP(
+            profile: profile,
+            clockOffsetMilliseconds: snapshot.clockOffsetMilliseconds
+          )
+        case "manual":
+          self.pauseForManualLogin()
         case "authenticated":
           self.completeAutoLogin(token: snapshot.token)
         case "unlock-ip":
@@ -318,7 +323,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       case .failure(let error):
         self.retryAutoLogin("本地验证码识别失败：\(error.localizedDescription)")
       case .success(let captcha):
-        guard (4...8).contains(captcha.count) else {
+        guard captcha.range(of: #"^[0-9A-Za-z]{4}$"#, options: .regularExpression) != nil else {
           self.loginAutomation.refreshCaptcha(in: self.webView)
           self.retryAutoLogin("本地验证码识别结果无效")
           return
@@ -329,18 +334,32 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           captcha: captcha
         ) { [weak self] submitResult in
           guard let self else { return }
-          guard (try? submitResult.get()) == true else {
-            self.retryAutoLogin("登录表单尚未准备完成")
-            return
+          switch submitResult {
+          case .failure(let error):
+            self.retryAutoLogin("登录表单提交失败：\(error.localizedDescription)")
+          case .success(let submission):
+            if submission.manual {
+              self.pauseForManualLogin()
+              return
+            }
+            guard submission.submitted else {
+              self.retryAutoLogin(
+                submission.message.isEmpty ? "登录表单尚未准备完成" : submission.message
+              )
+              return
+            }
+            self.autoLoginStage = "login"
+            self.scheduleAutoLoginOutcomeCheck()
           }
-          self.autoLoginStage = "login"
-          self.scheduleAutoLoginOutcomeCheck()
         }
       }
     }
   }
 
-  private func generateAndSubmitTOTP(profile: LocalLoginProfile) {
+  private func generateAndSubmitTOTP(
+    profile: LocalLoginProfile,
+    clockOffsetMilliseconds: Double
+  ) {
     let secret = profile.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !secret.isEmpty else {
       autoLoginInProgress = false
@@ -350,8 +369,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       )
       return
     }
-    let offsets = [0, -210, 210, -180, 180]
-    let offset = offsets[min(autoLoginAttempts, offsets.count - 1)]
+    let serverOffset = clockOffsetMilliseconds.isFinite
+      && abs(clockOffsetMilliseconds) <= 43_200_000
+      ? clockOffsetMilliseconds / 1_000
+      : 0
+    let retryOffsets = [0, -30, 30, -60, 60]
+    let offset = serverOffset + Double(retryOffsets[min(autoLoginAttempts, retryOffsets.count - 1)])
     let adjustedNow = Date().addingTimeInterval(TimeInterval(offset))
     let cyclePosition = adjustedNow.timeIntervalSince1970.truncatingRemainder(dividingBy: 30)
     let delay = cyclePosition > 24 ? 6.5 : 0
@@ -435,6 +458,16 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       .authenticationRequired(
         "自动登录已连续失败 \(Self.maximumAutoLoginAttempts) 次\(suffix)，暂停至 \(Self.timeText(cooldown))。"
       ),
+      nextScanAt: nextScanAt
+    )
+  }
+
+  private func pauseForManualLogin() {
+    autoLoginInProgress = false
+    autoLoginStage = ""
+    autoLoginOutcomeWorkItem?.cancel()
+    emit(
+      .authenticationRequired("检测到人工输入，自动登录已暂停，请完成验证码登录。"),
       nextScanAt: nextScanAt
     )
   }
@@ -786,7 +819,7 @@ final class MonitorController {
 
   private func showAutoLoginSettings(moduleID: String) {
     guard let configuration = configurations.first(where: { $0.id == moduleID }) else { return }
-    let existing = credentialStore.profile(for: moduleID)
+    let existing = credentialStore.profile(for: moduleID, allowInteraction: true)
 
     let alert = NSAlert()
     alert.alertStyle = .informational
@@ -862,7 +895,7 @@ final class MonitorController {
         token: existing?.token ?? "",
         autoLoginEnabled: enabledButton.state == .on
       )
-      guard self.credentialStore.save(profile, for: moduleID) else {
+      guard self.credentialStore.save(profile, for: moduleID, allowInteraction: true) else {
         self.showCredentialError("无法写入本机钥匙串，请检查系统钥匙串权限。")
         return
       }

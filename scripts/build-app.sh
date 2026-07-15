@@ -28,5 +28,10 @@ lipo -create \
 cp "${ROOT_DIR}/Resources/Info.plist" "${APP_DIR}/Contents/Info.plist"
 cp -R "${ROOT_DIR}/clients/shared/auto-login" "${APP_DIR}/Contents/Resources/auto-login"
 
-codesign --force --deep --sign - "${APP_DIR}" >/dev/null
+codesign \
+  --force \
+  --deep \
+  --sign - \
+  --requirements '=designated => identifier "com.local.sms-success-monitor"' \
+  "${APP_DIR}" >/dev/null
 echo "${APP_DIR}"

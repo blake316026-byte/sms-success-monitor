@@ -102,6 +102,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     static let sampleLimit = NSToolbarItem.Identifier("SMSMonitorPlatformSampleLimit")
     static let addPage = NSToolbarItem.Identifier("SMSMonitorPlatformAddPage")
     static let closePage = NSToolbarItem.Identifier("SMSMonitorPlatformClosePage")
+    static let renamePage = NSToolbarItem.Identifier("SMSMonitorPlatformRenamePage")
   }
 
   private static let savedPagesKey = "SMSMonitorPlatformPages.v1"
@@ -120,6 +121,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   private var sampleLimitItem: NSToolbarItem?
   private var autoLoginItem: NSToolbarItem?
   private var closePageItem: NSToolbarItem?
+  private var renamePageItem: NSToolbarItem?
 
   init(sampleLimit: Int, monitoredPages: [MonitoredPlatformPage]) {
     precondition(!monitoredPages.isEmpty)
@@ -313,6 +315,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     backItem?.isEnabled = page.webView.canGoBack
     forwardItem?.isEnabled = page.webView.canGoForward
     closePageItem?.isEnabled = !page.isMonitored
+    renamePageItem?.isEnabled = !page.isMonitored
     autoLoginItem?.isEnabled = page.isMonitored
 
     let isLoading = page.webView.isLoading
@@ -547,6 +550,29 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     }
   }
 
+  @objc private func renameCurrentPage() {
+    guard let page = selectedPage, !page.isMonitored else { return }
+    let alert = NSAlert()
+    alert.messageText = "修改页面名称"
+    alert.addButton(withTitle: "保存")
+    alert.addButton(withTitle: "取消")
+    let field = NSTextField(string: page.pageName)
+    field.frame = NSRect(x: 0, y: 0, width: 320, height: 26)
+    alert.accessoryView = field
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn, let self else { return }
+      let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !name.isEmpty else { return }
+      page.pageName = name
+      if let item = self.tabController.tabViewItems.first(where: { $0.viewController === page }) {
+        item.label = name
+        item.toolTip = name
+      }
+      self.saveAdditionalPages()
+      self.updateToolbar()
+    }
+  }
+
   private func showInvalidAddressAlert() {
     let alert = NSAlert()
     alert.alertStyle = .warning
@@ -585,6 +611,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
+      ToolbarIdentifier.renamePage,
     ]
   }
 
@@ -600,6 +627,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
+      ToolbarIdentifier.renamePage,
     ]
   }
 
@@ -737,6 +765,17 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         action: #selector(closeCurrentPage)
       )
       closePageItem = item
+      return item
+
+    case ToolbarIdentifier.renamePage:
+      let item = toolbarButton(
+        identifier: itemIdentifier,
+        label: "重命名",
+        symbol: "pencil",
+        toolTip: "修改当前自定义页面名称",
+        action: #selector(renameCurrentPage)
+      )
+      renamePageItem = item
       return item
 
     default:

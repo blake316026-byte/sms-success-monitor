@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   findInPage: (query, options) => ipcRenderer.invoke('page:find', query, options),
   stopFindInPage: (action) => ipcRenderer.invoke('page:stop-find', action),
   addPage: (page) => ipcRenderer.invoke('page:add', page),
+  renamePage: (id, name) => ipcRenderer.invoke('page:rename', id, name),
   closePage: (id) => ipcRenderer.invoke('page:close', id),
   scan: (id) => ipcRenderer.invoke('monitor:scan', id || null),
   setSampleLimit: (value) => ipcRenderer.invoke('settings:set-sample-limit', value),

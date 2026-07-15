@@ -11,6 +11,7 @@ import {
   LockKeyhole,
   LoaderCircle,
   Plus,
+  Pencil,
   Radar,
   RefreshCw,
   Search,
@@ -36,6 +37,7 @@ const iconSet = {
   LockKeyhole,
   LoaderCircle,
   Plus,
+  Pencil,
   Radar,
   RefreshCw,
   Search,
@@ -57,6 +59,7 @@ const backButton = document.querySelector('#back');
 const forwardButton = document.querySelector('#forward');
 const reloadButton = document.querySelector('#reload');
 const closeButton = document.querySelector('#close-page');
+const renameButton = document.querySelector('#rename-page');
 const credentialsButton = document.querySelector('#credentials');
 const sampleLimitInput = document.querySelector('#sample-limit');
 const zoomOutButton = document.querySelector('#zoom-out');
@@ -119,6 +122,7 @@ function render() {
     backButton.disabled = !selected.canGoBack;
     forwardButton.disabled = !selected.canGoForward;
     closeButton.disabled = selected.monitored;
+    renameButton.disabled = selected.monitored;
     credentialsButton.disabled = !selected.monitored;
     reloadButton.classList.toggle('loading', selected.loading);
   }
@@ -248,6 +252,14 @@ document.querySelector('#add').addEventListener('click', () => {
   pageName.select();
 });
 closeButton.addEventListener('click', () => window.smsApi.closePage(snapshot.selectedPageId));
+renameButton.addEventListener('click', async () => {
+  const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
+  if (!selected || selected.monitored) return;
+  const name = window.prompt('页面名称', selected.name);
+  if (name == null) return;
+  const result = await window.smsApi.renamePage(selected.id, name);
+  if (!result.ok) window.alert(result.message || '页面名称修改失败');
+});
 findInput.addEventListener('input', () => {
   clearTimeout(findTimer);
   findTimer = setTimeout(() => runFind(true, true), 120);

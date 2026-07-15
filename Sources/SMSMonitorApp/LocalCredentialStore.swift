@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 struct LocalLoginProfile: Codable, Equatable {
@@ -16,14 +17,18 @@ struct LocalLoginProfile: Codable, Equatable {
 }
 
 final class LocalCredentialStore {
-  private let service = "com.local.sms-success-monitor.credentials"
+  // v2 intentionally leaves the legacy ad-hoc-signature items untouched.
+  // Accessing those items triggers an unavoidable macOS ACL prompt after an
+  // app rebuild. New items are created under the stable designated identity.
+  private let service = "com.local.sms-success-monitor.credentials.v2"
   private let encoder = JSONEncoder()
   private let decoder = JSONDecoder()
 
-  func profile(for moduleID: String) -> LocalLoginProfile? {
+  func profile(for moduleID: String, allowInteraction: Bool = false) -> LocalLoginProfile? {
     var query = baseQuery(moduleID: moduleID)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
+    applyInteractionPolicy(to: &query, allowInteraction: allowInteraction)
 
     var result: CFTypeRef?
     guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
@@ -35,9 +40,14 @@ final class LocalCredentialStore {
   }
 
   @discardableResult
-  func save(_ profile: LocalLoginProfile, for moduleID: String) -> Bool {
+  func save(
+    _ profile: LocalLoginProfile,
+    for moduleID: String,
+    allowInteraction: Bool = false
+  ) -> Bool {
     guard let data = try? encoder.encode(profile) else { return false }
-    let query = baseQuery(moduleID: moduleID)
+    var query = baseQuery(moduleID: moduleID)
+    applyInteractionPolicy(to: &query, allowInteraction: allowInteraction)
     let attributes: [String: Any] = [kSecValueData as String: data]
     let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
     if status == errSecSuccess { return true }
@@ -68,5 +78,15 @@ final class LocalCredentialStore {
       kSecAttrAccount as String: moduleID,
       kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
     ]
+  }
+
+  private func applyInteractionPolicy(
+    to query: inout [String: Any],
+    allowInteraction: Bool
+  ) {
+    guard !allowInteraction else { return }
+    let context = LAContext()
+    context.interactionNotAllowed = true
+    query[kSecUseAuthenticationContext as String] = context
   }
 }
