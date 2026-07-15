@@ -123,7 +123,7 @@ function render() {
     forwardButton.disabled = !selected.canGoForward;
     closeButton.disabled = selected.monitored;
     renameButton.disabled = selected.monitored;
-    credentialsButton.disabled = !selected.monitored;
+    credentialsButton.disabled = false;
     reloadButton.classList.toggle('loading', selected.loading);
   }
   if (document.activeElement !== sampleLimitInput) {
@@ -220,7 +220,7 @@ document.querySelector('#detail').addEventListener('click', () => window.smsApi.
 document.querySelector('#find').addEventListener('click', openFind);
 credentialsButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  if (!selected?.monitored) return;
+  if (!selected) return;
   const result = await window.smsApi.getCredentials(selected.id);
   if (!result.ok) return;
   credentialModuleId = selected.id;

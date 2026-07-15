@@ -103,9 +103,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
       autoLoginEnabled: true
     )
     guard credentialStore.save(testProfile, for: testModuleID),
-      credentialStore.profile(for: testModuleID) == testProfile
+      LocalCredentialStore().profile(for: testModuleID) == testProfile
     else {
-      fputs("Local Keychain check failed\n", stderr)
+      fputs("Local encrypted credential store check failed\n", stderr)
       exit(1)
     }
     credentialStore.remove(moduleID: testModuleID)

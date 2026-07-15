@@ -691,7 +691,10 @@ final class MonitorController {
           configuration: $0.configuration,
           webView: $0.webView
         )
-      }
+      },
+      credentialStore: credentialStore,
+      automationRuntime: automationRuntime,
+      loginAutomation: loginAutomation
     )
     self.snapshotsByID = Dictionary(
       uniqueKeysWithValues: configurations.map {
@@ -705,8 +708,8 @@ final class MonitorController {
         )
       }
     )
-    self.workspaceController.onAutoLoginSettings = { [weak self] moduleID in
-      self?.showAutoLoginSettings(moduleID: moduleID)
+    self.workspaceController.onAutoLoginSettings = { [weak self] target in
+      self?.showAutoLoginSettings(target: target)
     }
     self.workspaceController.onSampleLimitSettings = { [weak self] in
       self?.showSampleLimitSettings()
@@ -817,14 +820,13 @@ final class MonitorController {
     }
   }
 
-  private func showAutoLoginSettings(moduleID: String) {
-    guard let configuration = configurations.first(where: { $0.id == moduleID }) else { return }
-    let existing = credentialStore.profile(for: moduleID, allowInteraction: true)
+  private func showAutoLoginSettings(target: PlatformAutoLoginTarget) {
+    let existing = credentialStore.profile(for: target.credentialID)
 
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = "\(configuration.displayName) 自动登录"
-    alert.informativeText = "账号、密码、Google 密钥和 Token 只保存在本机钥匙串，不会上传数据库。"
+    alert.messageText = "\(target.displayName) 自动登录"
+    alert.informativeText = "账号、密码、Google 密钥和 Token 只保存在本机加密文件中，不会上传数据库。"
     alert.addButton(withTitle: "保存")
     alert.addButton(withTitle: "删除配置")
     alert.addButton(withTitle: "取消")
@@ -876,8 +878,8 @@ final class MonitorController {
     alert.beginSheetModal(for: workspaceController.window) { [weak self] response in
       guard let self else { return }
       if response == .alertSecondButtonReturn {
-        self.credentialStore.remove(moduleID: moduleID)
-        self.monitors.first { $0.configuration.id == moduleID }?.credentialsDidChange()
+        self.credentialStore.remove(moduleID: target.credentialID)
+        self.notifyCredentialsDidChange(target)
         return
       }
       guard response == .alertFirstButtonReturn else { return }
@@ -895,11 +897,22 @@ final class MonitorController {
         token: existing?.token ?? "",
         autoLoginEnabled: enabledButton.state == .on
       )
-      guard self.credentialStore.save(profile, for: moduleID, allowInteraction: true) else {
-        self.showCredentialError("无法写入本机钥匙串，请检查系统钥匙串权限。")
+      guard
+        self.credentialStore.save(profile, for: target.credentialID),
+        self.credentialStore.profile(for: target.credentialID) == profile
+      else {
+        self.showCredentialError("无法写入或读取本机加密配置文件，请检查应用数据目录权限。")
         return
       }
-      self.monitors.first { $0.configuration.id == moduleID }?.credentialsDidChange()
+      self.notifyCredentialsDidChange(target)
+    }
+  }
+
+  private func notifyCredentialsDidChange(_ target: PlatformAutoLoginTarget) {
+    if let monitorID = target.monitorID {
+      monitors.first { $0.configuration.id == monitorID }?.credentialsDidChange()
+    } else {
+      workspaceController.credentialsDidChange(credentialID: target.credentialID)
     }
   }
 

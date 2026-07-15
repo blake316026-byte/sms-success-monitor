@@ -8,6 +8,12 @@ struct MonitoredPlatformPage {
   let webView: WKWebView
 }
 
+struct PlatformAutoLoginTarget {
+  let credentialID: String
+  let displayName: String
+  let monitorID: String?
+}
+
 private struct SavedPlatformPage: Codable {
   let id: UUID
   let name: String
@@ -23,6 +29,9 @@ private final class PlatformPageViewController: NSViewController {
   var onNavigationStateChange: (() -> Void)?
 
   var isMonitored: Bool { monitorID != nil }
+  var credentialID: String {
+    monitorID ?? "custom-\(id.uuidString.lowercased())"
+  }
 
   private var observations: [NSKeyValueObservation] = []
 
@@ -88,7 +97,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   WKUIDelegate, NSSearchFieldDelegate
 {
   let window: NSWindow
-  var onAutoLoginSettings: ((String) -> Void)?
+  var onAutoLoginSettings: ((PlatformAutoLoginTarget) -> Void)?
   var onSampleLimitSettings: (() -> Void)?
 
   private enum ToolbarIdentifier {
@@ -109,9 +118,13 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
 
   private let defaultInitialURL: URL
   private let monitoredPageCount: Int
+  private let credentialStore: LocalCredentialStore
+  private let automationRuntime: LocalAutomationRuntime
+  private let loginAutomation: LoginPageAutomation
   private var sampleLimit: Int
   private let tabController = WorkspaceTabViewController()
   private var pages: [PlatformPageViewController] = []
+  private var customAutoLoginControllers: [UUID: CustomPageAutoLoginController] = [:]
   private var addressField: NSTextField?
   private var findField: NSSearchField?
   private var findNavigationControl: NSSegmentedControl?
@@ -123,10 +136,19 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   private var closePageItem: NSToolbarItem?
   private var renamePageItem: NSToolbarItem?
 
-  init(sampleLimit: Int, monitoredPages: [MonitoredPlatformPage]) {
+  init(
+    sampleLimit: Int,
+    monitoredPages: [MonitoredPlatformPage],
+    credentialStore: LocalCredentialStore,
+    automationRuntime: LocalAutomationRuntime,
+    loginAutomation: LoginPageAutomation
+  ) {
     precondition(!monitoredPages.isEmpty)
     self.defaultInitialURL = monitoredPages[0].configuration.targetURL
     self.monitoredPageCount = monitoredPages.count
+    self.credentialStore = credentialStore
+    self.automationRuntime = automationRuntime
+    self.loginAutomation = loginAutomation
     self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1260, height: 800),
@@ -193,9 +215,22 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   func stopAll() {
+    for controller in customAutoLoginControllers.values {
+      controller.stop()
+    }
     for page in pages {
       page.webView.stopLoading()
     }
+  }
+
+  func credentialsDidChange(credentialID: String) {
+    guard
+      let page = pages.first(where: { $0.credentialID == credentialID }),
+      !page.isMonitored
+    else {
+      return
+    }
+    customAutoLoginControllers[page.id]?.credentialsDidChange()
   }
 
   private func configureWindow() {
@@ -295,6 +330,13 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       startURL: startURL,
       webView: webView
     )
+    customAutoLoginControllers[id] = CustomPageAutoLoginController(
+      credentialID: page.credentialID,
+      webView: webView,
+      credentialStore: credentialStore,
+      automationRuntime: automationRuntime,
+      loginAutomation: loginAutomation
+    )
     addPage(page, select: select)
     webView.load(URLRequest(url: startURL))
 
@@ -316,7 +358,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     forwardItem?.isEnabled = page.webView.canGoForward
     closePageItem?.isEnabled = !page.isMonitored
     renamePageItem?.isEnabled = !page.isMonitored
-    autoLoginItem?.isEnabled = page.isMonitored
+    autoLoginItem?.isEnabled = true
 
     let isLoading = page.webView.isLoading
     reloadItem?.image = NSImage(
@@ -404,8 +446,14 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   @objc private func configureAutoLogin() {
-    guard let monitorID = selectedPage?.monitorID else { return }
-    onAutoLoginSettings?(monitorID)
+    guard let page = selectedPage else { return }
+    onAutoLoginSettings?(
+      PlatformAutoLoginTarget(
+        credentialID: page.credentialID,
+        displayName: page.pageName,
+        monitorID: page.monitorID
+      )
+    )
   }
 
   @objc private func configureSampleLimit() {
@@ -484,7 +532,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     let alert = NSAlert()
     alert.alertStyle = .informational
     alert.messageText = "新增独立后台页面"
-    alert.informativeText = "新页面使用独立登录会话，但不会自动加入短信成功率监控。"
+    alert.informativeText = "新页面使用独立登录会话，可单独配置自动登录，但不会自动加入短信成功率监控。"
     alert.addButton(withTitle: "创建页面")
     alert.addButton(withTitle: "取消")
 
@@ -533,6 +581,9 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     }
 
     let pageID = page.id
+    let credentialID = page.credentialID
+    customAutoLoginControllers.removeValue(forKey: pageID)?.stop()
+    credentialStore.remove(moduleID: credentialID)
     page.webView.stopLoading()
     tabController.removeTabViewItem(item)
     pages.removeAll { $0 === page }
@@ -764,6 +815,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         toolTip: "关闭当前自定义页面",
         action: #selector(closeCurrentPage)
       )
+      item.isEnabled = selectedPage?.isMonitored == false
       closePageItem = item
       return item
 
@@ -775,6 +827,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         toolTip: "修改当前自定义页面名称",
         action: #selector(renameCurrentPage)
       )
+      item.isEnabled = selectedPage?.isMonitored == false
       renamePageItem = item
       return item
 
@@ -798,5 +851,12 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     guard pages.first(where: { $0.webView === webView })?.isMonitored == false else { return }
     webView.reload()
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard let page = pages.first(where: { $0.webView === webView }), !page.isMonitored else {
+      return
+    }
+    customAutoLoginControllers[page.id]?.navigationDidFinish()
   }
 }

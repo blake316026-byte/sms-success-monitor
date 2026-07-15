@@ -24,6 +24,7 @@ for (const file of [
 const mainSource = fs.readFileSync(path.join(root, 'src/main.mjs'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'src/preload.cjs'), 'utf8');
 const workbenchSource = fs.readFileSync(path.join(root, 'src/ui/workbench.html'), 'utf8');
+const workbenchScript = fs.readFileSync(path.join(root, 'src/ui/workbench.js'), 'utf8');
 assert.match(mainSource, /settings:set-sample-limit/, 'main process exposes local sample settings');
 assert.match(mainSource, /monitor-settings\.json/, 'sample settings persist in the local user directory');
 assert.match(preloadSource, /setSampleLimit/, 'preload exposes the sample setting command');
@@ -40,4 +41,10 @@ assert.match(preloadSource, /findInPage/, 'preload exposes page find commands');
 assert.match(workbenchSource, /id="find-bar"/, 'workbench renders the page find bar');
 assert.match(workbenchSource, /id="find-previous"/, 'workbench renders previous match');
 assert.match(workbenchSource, /id="find-next"/, 'workbench renders next match');
+assert.match(mainSource, /function ensurePageState/, 'custom pages receive local auto-login state');
+assert.doesNotMatch(
+  workbenchScript,
+  /credentialsButton\.disabled = !selected\.monitored/,
+  'custom pages keep the auto-login button enabled'
+);
 console.log('Windows Electron package structure checks passed');

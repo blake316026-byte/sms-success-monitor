@@ -414,7 +414,30 @@ async function changeWorkbenchZoom(direction) {
   return { ok: true, zoomPercent: Math.round(workbenchZoomFactor * 100) };
 }
 
+function ensurePageState(page) {
+  if (moduleStates.has(page.id)) return moduleStates.get(page.id);
+  const state = {
+    ...page,
+    status: 'page',
+    message: '独立页面',
+    metrics: null,
+    scannedAt: null,
+    nextScanAt: null,
+    scanning: false,
+    consecutiveScanFailures: 0,
+    autoLoginAttempts: 0,
+    autoLoginInProgress: false,
+    autoLoginStage: '',
+    autoLoginCooldownUntil: 0,
+    autoLoginTimer: null,
+    needsImmediateScan: false
+  };
+  moduleStates.set(page.id, state);
+  return state;
+}
+
 function createRemotePage(page) {
+  ensurePageState(page);
   const view = new WebContentsView({
     webPreferences: {
       partition: `persist:sms-monitor-${page.id}`,
@@ -474,14 +497,17 @@ function createRemotePage(page) {
 
 async function handlePageFinished(id) {
   const page = pages.get(id);
-  if (!page || !page.monitored) {
-    broadcastSnapshot();
-    return;
-  }
+  if (!page) return;
   const state = moduleStates.get(id);
   const currentURL = page.view.webContents.getURL();
   if (isAuthenticationURL(currentURL)) {
     handleAuthenticationRequired(id, '平台需要重新登录。');
+    return;
+  }
+  if (!page.monitored) {
+    resetAutoLoginState(state);
+    await persistCurrentToken(id);
+    updateModule(id, { status: 'page', message: '独立页面' });
     return;
   }
   if (!isConfiguredOrigin(state, currentURL)) return;
@@ -611,9 +637,17 @@ async function completeAutoLogin(id, token = '') {
   const page = pages.get(id);
   if (!state || !page) return;
   resetAutoLoginState(state);
-  state.needsImmediateScan = true;
   if (token) await updateStoredToken(id, token);
   await persistCurrentToken(id);
+  if (!page.monitored) {
+    updateModule(id, {
+      status: 'page',
+      message: '自动登录成功',
+      nextScanAt: null
+    });
+    return;
+  }
+  state.needsImmediateScan = true;
   updateModule(id, {
     status: 'starting',
     message: '自动登录成功，正在恢复监控',
@@ -1238,6 +1272,8 @@ function registerIPC() {
     page.view.webContents.loadURL(url);
     if (!page.monitored) {
       page.url = url;
+      const state = moduleStates.get(page.id);
+      if (state) state.url = url;
       saveCustomPages();
     }
     return true;
@@ -1294,6 +1330,8 @@ function registerIPC() {
     const name = String(value || '').trim();
     if (!page || page.monitored || !name) return { ok: false, message: '只能修改自定义页面名称' };
     page.name = name;
+    const state = moduleStates.get(id);
+    if (state) state.name = name;
     await saveCustomPages();
     broadcastSnapshot();
     return { ok: true };
@@ -1305,6 +1343,17 @@ function registerIPC() {
       workbenchWindow.contentView.removeChildView(page.view);
       attachedView = null;
     }
+    const previousProfile = profileFor(id);
+    delete credentialProfiles[id];
+    try {
+      await saveCredentialProfiles();
+    } catch (_) {
+      if (previousProfile) credentialProfiles[id] = previousProfile;
+      return false;
+    }
+    const state = moduleStates.get(id);
+    if (state?.autoLoginTimer) clearTimeout(state.autoLoginTimer);
+    moduleStates.delete(id);
     pages.delete(id);
     await page.view.webContents.session.clearStorageData();
     page.view.webContents.close();
@@ -1333,6 +1382,7 @@ function registerIPC() {
       return { ok: false, message: `无法保存本地设置：${error.message}` };
     }
     for (const state of moduleStates.values()) {
+      if (!state.monitored) continue;
       state.metrics = null;
       state.needsImmediateScan = true;
       state.status = state.scanning ? 'scanning' : 'starting';
@@ -1350,12 +1400,12 @@ function registerIPC() {
   });
   ipcMain.handle('credentials:get', (_event, id) => {
     const page = pages.get(id);
-    if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
+    if (!page) return { ok: false, message: '当前页面不存在' };
     return { ok: true, profile: credentialSummary(id) };
   });
   ipcMain.handle('credentials:save', async (_event, id, input) => {
     const page = pages.get(id);
-    if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
+    if (!page) return { ok: false, message: '当前页面不存在' };
     const existing = profileFor(id) || {};
     const username = String(input?.username || '').trim();
     const passwordInput = String(input?.password || '');
@@ -1381,7 +1431,7 @@ function registerIPC() {
   });
   ipcMain.handle('credentials:remove', async (_event, id) => {
     const page = pages.get(id);
-    if (!page?.monitored) return { ok: false, message: '当前页面不支持自动登录配置' };
+    if (!page) return { ok: false, message: '当前页面不存在' };
     delete credentialProfiles[id];
     try {
       await saveCredentialProfiles();
