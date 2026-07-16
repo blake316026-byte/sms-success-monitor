@@ -69,6 +69,7 @@ let localAutomationWindow;
 let localAutomationReady;
 let localAutomationError;
 let scanTimer;
+let workbenchModalOpen = false;
 
 for (const module of modules) {
   moduleStates.set(module.id, {
@@ -1017,6 +1018,7 @@ function maybeNotify(changedId) {
 
 function attachSelectedView() {
   if (!workbenchWindow || workbenchWindow.isDestroyed()) return;
+  if (workbenchModalOpen) return;
   const selected = pages.get(selectedPageId) || pages.values().next().value;
   if (!selected) return;
   selectedPageId = selected.id;
@@ -1029,6 +1031,20 @@ function attachSelectedView() {
   }
   layoutSelectedView();
   broadcastSnapshot();
+}
+
+function setWorkbenchModalOpen(open) {
+  workbenchModalOpen = Boolean(open);
+  if (!workbenchWindow || workbenchWindow.isDestroyed()) return true;
+  if (workbenchModalOpen) {
+    if (attachedView) {
+      workbenchWindow.contentView.removeChildView(attachedView);
+      attachedView = null;
+    }
+  } else {
+    attachSelectedView();
+  }
+  return true;
 }
 
 function layoutSelectedView() {
@@ -1065,6 +1081,7 @@ function createWorkbenchWindow() {
     workbenchWindow.hide();
   });
   workbenchWindow.webContents.on('did-finish-load', () => {
+    workbenchModalOpen = false;
     attachSelectedView();
     broadcastSnapshot();
   });
@@ -1395,6 +1412,7 @@ function registerIPC() {
     }
     return changeWorkbenchZoom(direction);
   });
+  ipcMain.handle('workbench:modal', (_event, open) => setWorkbenchModalOpen(open));
   ipcMain.handle('credentials:get', (_event, id) => {
     const page = pages.get(id);
     if (!page) return { ok: false, message: '当前页面不存在' };

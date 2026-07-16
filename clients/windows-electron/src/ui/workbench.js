@@ -87,6 +87,22 @@ const credentialsError = document.querySelector('#credentials-error');
 const removeCredentialsButton = document.querySelector('#remove-credentials');
 let credentialModuleId;
 
+async function showWorkbenchDialog(target) {
+  await window.smsApi.setWorkbenchModalOpen(true);
+  try {
+    target.showModal();
+  } catch (error) {
+    await window.smsApi.setWorkbenchModalOpen(false);
+    throw error;
+  }
+}
+
+function restoreWorkbenchView() {
+  if (!dialog.open && !credentialsDialog.open) {
+    window.smsApi.setWorkbenchModalOpen(false);
+  }
+}
+
 function statusIcon(status) {
   return {
     healthy: 'circle-check',
@@ -241,14 +257,14 @@ credentialsButton.addEventListener('click', async () => {
     ? '本地 Token：已加密保存'
     : '本地 Token：登录成功后自动保存';
   credentialsError.textContent = '';
-  credentialsDialog.showModal();
+  await showWorkbenchDialog(credentialsDialog);
   credentialUsername.focus();
 });
-document.querySelector('#add').addEventListener('click', () => {
+document.querySelector('#add').addEventListener('click', async () => {
   dialogError.textContent = '';
   pageName.value = `后台账号 ${snapshot.pages.filter((page) => !page.monitored).length + 1}`;
   pageURL.value = snapshot.pages[0]?.url || '';
-  dialog.showModal();
+  await showWorkbenchDialog(dialog);
   pageName.select();
 });
 closeButton.addEventListener('click', () => window.smsApi.closePage(snapshot.selectedPageId));
@@ -290,6 +306,8 @@ for (const id of ['cancel-add', 'cancel-add-bottom']) {
 for (const id of ['cancel-credentials', 'cancel-credentials-bottom']) {
   document.querySelector(`#${id}`).addEventListener('click', () => credentialsDialog.close());
 }
+dialog.addEventListener('close', restoreWorkbenchView);
+credentialsDialog.addEventListener('close', restoreWorkbenchView);
 document.querySelector('#add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const result = await window.smsApi.addPage({ name: pageName.value, url: pageURL.value });

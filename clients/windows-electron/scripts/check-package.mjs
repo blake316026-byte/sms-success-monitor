@@ -32,6 +32,11 @@ assert.match(workbenchSource, /id="sample-limit"/, 'workbench renders the sample
 assert.match(mainSource, /workbench:zoom/, 'main process exposes workbench zoom controls');
 assert.match(mainSource, /workbenchZoomFactor/, 'workbench zoom persists in local settings');
 assert.match(preloadSource, /changeWorkbenchZoom/, 'preload exposes workbench zoom commands');
+assert.match(mainSource, /workbench:modal/, 'main process controls the workbench modal layer');
+assert.match(mainSource, /function setWorkbenchModalOpen/, 'modal layer detaches the remote page view');
+assert.match(preloadSource, /setWorkbenchModalOpen/, 'preload exposes workbench modal visibility');
+assert.match(workbenchScript, /showWorkbenchDialog/, 'renderer hides the remote page before opening dialogs');
+assert.match(workbenchScript, /addEventListener\('close', restoreWorkbenchView\)/, 'renderer restores the page after dialogs close');
 assert.match(workbenchSource, /id="zoom-out"/, 'workbench renders zoom out');
 assert.match(workbenchSource, /id="zoom-reset"/, 'workbench renders the zoom percentage');
 assert.match(workbenchSource, /id="zoom-in"/, 'workbench renders zoom in');
