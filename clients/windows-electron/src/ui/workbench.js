@@ -214,7 +214,7 @@ zoomResetButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoo
 zoomInButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('in'));
 document.querySelector('#scan').addEventListener('click', () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  window.smsApi.scan(selected?.monitored ? selected.id : null);
+  if (selected) window.smsApi.scan(selected.id);
 });
 document.querySelector('#detail').addEventListener('click', () => window.smsApi.showDetail());
 document.querySelector('#find').addEventListener('click', openFind);

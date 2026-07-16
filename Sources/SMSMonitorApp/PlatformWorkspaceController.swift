@@ -8,6 +8,14 @@ struct MonitoredPlatformPage {
   let webView: WKWebView
 }
 
+struct CustomPlatformPageDescriptor {
+  let profileIdentifier: UUID
+  let credentialID: String
+  let displayName: String
+  let startURL: URL
+  let webView: WKWebView
+}
+
 struct PlatformAutoLoginTarget {
   let credentialID: String
   let displayName: String
@@ -28,7 +36,7 @@ private final class PlatformPageViewController: NSViewController {
   var startURL: URL
   var onNavigationStateChange: (() -> Void)?
 
-  var isMonitored: Bool { monitorID != nil }
+  var isBuiltIn: Bool { monitorID != nil }
   var credentialID: String {
     monitorID ?? "custom-\(id.uuidString.lowercased())"
   }
@@ -93,12 +101,15 @@ private final class WorkspaceTabViewController: NSTabViewController {
   }
 }
 
-final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigationDelegate,
-  WKUIDelegate, NSSearchFieldDelegate
+final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelegate,
+  NSSearchFieldDelegate
 {
   let window: NSWindow
   var onAutoLoginSettings: ((PlatformAutoLoginTarget) -> Void)?
   var onSampleLimitSettings: (() -> Void)?
+  var onCustomPageAdded: ((CustomPlatformPageDescriptor) -> Void)?
+  var onCustomPageUpdated: ((CustomPlatformPageDescriptor) -> Void)?
+  var onCustomPageRemoved: ((String) -> Void)?
 
   private enum ToolbarIdentifier {
     static let toolbar = NSToolbar.Identifier("SMSMonitorPlatformToolbar")
@@ -117,14 +128,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   private static let savedPagesKey = "SMSMonitorPlatformPages.v1"
 
   private let defaultInitialURL: URL
-  private let monitoredPageCount: Int
   private let credentialStore: LocalCredentialStore
-  private let automationRuntime: LocalAutomationRuntime
-  private let loginAutomation: LoginPageAutomation
   private var sampleLimit: Int
   private let tabController = WorkspaceTabViewController()
   private var pages: [PlatformPageViewController] = []
-  private var customAutoLoginControllers: [UUID: CustomPageAutoLoginController] = [:]
   private var addressField: NSTextField?
   private var findField: NSSearchField?
   private var findNavigationControl: NSSegmentedControl?
@@ -139,16 +146,11 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   init(
     sampleLimit: Int,
     monitoredPages: [MonitoredPlatformPage],
-    credentialStore: LocalCredentialStore,
-    automationRuntime: LocalAutomationRuntime,
-    loginAutomation: LoginPageAutomation
+    credentialStore: LocalCredentialStore
   ) {
     precondition(!monitoredPages.isEmpty)
     self.defaultInitialURL = monitoredPages[0].configuration.targetURL
-    self.monitoredPageCount = monitoredPages.count
     self.credentialStore = credentialStore
-    self.automationRuntime = automationRuntime
-    self.loginAutomation = loginAutomation
     self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1260, height: 800),
@@ -171,12 +173,13 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       addPage(page, select: index == 0)
     }
     restoreAdditionalPages()
+    updateWindowSubtitle()
     updateToolbar()
   }
 
   func show(moduleID: String? = nil) {
     if let moduleID,
-      let index = pages.firstIndex(where: { $0.monitorID == moduleID })
+      let index = pages.firstIndex(where: { $0.credentialID == moduleID })
     {
       tabController.selectedTabViewItemIndex = index
     }
@@ -189,7 +192,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   func updateMonitorState(moduleID: String, state: AppMonitorState) {
-    guard let page = pages.first(where: { $0.monitorID == moduleID }) else { return }
+    guard let page = pages.first(where: { $0.credentialID == moduleID }) else { return }
     guard let item = tabController.tabViewItems.first(where: { $0.viewController === page }) else {
       return
     }
@@ -215,22 +218,17 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   func stopAll() {
-    for controller in customAutoLoginControllers.values {
-      controller.stop()
-    }
     for page in pages {
       page.webView.stopLoading()
     }
   }
 
-  func credentialsDidChange(credentialID: String) {
-    guard
-      let page = pages.first(where: { $0.credentialID == credentialID }),
-      !page.isMonitored
-    else {
-      return
-    }
-    customAutoLoginControllers[page.id]?.credentialsDidChange()
+  func customPageDescriptors() -> [CustomPlatformPageDescriptor] {
+    pages.filter { !$0.isBuiltIn }.map(Self.descriptor)
+  }
+
+  func refreshMonitorCount() {
+    updateWindowSubtitle()
   }
 
   private func configureWindow() {
@@ -260,7 +258,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
 
   private func updateWindowSubtitle() {
     window.subtitle =
-      "\(monitoredPageCount) 个监控后台 · 样本 \(sampleLimit) 条 · 不同标签使用独立登录会话"
+      "\(pages.count) 个监控后台 · 样本 \(sampleLimit) 条 · 不同标签使用独立登录会话"
   }
 
   private func restoreAdditionalPages() {
@@ -291,10 +289,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     let tabItem = NSTabViewItem(identifier: page.monitorID ?? page.id.uuidString)
     tabItem.viewController = page
     tabItem.label = page.pageName
-    tabItem.toolTip =
-      page.isMonitored
-      ? "\(page.pageName) · 等待连接"
-      : "独立登录页面：\(page.pageName)"
+    tabItem.toolTip = "\(page.pageName) · 等待连接"
     tabController.addTabViewItem(tabItem)
 
     if select {
@@ -321,7 +316,6 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       frame: NSRect(x: 0, y: 0, width: 1180, height: 720),
       configuration: configuration
     )
-    webView.navigationDelegate = self
     webView.uiDelegate = self
 
     let page = PlatformPageViewController(
@@ -330,19 +324,14 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       startURL: startURL,
       webView: webView
     )
-    customAutoLoginControllers[id] = CustomPageAutoLoginController(
-      credentialID: page.credentialID,
-      webView: webView,
-      credentialStore: credentialStore,
-      automationRuntime: automationRuntime,
-      loginAutomation: loginAutomation
-    )
     addPage(page, select: select)
     webView.load(URLRequest(url: startURL))
+    onCustomPageAdded?(Self.descriptor(page))
 
     if persist {
       saveAdditionalPages()
     }
+    updateWindowSubtitle()
   }
 
   private var selectedPage: PlatformPageViewController? {
@@ -356,8 +345,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     addressField?.stringValue = page.webView.url?.absoluteString ?? page.startURL.absoluteString
     backItem?.isEnabled = page.webView.canGoBack
     forwardItem?.isEnabled = page.webView.canGoForward
-    closePageItem?.isEnabled = !page.isMonitored
-    renamePageItem?.isEnabled = !page.isMonitored
+    closePageItem?.isEnabled = !page.isBuiltIn
+    renamePageItem?.isEnabled = !page.isBuiltIn
     autoLoginItem?.isEnabled = true
 
     let isLoading = page.webView.isLoading
@@ -369,7 +358,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   private func saveAdditionalPages() {
-    let savedPages = pages.filter { !$0.isMonitored }.map {
+    let savedPages = pages.filter { !$0.isBuiltIn }.map {
       SavedPlatformPage(id: $0.id, name: $0.pageName, startURL: $0.startURL)
     }
     guard let data = try? JSONEncoder().encode(savedPages) else { return }
@@ -521,9 +510,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
       return
     }
 
-    if !page.isMonitored {
+    if !page.isBuiltIn {
       page.startURL = url
       saveAdditionalPages()
+      onCustomPageUpdated?(Self.descriptor(page))
     }
     page.webView.load(URLRequest(url: url))
   }
@@ -531,8 +521,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   @objc private func addNewPage() {
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = "新增独立后台页面"
-    alert.informativeText = "新页面使用独立登录会话，可单独配置自动登录，但不会自动加入短信成功率监控。"
+    alert.messageText = "新增监控后台页面"
+    alert.informativeText = "新页面使用独立登录会话，并自动加入短信成功率监控总览。"
     alert.addButton(withTitle: "创建页面")
     alert.addButton(withTitle: "取消")
 
@@ -541,7 +531,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     nameLabel.frame = NSRect(x: 0, y: 53, width: 76, height: 20)
     nameLabel.alignment = .right
 
-    let customPageCount = pages.count(where: { !$0.isMonitored })
+    let customPageCount = pages.count(where: { !$0.isBuiltIn })
     let nameField = NSTextField(frame: NSRect(x: 88, y: 49, width: 342, height: 26))
     nameField.stringValue = "后台账号 \(customPageCount + 1)"
     nameField.placeholderString = "例如：代理 A"
@@ -575,20 +565,21 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   @objc private func closeCurrentPage() {
-    guard let page = selectedPage, !page.isMonitored else { return }
+    guard let page = selectedPage, !page.isBuiltIn else { return }
     guard let item = tabController.tabViewItems.first(where: { $0.viewController === page }) else {
       return
     }
 
     let pageID = page.id
     let credentialID = page.credentialID
-    customAutoLoginControllers.removeValue(forKey: pageID)?.stop()
+    onCustomPageRemoved?(credentialID)
     credentialStore.remove(moduleID: credentialID)
     page.webView.stopLoading()
     tabController.removeTabViewItem(item)
     pages.removeAll { $0 === page }
     saveAdditionalPages()
     updateToolbar()
+    updateWindowSubtitle()
 
     if #available(macOS 14.0, *) {
       DispatchQueue.main.async {
@@ -602,7 +593,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
   }
 
   @objc private func renameCurrentPage() {
-    guard let page = selectedPage, !page.isMonitored else { return }
+    guard let page = selectedPage, !page.isBuiltIn else { return }
     let alert = NSAlert()
     alert.messageText = "修改页面名称"
     alert.addButton(withTitle: "保存")
@@ -620,6 +611,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         item.toolTip = name
       }
       self.saveAdditionalPages()
+      self.onCustomPageUpdated?(Self.descriptor(page))
       self.updateToolbar()
     }
   }
@@ -803,7 +795,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         identifier: itemIdentifier,
         label: "新增页面",
         symbol: "plus",
-        toolTip: "新增独立登录页面",
+        toolTip: "新增监控后台页面",
         action: #selector(addNewPage)
       )
 
@@ -815,7 +807,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         toolTip: "关闭当前自定义页面",
         action: #selector(closeCurrentPage)
       )
-      item.isEnabled = selectedPage?.isMonitored == false
+      item.isEnabled = selectedPage?.isBuiltIn == false
       closePageItem = item
       return item
 
@@ -827,7 +819,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
         toolTip: "修改当前自定义页面名称",
         action: #selector(renameCurrentPage)
       )
-      item.isEnabled = selectedPage?.isMonitored == false
+      item.isEnabled = selectedPage?.isBuiltIn == false
       renamePageItem = item
       return item
 
@@ -848,15 +840,13 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKNavigati
     return nil
   }
 
-  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-    guard pages.first(where: { $0.webView === webView })?.isMonitored == false else { return }
-    webView.reload()
-  }
-
-  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    guard let page = pages.first(where: { $0.webView === webView }), !page.isMonitored else {
-      return
-    }
-    customAutoLoginControllers[page.id]?.navigationDidFinish()
+  private static func descriptor(_ page: PlatformPageViewController) -> CustomPlatformPageDescriptor {
+    CustomPlatformPageDescriptor(
+      profileIdentifier: page.id,
+      credentialID: page.credentialID,
+      displayName: page.pageName,
+      startURL: page.startURL,
+      webView: page.webView
+    )
   }
 }

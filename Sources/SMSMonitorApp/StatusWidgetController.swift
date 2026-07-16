@@ -395,6 +395,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
   private let selectedDetailLabel = NSTextField(labelWithString: "")
   private var snapshot = FleetMonitorSnapshot(modules: [])
   private var selectedModuleID: String?
+  private var sampleLimit: Int
 
   init(moduleCount: Int, sampleLimit: Int) {
     let window = NSPanel(
@@ -409,13 +410,14 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     window.minSize = NSSize(width: 700, height: 440)
     window.isReleasedWhenClosed = false
     window.setFrameAutosaveName("SMSMonitorFleetDetailWindow")
+    self.sampleLimit = sampleLimit
     super.init(window: window)
     buildContent()
   }
 
   func updateSampleLimit(_ sampleLimit: Int) {
-    window?.subtitle =
-      "\(snapshot.modules.count) 个后台 · 每分钟扫描最新 \(sampleLimit) 条"
+    self.sampleLimit = sampleLimit
+    updateSubtitle()
   }
 
   required init?(coder: NSCoder) {
@@ -424,6 +426,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
 
   func update(snapshot: FleetMonitorSnapshot, muteDescription: String?) {
     self.snapshot = snapshot
+    updateSubtitle()
     if selectedModuleID == nil
       || !snapshot.modules.contains(where: { $0.configuration.id == selectedModuleID })
     {
@@ -448,6 +451,11 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       tableView.scrollRowToVisible(row)
     }
     updateSelectedModule()
+  }
+
+  private func updateSubtitle() {
+    window?.subtitle =
+      "\(snapshot.modules.count) 个后台 · 每分钟扫描最新 \(sampleLimit) 条"
   }
 
   func select(moduleID: String?) {

@@ -4,7 +4,7 @@ import SMSMonitorCore
 import WebKit
 
 private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
-  let configuration: MonitorConfiguration
+  private(set) var configuration: MonitorConfiguration
   let webView: WKWebView
   var onStateChange: ((AppMonitorState, Date?) -> Void)?
 
@@ -33,7 +33,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     sampleLimit: Int,
     credentialStore: LocalCredentialStore,
     automationRuntime: LocalAutomationRuntime,
-    loginAutomation: LoginPageAutomation
+    loginAutomation: LoginPageAutomation,
+    webView existingWebView: WKWebView? = nil
   ) {
     self.configuration = configuration
     self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
@@ -41,24 +42,28 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     self.automationRuntime = automationRuntime
     self.loginAutomation = loginAutomation
 
-    let webConfiguration = WKWebViewConfiguration()
-    if let profileIdentifier = configuration.profileIdentifier {
-      if #available(macOS 14.0, *) {
-        webConfiguration.websiteDataStore = WKWebsiteDataStore(
-          forIdentifier: profileIdentifier
-        )
-      } else {
-        webConfiguration.websiteDataStore = .nonPersistent()
-      }
+    if let existingWebView {
+      self.webView = existingWebView
     } else {
-      webConfiguration.websiteDataStore = .default()
-    }
-    webConfiguration.preferences.javaScriptCanOpenWindowsAutomatically = false
+      let webConfiguration = WKWebViewConfiguration()
+      if let profileIdentifier = configuration.profileIdentifier {
+        if #available(macOS 14.0, *) {
+          webConfiguration.websiteDataStore = WKWebsiteDataStore(
+            forIdentifier: profileIdentifier
+          )
+        } else {
+          webConfiguration.websiteDataStore = .nonPersistent()
+        }
+      } else {
+        webConfiguration.websiteDataStore = .default()
+      }
+      webConfiguration.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-    self.webView = WKWebView(
-      frame: NSRect(x: 0, y: 0, width: 1120, height: 720),
-      configuration: webConfiguration
-    )
+      self.webView = WKWebView(
+        frame: NSRect(x: 0, y: 0, width: 1120, height: 720),
+        configuration: webConfiguration
+      )
+    }
 
     super.init()
     webView.navigationDelegate = self
@@ -77,7 +82,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     emit(.starting("正在连接平台"), nextScanAt: nil)
-    webView.load(URLRequest(url: configuration.targetURL))
+    guard webView.url != nil else {
+      webView.load(URLRequest(url: configuration.targetURL))
+      return
+    }
+    guard !webView.isLoading else { return }
+    DispatchQueue.main.async { [weak self] in
+      self?.scanNow()
+    }
   }
 
   func scanNow() {
@@ -131,6 +143,18 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     if !isScanning {
       scanNow()
     }
+  }
+
+  func updateConfiguration(_ updatedConfiguration: MonitorConfiguration) {
+    guard updatedConfiguration.id == configuration.id else { return }
+    let targetChanged = updatedConfiguration.targetURL != configuration.targetURL
+    configuration = updatedConfiguration
+    guard targetChanged else { return }
+
+    lastMetrics = nil
+    consecutiveScanFailures = 0
+    needsImmediateScan = true
+    emit(.starting("后台地址已更新，正在重新连接"), nextScanAt: nil)
   }
 
   func stop() {
@@ -657,10 +681,14 @@ final class MonitorController {
 
   private static let sampleLimitDefaultsKey = "SMSMonitorSampleLimit.v1"
   private let credentialStore: LocalCredentialStore
-  private let monitors: [ModuleMonitorController]
+  private let automationRuntime: LocalAutomationRuntime
+  private let loginAutomation: LoginPageAutomation
+  private var monitorsByID: [String: ModuleMonitorController]
+  private var orderedMonitorIDs: [String]
   private let workspaceController: PlatformWorkspaceController
   private var snapshotsByID: [String: ModuleMonitorSnapshot]
   private var activityToken: NSObjectProtocol?
+  private var hasStarted = false
 
   init(configurations: [MonitorConfiguration]) {
     self.configurations = configurations
@@ -674,6 +702,8 @@ final class MonitorController {
     let automationRuntime = LocalAutomationRuntime()
     let loginAutomation = LoginPageAutomation()
     self.credentialStore = credentialStore
+    self.automationRuntime = automationRuntime
+    self.loginAutomation = loginAutomation
     let monitors = configurations.map {
       ModuleMonitorController(
         configuration: $0,
@@ -683,7 +713,10 @@ final class MonitorController {
         loginAutomation: loginAutomation
       )
     }
-    self.monitors = monitors
+    self.monitorsByID = Dictionary(
+      uniqueKeysWithValues: monitors.map { ($0.configuration.id, $0) }
+    )
+    self.orderedMonitorIDs = configurations.map(\.id)
     self.workspaceController = PlatformWorkspaceController(
       sampleLimit: initialSampleLimit,
       monitoredPages: monitors.map {
@@ -692,9 +725,7 @@ final class MonitorController {
           webView: $0.webView
         )
       },
-      credentialStore: credentialStore,
-      automationRuntime: automationRuntime,
-      loginAutomation: loginAutomation
+      credentialStore: credentialStore
     )
     self.snapshotsByID = Dictionary(
       uniqueKeysWithValues: configurations.map {
@@ -714,16 +745,21 @@ final class MonitorController {
     self.workspaceController.onSampleLimitSettings = { [weak self] in
       self?.showSampleLimitSettings()
     }
+    self.workspaceController.onCustomPageAdded = { [weak self] page in
+      self?.registerCustomPage(page)
+    }
+    self.workspaceController.onCustomPageUpdated = { [weak self] page in
+      self?.updateCustomPage(page)
+    }
+    self.workspaceController.onCustomPageRemoved = { [weak self] credentialID in
+      self?.removeCustomPage(credentialID: credentialID)
+    }
 
     for monitor in monitors {
-      monitor.onStateChange = { [weak self, weak monitor] state, nextScanAt in
-        guard let self, let monitor else { return }
-        self.handle(
-          configuration: monitor.configuration,
-          state: state,
-          nextScanAt: nextScanAt
-        )
-      }
+      bind(monitor)
+    }
+    for page in workspaceController.customPageDescriptors() {
+      registerCustomPage(page)
     }
   }
 
@@ -739,20 +775,21 @@ final class MonitorController {
       reason: "Scan SMS delivery success rates for all configured platforms"
     )
 
-    workspaceController.show(moduleID: configurations.first?.id)
+    hasStarted = true
+    workspaceController.show(moduleID: orderedMonitorIDs.first)
     publish(changedModuleID: nil)
-    for monitor in monitors {
-      monitor.start()
+    for monitorID in orderedMonitorIDs {
+      monitorsByID[monitorID]?.start()
     }
   }
 
   func scanNow(moduleID: String? = nil) {
     if let moduleID {
-      monitors.first { $0.configuration.id == moduleID }?.scanNow()
+      monitorsByID[moduleID]?.scanNow()
       return
     }
-    for monitor in monitors {
-      monitor.scanNow()
+    for monitorID in orderedMonitorIDs {
+      monitorsByID[monitorID]?.scanNow()
     }
   }
 
@@ -765,7 +802,7 @@ final class MonitorController {
   }
 
   func stop() {
-    for monitor in monitors {
+    for monitor in monitorsByID.values {
       monitor.stop()
     }
     workspaceController.stopAll()
@@ -814,7 +851,7 @@ final class MonitorController {
       UserDefaults.standard.set(normalized, forKey: Self.sampleLimitDefaultsKey)
       self.workspaceController.updateSampleLimit(normalized)
       self.onSampleLimitChange?(normalized)
-      for monitor in self.monitors {
+      for monitor in self.monitorsByID.values {
         monitor.updateSampleLimit(normalized)
       }
     }
@@ -909,11 +946,7 @@ final class MonitorController {
   }
 
   private func notifyCredentialsDidChange(_ target: PlatformAutoLoginTarget) {
-    if let monitorID = target.monitorID {
-      monitors.first { $0.configuration.id == monitorID }?.credentialsDidChange()
-    } else {
-      workspaceController.credentialsDidChange(credentialID: target.credentialID)
-    }
+    monitorsByID[target.credentialID]?.credentialsDidChange()
   }
 
   private func showCredentialError(_ message: String) {
@@ -940,7 +973,94 @@ final class MonitorController {
   }
 
   private func publish(changedModuleID: String?) {
-    let modules = configurations.compactMap { snapshotsByID[$0.id] }
+    let modules = orderedMonitorIDs.compactMap { snapshotsByID[$0] }
     onStateChange?(FleetMonitorSnapshot(modules: modules), changedModuleID)
+  }
+
+  private func bind(_ monitor: ModuleMonitorController) {
+    monitor.onStateChange = { [weak self, weak monitor] state, nextScanAt in
+      guard let self, let monitor else { return }
+      self.handle(
+        configuration: monitor.configuration,
+        state: state,
+        nextScanAt: nextScanAt
+      )
+    }
+  }
+
+  private func configuration(for page: CustomPlatformPageDescriptor) -> MonitorConfiguration {
+    MonitorConfiguration(
+      id: page.credentialID,
+      displayName: page.displayName,
+      targetURL: page.startURL,
+      profileIdentifier: page.profileIdentifier,
+      sampleLimit: sampleLimit,
+      scanInterval: 60,
+      alertThreshold: 0.50
+    )
+  }
+
+  private func registerCustomPage(_ page: CustomPlatformPageDescriptor) {
+    guard monitorsByID[page.credentialID] == nil else {
+      updateCustomPage(page)
+      return
+    }
+
+    let pageConfiguration = configuration(for: page)
+    let monitor = ModuleMonitorController(
+      configuration: pageConfiguration,
+      sampleLimit: sampleLimit,
+      credentialStore: credentialStore,
+      automationRuntime: automationRuntime,
+      loginAutomation: loginAutomation,
+      webView: page.webView
+    )
+    bind(monitor)
+    monitorsByID[page.credentialID] = monitor
+    orderedMonitorIDs.append(page.credentialID)
+    snapshotsByID[page.credentialID] = ModuleMonitorSnapshot(
+      configuration: pageConfiguration,
+      state: .starting("等待连接"),
+      nextScanAt: nil
+    )
+    workspaceController.updateMonitorState(
+      moduleID: page.credentialID,
+      state: .starting("等待连接")
+    )
+    workspaceController.refreshMonitorCount()
+    publish(changedModuleID: nil)
+    if hasStarted {
+      monitor.start()
+    }
+  }
+
+  private func updateCustomPage(_ page: CustomPlatformPageDescriptor) {
+    guard let monitor = monitorsByID[page.credentialID] else {
+      registerCustomPage(page)
+      return
+    }
+    let pageConfiguration = configuration(for: page)
+    let targetChanged = monitor.configuration.targetURL != pageConfiguration.targetURL
+    monitor.updateConfiguration(pageConfiguration)
+    if let current = snapshotsByID[page.credentialID] {
+      snapshotsByID[page.credentialID] = ModuleMonitorSnapshot(
+        configuration: pageConfiguration,
+        state: targetChanged ? .starting("后台地址已更新，正在重新连接") : current.state,
+        nextScanAt: targetChanged ? nil : current.nextScanAt
+      )
+    }
+    workspaceController.updateMonitorState(
+      moduleID: page.credentialID,
+      state: snapshotsByID[page.credentialID]?.state ?? .starting("等待连接")
+    )
+    publish(changedModuleID: page.credentialID)
+  }
+
+  private func removeCustomPage(credentialID: String) {
+    monitorsByID.removeValue(forKey: credentialID)?.stop()
+    orderedMonitorIDs.removeAll { $0 == credentialID }
+    snapshotsByID.removeValue(forKey: credentialID)
+    workspaceController.refreshMonitorCount()
+    publish(changedModuleID: nil)
   }
 }

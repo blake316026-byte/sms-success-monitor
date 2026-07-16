@@ -418,8 +418,8 @@ function ensurePageState(page) {
   if (moduleStates.has(page.id)) return moduleStates.get(page.id);
   const state = {
     ...page,
-    status: 'page',
-    message: '独立页面',
+    status: 'starting',
+    message: '等待连接',
     metrics: null,
     scannedAt: null,
     nextScanAt: null,
@@ -430,7 +430,7 @@ function ensurePageState(page) {
     autoLoginStage: '',
     autoLoginCooldownUntil: 0,
     autoLoginTimer: null,
-    needsImmediateScan: false
+    needsImmediateScan: true
   };
   moduleStates.set(page.id, state);
   return state;
@@ -469,7 +469,7 @@ function createRemotePage(page) {
     workbenchWindow.webContents.send('find:result', { pageId: page.id, ...result });
   });
   view.webContents.on('render-process-gone', () => {
-    if (quitting || !page.monitored) return;
+    if (quitting) return;
     updateModule(page.id, {
       status: 'error',
       message: '平台页面进程已重启，正在恢复。',
@@ -486,7 +486,7 @@ function createRemotePage(page) {
     }, 500);
   });
   view.webContents.on('did-fail-load', (_event, code, description, validatedURL, isMainFrame) => {
-    if (!isMainFrame || code === -3 || !page.monitored) return;
+    if (!isMainFrame || code === -3) return;
     const recovering = handleScanFailure(page.id, `页面加载失败：${description}`);
     if (!recovering && !validatedURL) view.webContents.loadURL(page.url);
   });
@@ -502,12 +502,6 @@ async function handlePageFinished(id) {
   const currentURL = page.view.webContents.getURL();
   if (isAuthenticationURL(currentURL)) {
     handleAuthenticationRequired(id, '平台需要重新登录。');
-    return;
-  }
-  if (!page.monitored) {
-    resetAutoLoginState(state);
-    await persistCurrentToken(id);
-    updateModule(id, { status: 'page', message: '独立页面' });
     return;
   }
   if (!isConfiguredOrigin(state, currentURL)) return;
@@ -639,14 +633,6 @@ async function completeAutoLogin(id, token = '') {
   resetAutoLoginState(state);
   if (token) await updateStoredToken(id, token);
   await persistCurrentToken(id);
-  if (!page.monitored) {
-    updateModule(id, {
-      status: 'page',
-      message: '自动登录成功',
-      nextScanAt: null
-    });
-    return;
-  }
   state.needsImmediateScan = true;
   updateModule(id, {
     status: 'starting',
@@ -951,6 +937,10 @@ async function scanModule(id) {
   maybeNotify(id);
 }
 
+function scanAllPages() {
+  for (const page of pages.values()) scanModule(page.id);
+}
+
 function pageSnapshot(page) {
   const state = moduleStates.get(page.id);
   const history = page.view.webContents.navigationHistory;
@@ -968,8 +958,8 @@ function pageSnapshot(page) {
 }
 
 function buildSnapshot() {
-  const moduleList = modules.map((module) => {
-    const state = moduleStates.get(module.id);
+  const moduleList = [...pages.values()].map((page) => {
+    const state = moduleStates.get(page.id);
     return {
       id: state.id,
       name: state.name,
@@ -1269,13 +1259,21 @@ function registerIPC() {
     const url = normalizeURL(value);
     const page = pages.get(selectedPageId);
     if (!url || !page) return false;
-    page.view.webContents.loadURL(url);
     if (!page.monitored) {
       page.url = url;
       const state = moduleStates.get(page.id);
-      if (state) state.url = url;
+      if (state) {
+        state.url = url;
+        state.metrics = null;
+        state.status = 'starting';
+        state.message = '后台地址已更新，正在重新连接';
+        state.nextScanAt = null;
+        state.needsImmediateScan = true;
+      }
       saveCustomPages();
     }
+    page.view.webContents.loadURL(url);
+    broadcastSnapshot(page.id);
     return true;
   });
   ipcMain.handle('page:back', () => {
@@ -1364,7 +1362,7 @@ function registerIPC() {
   });
   ipcMain.handle('monitor:scan', (_event, id) => {
     if (id) scanModule(id);
-    else modules.forEach((module) => scanModule(module.id));
+    else scanAllPages();
   });
   ipcMain.handle('settings:set-sample-limit', async (_event, value) => {
     const parsed = Math.round(Number(value));
@@ -1382,14 +1380,13 @@ function registerIPC() {
       return { ok: false, message: `无法保存本地设置：${error.message}` };
     }
     for (const state of moduleStates.values()) {
-      if (!state.monitored) continue;
       state.metrics = null;
       state.needsImmediateScan = true;
       state.status = state.scanning ? 'scanning' : 'starting';
       state.message = `样本已改为 ${sampleLimit} 条，正在重新扫描`;
     }
     broadcastSnapshot();
-    modules.forEach((module) => scanModule(module.id));
+    scanAllPages();
     return { ok: true, sampleLimit };
   });
   ipcMain.handle('workbench:zoom', (_event, direction) => {
@@ -1449,7 +1446,7 @@ function registerIPC() {
   });
   ipcMain.handle('widget:menu', () => {
     Menu.buildFromTemplate([
-      { label: '立即扫描全部后台', click: () => modules.forEach((module) => scanModule(module.id)) },
+      { label: '立即扫描全部后台', click: () => scanAllPages() },
       { label: '监控总览', click: () => showDetail() },
       { label: '打开后台工作台', click: () => showWorkbench() },
       { type: 'separator' },
@@ -1496,7 +1493,7 @@ app.whenReady().then(async () => {
   createWidgetWindow();
   createDetailWindow();
   scanTimer = setInterval(() => {
-    modules.forEach((module) => scanModule(module.id));
+    scanAllPages();
   }, SCAN_INTERVAL_MS);
 });
 

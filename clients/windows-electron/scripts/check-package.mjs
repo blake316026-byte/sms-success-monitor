@@ -42,9 +42,20 @@ assert.match(workbenchSource, /id="find-bar"/, 'workbench renders the page find 
 assert.match(workbenchSource, /id="find-previous"/, 'workbench renders previous match');
 assert.match(workbenchSource, /id="find-next"/, 'workbench renders next match');
 assert.match(mainSource, /function ensurePageState/, 'custom pages receive local auto-login state');
+assert.match(
+  mainSource,
+  /const moduleList = \[\.\.\.pages\.values\(\)\]\.map/,
+  'custom pages are included in the monitoring overview'
+);
+assert.match(mainSource, /function scanAllPages/, 'all-page scanning includes custom pages');
 assert.doesNotMatch(
   workbenchScript,
   /credentialsButton\.disabled = !selected\.monitored/,
   'custom pages keep the auto-login button enabled'
+);
+assert.doesNotMatch(
+  workbenchScript,
+  /selected\?\.monitored \? selected\.id : null/,
+  'custom pages can be scanned directly from the workbench'
 );
 console.log('Windows Electron package structure checks passed');
