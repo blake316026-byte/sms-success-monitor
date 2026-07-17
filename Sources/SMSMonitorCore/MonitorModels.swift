@@ -11,6 +11,30 @@ public enum ScanRecoveryPolicy {
   }
 }
 
+public enum MonitorRefreshPolicy {
+  public static let minimumNextScanDelay: TimeInterval = 1
+  public static let minimumStaleAge: TimeInterval = 4 * 60
+
+  public static func nextScanDelay(
+    scanInterval: TimeInterval,
+    scanDuration: TimeInterval
+  ) -> TimeInterval {
+    max(minimumNextScanDelay, scanInterval - max(0, scanDuration))
+  }
+
+  public static func staleAge(scanInterval: TimeInterval) -> TimeInterval {
+    max(minimumStaleAge, scanInterval * 4)
+  }
+
+  public static func resultIsStale(
+    scannedAt: Date,
+    now: Date,
+    scanInterval: TimeInterval
+  ) -> Bool {
+    now.timeIntervalSince(scannedAt) > staleAge(scanInterval: scanInterval)
+  }
+}
+
 public enum SampleLimitPolicy {
   public static let defaultValue = 200
   public static let minimumValue = 10

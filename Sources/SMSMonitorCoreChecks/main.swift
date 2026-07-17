@@ -52,6 +52,31 @@ check(
   ScanRecoveryPolicy.shouldReload(consecutiveFailures: 2),
   "reloads the platform context after two consecutive scan failures"
 )
+check(
+  MonitorRefreshPolicy.nextScanDelay(scanInterval: 60, scanDuration: 20) == 40,
+  "keeps a one-minute cadence after a fast scan"
+)
+check(
+  MonitorRefreshPolicy.nextScanDelay(scanInterval: 60, scanDuration: 75) == 1,
+  "reschedules immediately after a scan overruns its interval"
+)
+let refreshReference = Date(timeIntervalSince1970: 1_000)
+check(
+  !MonitorRefreshPolicy.resultIsStale(
+    scannedAt: refreshReference,
+    now: refreshReference.addingTimeInterval(240),
+    scanInterval: 60
+  ),
+  "keeps a result valid at the stale boundary"
+)
+check(
+  MonitorRefreshPolicy.resultIsStale(
+    scannedAt: refreshReference,
+    now: refreshReference.addingTimeInterval(241),
+    scanInterval: 60
+  ),
+  "expires a result that has not refreshed for four minutes"
+)
 check(SampleLimitPolicy.normalize(75) == 75, "keeps a valid custom sample limit")
 check(
   SampleLimitPolicy.normalize(1) == SampleLimitPolicy.minimumValue,

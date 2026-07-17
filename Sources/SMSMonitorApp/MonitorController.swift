@@ -10,13 +10,17 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private static let maximumAutoLoginAttempts = 5
   private static let autoLoginCooldown: TimeInterval = 5 * 60
+  private static let maximumScanDuration: TimeInterval = 3 * 60
 
   private let credentialStore: LocalCredentialStore
   private let automationRuntime: LocalAutomationRuntime
   private let loginAutomation: LoginPageAutomation
-  private var nextScanTimer: Timer?
+  private var nextScanWorkItem: DispatchWorkItem?
+  private var scanTimeoutWorkItem: DispatchWorkItem?
   private var nextScanAt: Date?
   private var isScanning = false
+  private var activeScanID: UUID?
+  private var scanStartedAt: Date?
   private var sampleLimit: Int
   private var lastMetrics: ScanMetrics?
   private var needsImmediateScan = true
@@ -70,7 +74,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   deinit {
-    nextScanTimer?.invalidate()
+    nextScanWorkItem?.cancel()
+    scanTimeoutWorkItem?.cancel()
     autoLoginOutcomeWorkItem?.cancel()
   }
 
@@ -116,10 +121,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
 
+    cancelNextScan()
     isScanning = true
+    let scanID = UUID()
+    activeScanID = scanID
+    scanStartedAt = Date()
     let activeSampleLimit = sampleLimit
-    scheduleNextScan(after: configuration.scanInterval)
-    emit(.scanning(lastMetrics), nextScanAt: nextScanAt)
+    scheduleScanTimeout(for: scanID)
+    emit(.scanning(lastMetrics), nextScanAt: nil)
 
     webView.callAsyncJavaScript(
       ScanScript.body,
@@ -128,7 +137,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       in: .page
     ) { [weak self] result in
       DispatchQueue.main.async {
-        self?.finishScan(result, sampleLimit: activeSampleLimit)
+        self?.finishScan(result, sampleLimit: activeSampleLimit, scanID: scanID)
       }
     }
   }
@@ -158,16 +167,30 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func stop() {
-    nextScanTimer?.invalidate()
-    nextScanTimer = nil
+    nextScanWorkItem?.cancel()
+    nextScanWorkItem = nil
+    scanTimeoutWorkItem?.cancel()
+    scanTimeoutWorkItem = nil
     nextScanAt = nil
+    activeScanID = nil
+    scanStartedAt = nil
+    isScanning = false
     webView.stopLoading()
   }
 
-  private func finishScan(_ result: Result<Any, Error>, sampleLimit activeSampleLimit: Int) {
+  private func finishScan(
+    _ result: Result<Any, Error>,
+    sampleLimit activeSampleLimit: Int,
+    scanID: UUID
+  ) {
+    guard activeScanID == scanID else { return }
+    scanTimeoutWorkItem?.cancel()
+    scanTimeoutWorkItem = nil
+    activeScanID = nil
     isScanning = false
 
     guard activeSampleLimit == sampleLimit else {
+      scanStartedAt = nil
       scanNow()
       return
     }
@@ -197,6 +220,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         consecutiveScanFailures = 0
         lastMetrics = metrics
         let scannedAt = Date()
+        scheduleNextScanAfterCurrentRun()
         if metrics.shouldAlert(threshold: configuration.alertThreshold) {
           emit(.alert(metrics, scannedAt), nextScanAt: nextScanAt)
         } else {
@@ -215,6 +239,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func handleScanFailure(_ message: String) {
+    scanTimeoutWorkItem?.cancel()
+    scanTimeoutWorkItem = nil
+    activeScanID = nil
+    isScanning = false
+    scheduleNextScanAfterCurrentRun()
     consecutiveScanFailures += 1
     let shouldReload = ScanRecoveryPolicy.shouldReload(
       consecutiveFailures: consecutiveScanFailures
@@ -253,6 +282,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func handleAuthenticationRequired(_ message: String) {
+    scanTimeoutWorkItem?.cancel()
+    scanTimeoutWorkItem = nil
+    activeScanID = nil
+    scanStartedAt = nil
     isScanning = false
     consecutiveScanFailures = 0
     needsImmediateScan = true
@@ -562,12 +595,58 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func scheduleNextScan(after delay: TimeInterval) {
-    nextScanTimer?.invalidate()
-    nextScanAt = Date().addingTimeInterval(delay)
-    nextScanTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) {
-      [weak self] _ in
-      self?.scanNow()
+    nextScanWorkItem?.cancel()
+    let safeDelay = max(0, delay)
+    nextScanAt = Date().addingTimeInterval(safeDelay)
+    let item = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.nextScanWorkItem = nil
+      self.nextScanAt = nil
+      self.scanNow()
     }
+    nextScanWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + safeDelay, execute: item)
+  }
+
+  private func cancelNextScan() {
+    nextScanWorkItem?.cancel()
+    nextScanWorkItem = nil
+    nextScanAt = nil
+  }
+
+  private func scheduleNextScanAfterCurrentRun() {
+    let duration = scanStartedAt.map { max(0, Date().timeIntervalSince($0)) } ?? 0
+    scanStartedAt = nil
+    scheduleNextScan(
+      after: MonitorRefreshPolicy.nextScanDelay(
+        scanInterval: configuration.scanInterval,
+        scanDuration: duration
+      )
+    )
+  }
+
+  private func scheduleScanTimeout(for scanID: UUID) {
+    scanTimeoutWorkItem?.cancel()
+    let item = DispatchWorkItem { [weak self] in
+      guard let self, self.activeScanID == scanID else { return }
+      self.scanTimeoutWorkItem = nil
+      self.activeScanID = nil
+      self.scanStartedAt = nil
+      self.isScanning = false
+      self.consecutiveScanFailures += 1
+      self.needsImmediateScan = true
+      self.scheduleNextScan(after: self.configuration.scanInterval)
+      let seconds = Int(Self.maximumScanDuration)
+      let message = "扫描超过 \(seconds) 秒；正在自动重载后台连接。"
+      NSLog("[SMSMonitor] %@ scan timeout: %@", self.configuration.id, message)
+      self.emit(.error(message, Date()), nextScanAt: self.nextScanAt)
+      self.webView.reload()
+    }
+    scanTimeoutWorkItem = item
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + Self.maximumScanDuration,
+      execute: item
+    )
   }
 
   private func emit(_ state: AppMonitorState, nextScanAt: Date?) {
@@ -655,19 +734,22 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: Error
   ) {
-    isScanning = false
     needsImmediateScan = true
     handleScanFailure("平台页面加载失败：\(error.localizedDescription)")
-    scheduleNextScan(after: configuration.scanInterval)
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    scanTimeoutWorkItem?.cancel()
+    scanTimeoutWorkItem = nil
+    activeScanID = nil
+    scanStartedAt = nil
     isScanning = false
     autoLoginInProgress = false
     autoLoginStage = ""
     autoLoginOutcomeWorkItem?.cancel()
     consecutiveScanFailures = 0
     needsImmediateScan = true
+    scheduleNextScan(after: configuration.scanInterval)
     emit(.error("平台页面进程已重启，正在恢复。", Date()), nextScanAt: nextScanAt)
     webView.reload()
   }
@@ -689,6 +771,7 @@ final class MonitorController {
   private var snapshotsByID: [String: ModuleMonitorSnapshot]
   private var activityToken: NSObjectProtocol?
   private var hasStarted = false
+  private var healthCheckWorkItem: DispatchWorkItem?
 
   init(configurations: [MonitorConfiguration]) {
     self.configurations = configurations
@@ -764,6 +847,7 @@ final class MonitorController {
   }
 
   deinit {
+    healthCheckWorkItem?.cancel()
     if let activityToken {
       ProcessInfo.processInfo.endActivity(activityToken)
     }
@@ -776,6 +860,7 @@ final class MonitorController {
     )
 
     hasStarted = true
+    scheduleHealthCheck()
     workspaceController.show(moduleID: orderedMonitorIDs.first)
     publish(changedModuleID: nil)
     for monitorID in orderedMonitorIDs {
@@ -802,6 +887,8 @@ final class MonitorController {
   }
 
   func stop() {
+    healthCheckWorkItem?.cancel()
+    healthCheckWorkItem = nil
     for monitor in monitorsByID.values {
       monitor.stop()
     }
@@ -973,8 +1060,61 @@ final class MonitorController {
   }
 
   private func publish(changedModuleID: String?) {
+    let staleMonitorIDs = expireStaleResults()
     let modules = orderedMonitorIDs.compactMap { snapshotsByID[$0] }
     onStateChange?(FleetMonitorSnapshot(modules: modules), changedModuleID)
+    guard !staleMonitorIDs.isEmpty else { return }
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      for monitorID in staleMonitorIDs {
+        self.monitorsByID[monitorID]?.scanNow()
+      }
+    }
+  }
+
+  private func expireStaleResults(now: Date = Date()) -> [String] {
+    var staleMonitorIDs: [String] = []
+    for monitorID in orderedMonitorIDs {
+      guard let snapshot = snapshotsByID[monitorID],
+        snapshot.state.isHealthy || snapshot.state.isAlert,
+        let scannedAt = snapshot.state.scannedAt,
+        MonitorRefreshPolicy.resultIsStale(
+          scannedAt: scannedAt,
+          now: now,
+          scanInterval: snapshot.configuration.scanInterval
+        )
+      else { continue }
+
+      let staleMinutes = Int(
+        ceil(MonitorRefreshPolicy.staleAge(
+          scanInterval: snapshot.configuration.scanInterval
+        ) / 60)
+      )
+      let expiredState = AppMonitorState.error(
+        "监控结果已超过 \(staleMinutes) 分钟未更新，正在重新扫描。",
+        scannedAt
+      )
+      snapshotsByID[monitorID] = ModuleMonitorSnapshot(
+        configuration: snapshot.configuration,
+        state: expiredState,
+        nextScanAt: nil
+      )
+      workspaceController.updateMonitorState(moduleID: monitorID, state: expiredState)
+      staleMonitorIDs.append(monitorID)
+    }
+    return staleMonitorIDs
+  }
+
+  private func scheduleHealthCheck() {
+    healthCheckWorkItem?.cancel()
+    let item = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.healthCheckWorkItem = nil
+      self.publish(changedModuleID: nil)
+      self.scheduleHealthCheck()
+    }
+    healthCheckWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: item)
   }
 
   private func bind(_ monitor: ModuleMonitorController) {
