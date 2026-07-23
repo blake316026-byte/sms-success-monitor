@@ -17,7 +17,9 @@ import {
   ALERT_THRESHOLD,
   calculateMetrics,
   isAlert,
+  MAX_CAPTCHA_LOGIN_ATTEMPTS,
   MAX_SAMPLE_LIMIT,
+  MAX_TOTP_LOGIN_ATTEMPTS,
   MIN_SAMPLE_LIMIT,
   normalizeSampleLimit,
   percentageText,
@@ -47,7 +49,6 @@ const loginAutomationSource = fs.readFileSync(
   'utf8'
 );
 const shellHeight = 112;
-const maximumAutoLoginAttempts = 5;
 const autoLoginCooldownMs = 5 * 60_000;
 
 const pages = new Map();
@@ -82,7 +83,8 @@ for (const module of modules) {
     nextScanAt: null,
     scanning: false,
     consecutiveScanFailures: 0,
-    autoLoginAttempts: 0,
+    captchaAutoLoginAttempts: 0,
+    totpAutoLoginAttempts: 0,
     autoLoginInProgress: false,
     autoLoginStage: '',
     autoLoginCooldownUntil: 0,
@@ -426,7 +428,8 @@ function ensurePageState(page) {
     nextScanAt: null,
     scanning: false,
     consecutiveScanFailures: 0,
-    autoLoginAttempts: 0,
+    captchaAutoLoginAttempts: 0,
+    totpAutoLoginAttempts: 0,
     autoLoginInProgress: false,
     autoLoginStage: '',
     autoLoginCooldownUntil: 0,
@@ -567,7 +570,8 @@ async function persistCurrentToken(id) {
 }
 
 function resetAutoLoginState(state) {
-  state.autoLoginAttempts = 0;
+  state.captchaAutoLoginAttempts = 0;
+  state.totpAutoLoginAttempts = 0;
   state.autoLoginInProgress = false;
   state.autoLoginStage = '';
   state.autoLoginCooldownUntil = 0;
@@ -575,7 +579,7 @@ function resetAutoLoginState(state) {
   state.autoLoginTimer = null;
 }
 
-function pauseAutoLogin(id, detail = '') {
+function pauseAutoLogin(id, phaseName, maximumAttempts, detail = '') {
   const state = moduleStates.get(id);
   if (!state) return;
   state.autoLoginInProgress = false;
@@ -584,7 +588,7 @@ function pauseAutoLogin(id, detail = '') {
   const suffix = detail ? `（${detail}）` : '';
   updateModule(id, {
     status: 'auth',
-    message: `自动登录已连续失败 ${maximumAutoLoginAttempts} 次${suffix}，暂停至 ${timeText(state.autoLoginCooldownUntil)}。`,
+    message: `${phaseName}已连续失败 ${maximumAttempts} 次${suffix}，请人工处理；自动登录暂停至 ${timeText(state.autoLoginCooldownUntil)}。`,
     metrics: null,
     nextScanAt: Date.now() + SCAN_INTERVAL_MS
   });
@@ -611,14 +615,22 @@ function retryAutoLogin(id, message) {
   if (!state || !page) return;
   state.autoLoginInProgress = false;
   state.autoLoginStage = '';
-  state.autoLoginAttempts += 1;
-  if (state.autoLoginAttempts >= maximumAutoLoginAttempts) {
-    pauseAutoLogin(id, message);
+  const isTotp = (() => {
+    try { return new URL(page.view.webContents.getURL()).pathname === '/ga-auth'; } catch (_) { return false; }
+  })();
+  const attemptsKey = isTotp ? 'totpAutoLoginAttempts' : 'captchaAutoLoginAttempts';
+  const phaseName = isTotp ? 'Google 验证码' : '图片验证码';
+  const maximumAttempts = isTotp
+    ? MAX_TOTP_LOGIN_ATTEMPTS
+    : MAX_CAPTCHA_LOGIN_ATTEMPTS;
+  state[attemptsKey] += 1;
+  if (state[attemptsKey] >= maximumAttempts) {
+    pauseAutoLogin(id, phaseName, maximumAttempts, message);
     return;
   }
   updateModule(id, {
     status: 'starting',
-    message: `${message}，稍后自动重试`,
+    message: `${message}，将继续尝试${phaseName}（${state[attemptsKey] + 1}/${maximumAttempts}）`,
     nextScanAt: Date.now() + SCAN_INTERVAL_MS
   });
   state.autoLoginTimer = setTimeout(() => {
@@ -683,7 +695,8 @@ async function attemptAutoLogin(id, currentURL) {
   if (!state || !page || state.autoLoginInProgress || !canAutoLogin(profile)) return;
 
   if (state.autoLoginCooldownUntil && state.autoLoginCooldownUntil <= Date.now()) {
-    state.autoLoginAttempts = 0;
+    state.captchaAutoLoginAttempts = 0;
+    state.totpAutoLoginAttempts = 0;
     state.autoLoginCooldownUntil = 0;
   }
   if (state.autoLoginCooldownUntil > Date.now()) {
@@ -694,11 +707,6 @@ async function attemptAutoLogin(id, currentURL) {
     });
     return;
   }
-  if (state.autoLoginAttempts >= maximumAutoLoginAttempts) {
-    pauseAutoLogin(id);
-    return;
-  }
-
   let pathName = '';
   try { pathName = new URL(currentURL).pathname; } catch (_) {}
   if (pathName === '/unlock-ip') {
@@ -710,10 +718,23 @@ async function attemptAutoLogin(id, currentURL) {
     return;
   }
 
+  const isTotp = pathName === '/ga-auth';
+  const attempts = isTotp
+    ? state.totpAutoLoginAttempts
+    : state.captchaAutoLoginAttempts;
+  const maximumAttempts = isTotp
+    ? MAX_TOTP_LOGIN_ATTEMPTS
+    : MAX_CAPTCHA_LOGIN_ATTEMPTS;
+  const phaseName = isTotp ? 'Google 验证码' : '图片验证码';
+  if (attempts >= maximumAttempts) {
+    pauseAutoLogin(id, phaseName, maximumAttempts);
+    return;
+  }
+
   state.autoLoginInProgress = true;
   updateModule(id, {
     status: 'starting',
-    message: `正在自动登录（${state.autoLoginAttempts + 1}/${maximumAutoLoginAttempts}）`,
+    message: `正在自动登录（${phaseName} ${attempts + 1}/${maximumAttempts}）`,
     metrics: null,
     nextScanAt: Date.now() + SCAN_INTERVAL_MS
   });
@@ -777,7 +798,7 @@ async function attemptAutoLogin(id, currentURL) {
         : 0;
       const retryOffsetsMs = [0, -30_000, 30_000, -60_000, 60_000];
       const offsetMs = serverOffsetMs
-        + retryOffsetsMs[Math.min(state.autoLoginAttempts, retryOffsetsMs.length - 1)];
+        + retryOffsetsMs[Math.min(state.totpAutoLoginAttempts, retryOffsetsMs.length - 1)];
       const cyclePosition = Math.floor(((Date.now() + offsetMs) / 1000) % 30);
       if (cyclePosition > 24) {
         await new Promise((resolve) => setTimeout(resolve, 6500));

@@ -15,7 +15,8 @@ public final class ModuleState {
     public long nextScanAt;
     public boolean scanning;
     public int consecutiveScanFailures;
-    public int autoLoginAttempts;
+    public int captchaAutoLoginAttempts;
+    public int totpAutoLoginAttempts;
     public boolean autoLoginInProgress;
     public long autoLoginCooldownUntil;
     public boolean needsImmediateScan = true;
@@ -37,7 +38,8 @@ public final class ModuleState {
         nextScanAt = source.nextScanAt;
         scanning = source.scanning;
         consecutiveScanFailures = source.consecutiveScanFailures;
-        autoLoginAttempts = source.autoLoginAttempts;
+        captchaAutoLoginAttempts = source.captchaAutoLoginAttempts;
+        totpAutoLoginAttempts = source.totpAutoLoginAttempts;
         autoLoginInProgress = source.autoLoginInProgress;
         autoLoginCooldownUntil = source.autoLoginCooldownUntil;
         needsImmediateScan = source.needsImmediateScan;

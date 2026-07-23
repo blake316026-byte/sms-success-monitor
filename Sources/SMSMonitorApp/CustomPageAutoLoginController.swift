@@ -1,8 +1,8 @@
 import Foundation
+import SMSMonitorCore
 import WebKit
 
 final class CustomPageAutoLoginController {
-  private static let maximumAttempts = 5
   private static let cooldown: TimeInterval = 300
 
   private let credentialID: String
@@ -11,7 +11,8 @@ final class CustomPageAutoLoginController {
   private let automationRuntime: LocalAutomationRuntime
   private let loginAutomation: LoginPageAutomation
 
-  private var attempts = 0
+  private var captchaAttempts = 0
+  private var totpAttempts = 0
   private var inProgress = false
   private var stage = ""
   private var cooldownUntil: Date?
@@ -68,7 +69,12 @@ final class CustomPageAutoLoginController {
     guard !inProgress, let webView else { return }
     guard url.path != "/unlock-ip" else { return }
     if let cooldownUntil, cooldownUntil > Date() { return }
-    if attempts >= Self.maximumAttempts {
+    let isTOTP = url.path == "/ga-auth"
+    let attempts = isTOTP ? totpAttempts : captchaAttempts
+    let maximumAttempts = isTOTP
+      ? AutoLoginAttemptPolicy.maximumTOTPAttempts
+      : AutoLoginAttemptPolicy.maximumCaptchaAttempts
+    if attempts >= maximumAttempts {
       cooldownUntil = Date().addingTimeInterval(Self.cooldown)
       return
     }
@@ -158,7 +164,7 @@ final class CustomPageAutoLoginController {
       ? clockOffsetMilliseconds / 1_000
       : 0
     let retryOffsets = [0, -30, 30, -60, 60]
-    let offset = serverOffset + Double(retryOffsets[min(attempts, retryOffsets.count - 1)])
+    let offset = serverOffset + Double(retryOffsets[min(totpAttempts, retryOffsets.count - 1)])
     let adjustedNow = Date().addingTimeInterval(offset)
     let cyclePosition = adjustedNow.timeIntervalSince1970.truncatingRemainder(dividingBy: 30)
     let delay = cyclePosition > 24 ? 6.5 : 0
@@ -216,8 +222,17 @@ final class CustomPageAutoLoginController {
   private func retry() {
     inProgress = false
     stage = ""
-    attempts += 1
-    guard attempts < Self.maximumAttempts else {
+    let isTOTP = webView?.url?.path == "/ga-auth"
+    if isTOTP {
+      totpAttempts += 1
+    } else {
+      captchaAttempts += 1
+    }
+    let attempts = isTOTP ? totpAttempts : captchaAttempts
+    let maximumAttempts = isTOTP
+      ? AutoLoginAttemptPolicy.maximumTOTPAttempts
+      : AutoLoginAttemptPolicy.maximumCaptchaAttempts
+    guard attempts < maximumAttempts else {
       cooldownUntil = Date().addingTimeInterval(Self.cooldown)
       return
     }
@@ -248,7 +263,8 @@ final class CustomPageAutoLoginController {
   }
 
   private func reset() {
-    attempts = 0
+    captchaAttempts = 0
+    totpAttempts = 0
     inProgress = false
     stage = ""
     cooldownUntil = nil

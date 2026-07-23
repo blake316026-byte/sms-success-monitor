@@ -111,7 +111,8 @@ public final class MonitorService extends Service {
     private static final int SCAN_FAILURE_RELOAD_THRESHOLD = 2;
     private static final long AUTO_LOGIN_POLL_MS = 300L;
     private static final int MAX_AUTO_LOGIN_POLLS = 80;
-    private static final int MAX_AUTO_LOGIN_ATTEMPTS = 5;
+    private static final int MAX_CAPTCHA_ATTEMPTS = 10;
+    private static final int MAX_TOTP_ATTEMPTS = 5;
     private static final long AUTO_LOGIN_COOLDOWN_MS = 5 * 60_000L;
 
     private final IBinder binder = new LocalBinder();
@@ -610,7 +611,8 @@ public final class MonitorService extends Service {
         }
         long now = System.currentTimeMillis();
         if (page.state.autoLoginCooldownUntil > 0 && page.state.autoLoginCooldownUntil <= now) {
-            page.state.autoLoginAttempts = 0;
+            page.state.captchaAutoLoginAttempts = 0;
+            page.state.totpAutoLoginAttempts = 0;
             page.state.autoLoginCooldownUntil = 0;
         }
         if (page.state.autoLoginCooldownUntil > now) {
@@ -634,10 +636,6 @@ public final class MonitorService extends Service {
         if (profile == null || !profile.canAutoLogin() || page.state.autoLoginInProgress) return;
         long now = System.currentTimeMillis();
         if (page.state.autoLoginCooldownUntil > now) return;
-        if (page.state.autoLoginAttempts >= MAX_AUTO_LOGIN_ATTEMPTS) {
-            pauseAutoLogin(page, "");
-            return;
-        }
         String path = currentUrl == null ? "" : Uri.parse(currentUrl).getPath();
         if ("/unlock-ip".equals(path)) {
             page.state.status = "auth";
@@ -646,10 +644,21 @@ public final class MonitorService extends Service {
             return;
         }
 
+        boolean isTotp = "/ga-auth".equals(path);
+        int attempts = isTotp
+                ? page.state.totpAutoLoginAttempts
+                : page.state.captchaAutoLoginAttempts;
+        int maximumAttempts = isTotp ? MAX_TOTP_ATTEMPTS : MAX_CAPTCHA_ATTEMPTS;
+        String phaseName = isTotp ? "Google 验证码" : "图片验证码";
+        if (attempts >= maximumAttempts) {
+            pauseAutoLogin(page, phaseName, maximumAttempts, "");
+            return;
+        }
+
         page.state.autoLoginInProgress = true;
         page.state.status = "starting";
-        page.state.message = "正在自动登录（" + (page.state.autoLoginAttempts + 1)
-                + "/" + MAX_AUTO_LOGIN_ATTEMPTS + "）";
+        page.state.message = "正在自动登录（" + phaseName + " " + (attempts + 1)
+                + "/" + maximumAttempts + "）";
         refreshOutputs();
         runPageAutomation(page, "globalThis.smsLoginAutomation.snapshot()", (value, error) -> {
             if (!error.isEmpty()) {
@@ -738,7 +747,7 @@ public final class MonitorService extends Service {
             return;
         }
         int[] offsets = new int[]{0, -210, 210, -180, 180};
-        int offset = offsets[Math.min(page.state.autoLoginAttempts, offsets.length - 1)];
+        int offset = offsets[Math.min(page.state.totpAutoLoginAttempts, offsets.length - 1)];
         long adjustedSeconds = System.currentTimeMillis() / 1000L + offset;
         long delayMs = Math.floorMod(adjustedSeconds, 30L) > 24L ? 6_500L : 0L;
         mainHandler.postDelayed(() -> generateAndSubmitTotpCode(page, secret, offset), delayMs);
@@ -802,25 +811,44 @@ public final class MonitorService extends Service {
     private void retryAutoLogin(ManagedPage page, String message) {
         page.state.autoLoginInProgress = false;
         page.autoLoginStage = "";
-        page.state.autoLoginAttempts += 1;
-        if (page.state.autoLoginAttempts >= MAX_AUTO_LOGIN_ATTEMPTS) {
-            pauseAutoLogin(page, message);
+        String currentUrl = page.webView.getUrl();
+        boolean isTotp = currentUrl != null
+                && "/ga-auth".equals(Uri.parse(currentUrl).getPath());
+        String phaseName = isTotp ? "Google 验证码" : "图片验证码";
+        int maximumAttempts = isTotp ? MAX_TOTP_ATTEMPTS : MAX_CAPTCHA_ATTEMPTS;
+        if (isTotp) {
+            page.state.totpAutoLoginAttempts += 1;
+        } else {
+            page.state.captchaAutoLoginAttempts += 1;
+        }
+        int attempts = isTotp
+                ? page.state.totpAutoLoginAttempts
+                : page.state.captchaAutoLoginAttempts;
+        if (attempts >= maximumAttempts) {
+            pauseAutoLogin(page, phaseName, maximumAttempts, message);
             return;
         }
         page.state.status = "starting";
-        page.state.message = message + "，稍后自动重试";
+        page.state.message = message + "，将继续尝试" + phaseName + "（"
+                + (attempts + 1) + "/" + maximumAttempts + "）";
         refreshOutputs();
         mainHandler.postDelayed(() -> attemptAutoLogin(page, page.webView.getUrl()), 1_500L);
     }
 
-    private void pauseAutoLogin(ManagedPage page, String detail) {
+    private void pauseAutoLogin(
+            ManagedPage page,
+            String phaseName,
+            int maximumAttempts,
+            String detail
+    ) {
         page.state.autoLoginInProgress = false;
         page.autoLoginStage = "";
         page.state.autoLoginCooldownUntil = System.currentTimeMillis() + AUTO_LOGIN_COOLDOWN_MS;
         page.state.status = "auth";
-        page.state.message = "自动登录已连续失败 " + MAX_AUTO_LOGIN_ATTEMPTS + " 次"
+        page.state.message = phaseName + "已连续失败 " + maximumAttempts + " 次"
                 + (detail == null || detail.isEmpty() ? "" : "（" + detail + "）")
-                + "，暂停至 " + formatTime(page.state.autoLoginCooldownUntil) + "。";
+                + "，请人工处理；自动登录暂停至 "
+                + formatTime(page.state.autoLoginCooldownUntil) + "。";
         refreshOutputs();
     }
 
@@ -843,7 +871,8 @@ public final class MonitorService extends Service {
     }
 
     private void resetAutoLogin(ManagedPage page) {
-        page.state.autoLoginAttempts = 0;
+        page.state.captchaAutoLoginAttempts = 0;
+        page.state.totpAutoLoginAttempts = 0;
         page.state.autoLoginInProgress = false;
         page.autoLoginStage = "";
         page.state.autoLoginCooldownUntil = 0;

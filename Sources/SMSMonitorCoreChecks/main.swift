@@ -53,6 +53,24 @@ check(
   "reloads the platform context after two consecutive scan failures"
 )
 check(
+  AutoLoginAttemptPolicy.maximumCaptchaAttempts == 10,
+  "allows ten captcha attempts before manual intervention"
+)
+check(
+  AutoLoginAttemptPolicy.maximumTOTPAttempts == 5,
+  "allows five Google verification attempts before manual intervention"
+)
+check(
+  AutoLoginAttemptPolicy.canAttemptCaptcha(afterFailures: 9)
+    && !AutoLoginAttemptPolicy.canAttemptCaptcha(afterFailures: 10),
+  "continues captcha retries through attempt ten and then stops"
+)
+check(
+  AutoLoginAttemptPolicy.canAttemptTOTP(afterFailures: 4)
+    && !AutoLoginAttemptPolicy.canAttemptTOTP(afterFailures: 5),
+  "continues Google verification through attempt five and then stops"
+)
+check(
   MonitorRefreshPolicy.nextScanDelay(scanInterval: 60, scanDuration: 20) == 40,
   "keeps a one-minute cadence after a fast scan"
 )

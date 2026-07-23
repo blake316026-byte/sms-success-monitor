@@ -8,7 +8,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   let webView: WKWebView
   var onStateChange: ((AppMonitorState, Date?) -> Void)?
 
-  private static let maximumAutoLoginAttempts = 5
   private static let autoLoginCooldown: TimeInterval = 5 * 60
   private static let maximumScanDuration: TimeInterval = 3 * 60
 
@@ -25,7 +24,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var lastMetrics: ScanMetrics?
   private var needsImmediateScan = true
   private var consecutiveScanFailures = 0
-  private var autoLoginAttempts = 0
+  private var captchaAutoLoginAttempts = 0
+  private var totpAutoLoginAttempts = 0
   private var autoLoginInProgress = false
   private var autoLoginStage = ""
   private var autoLoginCooldownUntil: Date?
@@ -271,7 +271,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func credentialsDidChange() {
-    autoLoginAttempts = 0
+    captchaAutoLoginAttempts = 0
+    totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
     autoLoginInProgress = false
     autoLoginStage = ""
@@ -303,7 +304,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         )
         return
       }
-      autoLoginAttempts = 0
+      captchaAutoLoginAttempts = 0
+      totpAutoLoginAttempts = 0
       autoLoginCooldownUntil = nil
     }
 
@@ -325,14 +327,24 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       emit(.authenticationRequired("平台要求人工完成 IP 解锁，自动登录已暂停。"), nextScanAt: nextScanAt)
       return
     }
-    guard autoLoginAttempts < Self.maximumAutoLoginAttempts else {
-      pauseAutoLogin()
+    let isTOTP = url.path == "/ga-auth"
+    let attempts = isTOTP ? totpAutoLoginAttempts : captchaAutoLoginAttempts
+    let maximumAttempts = isTOTP
+      ? AutoLoginAttemptPolicy.maximumTOTPAttempts
+      : AutoLoginAttemptPolicy.maximumCaptchaAttempts
+    guard attempts < maximumAttempts else {
+      pauseAutoLogin(
+        phaseName: isTOTP ? "Google 验证码" : "图片验证码",
+        maximumAttempts: maximumAttempts
+      )
       return
     }
 
     autoLoginInProgress = true
     emit(
-      .starting("正在自动登录（\(autoLoginAttempts + 1)/\(Self.maximumAutoLoginAttempts)）"),
+      .starting(
+        "正在自动登录（\(isTOTP ? "Google 验证码" : "图片验证码") \(attempts + 1)/\(maximumAttempts)）"
+      ),
       nextScanAt: nextScanAt
     )
     loginAutomation.snapshot(in: webView) { [weak self] result in
@@ -431,7 +443,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       ? clockOffsetMilliseconds / 1_000
       : 0
     let retryOffsets = [0, -30, 30, -60, 60]
-    let offset = serverOffset + Double(retryOffsets[min(autoLoginAttempts, retryOffsets.count - 1)])
+    let offset = serverOffset
+      + Double(retryOffsets[min(totpAutoLoginAttempts, retryOffsets.count - 1)])
     let adjustedNow = Date().addingTimeInterval(TimeInterval(offset))
     let cyclePosition = adjustedNow.timeIntervalSince1970.truncatingRemainder(dividingBy: 30)
     let delay = cyclePosition > 24 ? 6.5 : 0
@@ -491,12 +504,29 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private func retryAutoLogin(_ message: String) {
     autoLoginInProgress = false
     autoLoginStage = ""
-    autoLoginAttempts += 1
-    guard autoLoginAttempts < Self.maximumAutoLoginAttempts else {
-      pauseAutoLogin(detail: message)
+    let isTOTP = webView.url?.path == "/ga-auth"
+    let phaseName = isTOTP ? "Google 验证码" : "图片验证码"
+    let maximumAttempts = isTOTP
+      ? AutoLoginAttemptPolicy.maximumTOTPAttempts
+      : AutoLoginAttemptPolicy.maximumCaptchaAttempts
+    if isTOTP {
+      totpAutoLoginAttempts += 1
+    } else {
+      captchaAutoLoginAttempts += 1
+    }
+    let attempts = isTOTP ? totpAutoLoginAttempts : captchaAutoLoginAttempts
+    guard attempts < maximumAttempts else {
+      pauseAutoLogin(
+        phaseName: phaseName,
+        maximumAttempts: maximumAttempts,
+        detail: message
+      )
       return
     }
-    emit(.starting("\(message)，稍后自动重试"), nextScanAt: nextScanAt)
+    emit(
+      .starting("\(message)，将继续尝试\(phaseName)（\(attempts + 1)/\(maximumAttempts)）"),
+      nextScanAt: nextScanAt
+    )
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
       guard let self, let currentURL = self.webView.url,
         let profile = self.credentialStore.profile(for: self.configuration.id)
@@ -505,7 +535,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
   }
 
-  private func pauseAutoLogin(detail: String = "") {
+  private func pauseAutoLogin(
+    phaseName: String,
+    maximumAttempts: Int,
+    detail: String = ""
+  ) {
     autoLoginInProgress = false
     autoLoginStage = ""
     let cooldown = Date().addingTimeInterval(Self.autoLoginCooldown)
@@ -513,7 +547,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let suffix = detail.isEmpty ? "" : "（\(detail)）"
     emit(
       .authenticationRequired(
-        "自动登录已连续失败 \(Self.maximumAutoLoginAttempts) 次\(suffix)，暂停至 \(Self.timeText(cooldown))。"
+        "\(phaseName)已连续失败 \(maximumAttempts) 次\(suffix)，请人工处理；自动登录暂停至 \(Self.timeText(cooldown))。"
       ),
       nextScanAt: nextScanAt
     )
@@ -532,7 +566,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private func completeAutoLogin(token: String) {
     autoLoginInProgress = false
     autoLoginStage = ""
-    autoLoginAttempts = 0
+    captchaAutoLoginAttempts = 0
+    totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
     autoLoginOutcomeWorkItem?.cancel()
     needsImmediateScan = true
@@ -718,7 +753,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard isMonitorOrigin(url) else { return }
     autoLoginInProgress = false
     autoLoginStage = ""
-    autoLoginAttempts = 0
+    captchaAutoLoginAttempts = 0
+    totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
     autoLoginOutcomeWorkItem?.cancel()
     persistCurrentToken()

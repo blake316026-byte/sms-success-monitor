@@ -4,6 +4,16 @@ export const MAX_SAMPLE_LIMIT = 500;
 export const ALERT_THRESHOLD = 0.5;
 export const SCAN_INTERVAL_MS = 60_000;
 export const SCAN_FAILURE_RELOAD_THRESHOLD = 2;
+export const MAX_CAPTCHA_LOGIN_ATTEMPTS = 10;
+export const MAX_TOTP_LOGIN_ATTEMPTS = 5;
+
+export function canAttemptCaptcha(afterFailures) {
+  return Number(afterFailures) < MAX_CAPTCHA_LOGIN_ATTEMPTS;
+}
+
+export function canAttemptTotp(afterFailures) {
+  return Number(afterFailures) < MAX_TOTP_LOGIN_ATTEMPTS;
+}
 
 export function normalizeSampleLimit(value) {
   const parsed = Math.round(Number(value));

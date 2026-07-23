@@ -11,6 +11,19 @@ public enum ScanRecoveryPolicy {
   }
 }
 
+public enum AutoLoginAttemptPolicy {
+  public static let maximumCaptchaAttempts = 10
+  public static let maximumTOTPAttempts = 5
+
+  public static func canAttemptCaptcha(afterFailures failures: Int) -> Bool {
+    failures < maximumCaptchaAttempts
+  }
+
+  public static func canAttemptTOTP(afterFailures failures: Int) -> Bool {
+    failures < maximumTOTPAttempts
+  }
+}
+
 public enum MonitorRefreshPolicy {
   public static let minimumNextScanDelay: TimeInterval = 1
   public static let minimumStaleAge: TimeInterval = 4 * 60

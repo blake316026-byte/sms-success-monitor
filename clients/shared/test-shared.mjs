@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  canAttemptCaptcha,
+  canAttemptTotp,
   calculateMetrics,
   isAlert,
+  MAX_CAPTCHA_LOGIN_ATTEMPTS,
   MAX_SAMPLE_LIMIT,
+  MAX_TOTP_LOGIN_ATTEMPTS,
   MIN_SAMPLE_LIMIT,
   normalizeSampleLimit,
   percentageText,
@@ -39,6 +43,12 @@ assert.equal(lowestAlert.id, 'a');
 
 assert.equal(shouldReloadAfterFailure(1), false);
 assert.equal(shouldReloadAfterFailure(2), true);
+assert.equal(MAX_CAPTCHA_LOGIN_ATTEMPTS, 10);
+assert.equal(MAX_TOTP_LOGIN_ATTEMPTS, 5);
+assert.equal(canAttemptCaptcha(9), true);
+assert.equal(canAttemptCaptcha(10), false);
+assert.equal(canAttemptTotp(4), true);
+assert.equal(canAttemptTotp(5), false);
 assert.equal(normalizeSampleLimit('75'), 75);
 assert.equal(normalizeSampleLimit(1), MIN_SAMPLE_LIMIT);
 assert.equal(normalizeSampleLimit(10_000), MAX_SAMPLE_LIMIT);
