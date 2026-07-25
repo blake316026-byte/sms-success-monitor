@@ -380,6 +380,14 @@ function isAuthenticationURL(value) {
   }
 }
 
+function requiresInteractiveAuthentication(value) {
+  try {
+    return ['/ga-auth', '/unlock-ip'].includes(new URL(value).pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
 function isConfiguredOrigin(module, value) {
   try {
     return new URL(module.url).origin === new URL(value).origin;
@@ -504,11 +512,20 @@ async function handlePageFinished(id) {
   if (!page) return;
   const state = moduleStates.get(id);
   const currentURL = page.view.webContents.getURL();
-  if (isAuthenticationURL(currentURL)) {
+  if (requiresInteractiveAuthentication(currentURL)) {
     handleAuthenticationRequired(id, '平台需要重新登录。');
     return;
   }
   if (!isConfiguredOrigin(state, currentURL)) return;
+  if (new URL(currentURL).pathname === '/login') {
+    if (!state.autoLoginInProgress && state.needsImmediateScan) {
+      state.needsImmediateScan = false;
+      setTimeout(() => scanModule(id), 900);
+    } else {
+      broadcastSnapshot();
+    }
+    return;
+  }
   resetAutoLoginState(state);
   persistCurrentToken(id);
   if (!state.needsImmediateScan) {
@@ -892,7 +909,7 @@ async function scanModule(id) {
   if (!state || !page || state.scanning) return;
   const currentURL = page.view.webContents.getURL();
   if (!currentURL) return;
-  if (isAuthenticationURL(currentURL)) {
+  if (requiresInteractiveAuthentication(currentURL)) {
     handleAuthenticationRequired(id, '平台登录已失效。');
     return;
   }
@@ -914,8 +931,9 @@ async function scanModule(id) {
   broadcastSnapshot(id);
 
   try {
+    const fallbackToken = String(profileFor(id)?.token || '');
     const result = await page.view.webContents.executeJavaScript(
-      `(async () => { ${scanSource}\nreturn await globalThis.smsMonitorScan(${activeSampleLimit}); })()`,
+      `(async () => { ${scanSource}\nreturn await globalThis.smsMonitorScan(${activeSampleLimit}, ${JSON.stringify(fallbackToken)}); })()`,
       true
     );
     state.scanning = false;

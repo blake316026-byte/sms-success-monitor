@@ -1,4 +1,4 @@
-globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit) {
+globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackToken = '') {
   const requestedLimit = Math.min(500, Math.max(10, Math.round(Number(sampleLimit) || 200)));
   const maximumPages = Math.max(1, Math.ceil(requestedLimit / 20));
 
@@ -33,7 +33,8 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit) {
   };
 
   const user = readStoredValue('lt-user');
-  const token = user && typeof user === 'object' ? user.token : null;
+  const pageToken = user && typeof user === 'object' ? user.token : null;
+  const token = String(pageToken || fallbackToken || '').trim();
   if (!token) {
     return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
   }

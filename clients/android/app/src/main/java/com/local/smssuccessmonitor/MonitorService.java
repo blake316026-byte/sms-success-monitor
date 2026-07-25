@@ -259,12 +259,20 @@ public final class MonitorService extends Service {
     }
 
     private void handlePageFinished(ManagedPage page, String url) {
-        if (isAuthenticationUrl(url)) {
+        if (requiresInteractiveAuthentication(url)) {
             handleAuthenticationRequired(page, "平台需要重新登录。");
             return;
         }
         if (!sameOrigin(page.state.module.url, url)) {
             refreshOutputs();
+            return;
+        }
+        if ("/login".equals(Uri.parse(url).getPath())) {
+            refreshOutputs();
+            if (!page.state.autoLoginInProgress && page.state.needsImmediateScan) {
+                page.state.needsImmediateScan = false;
+                mainHandler.postDelayed(() -> scan(page.state.module.id), 900L);
+            }
             return;
         }
         resetAutoLogin(page);
@@ -447,7 +455,7 @@ public final class MonitorService extends Service {
         if (page == null || page.state.scanning) return;
         String currentUrl = page.webView.getUrl();
         if (currentUrl == null || currentUrl.isEmpty()) return;
-        if (isAuthenticationUrl(currentUrl)) {
+        if (requiresInteractiveAuthentication(currentUrl)) {
             handleAuthenticationRequired(page, "平台登录已失效。");
             return;
         }
@@ -471,9 +479,14 @@ public final class MonitorService extends Service {
         refreshOutputs();
 
         String token = JSONObject.quote(page.scanToken);
+        LocalCredentialStore.Profile storedProfile = credentialStore.get(page.state.module.id);
+        String fallbackToken = JSONObject.quote(
+                storedProfile == null ? "" : storedProfile.token
+        );
         String script = "(function(){try{" + scanSource
                 + "window.__smsMonitorScanResult=null;"
-                + "Promise.resolve(globalThis.smsMonitorScan(" + activeSampleLimit + ")).then(function(result){"
+                + "Promise.resolve(globalThis.smsMonitorScan(" + activeSampleLimit + ","
+                + fallbackToken + ")).then(function(result){"
                 + "window.__smsMonitorScanResult=JSON.stringify({token:" + token + ",result:result});"
                 + "}).catch(function(error){window.__smsMonitorScanResult=JSON.stringify({token:" + token
                 + ",result:{kind:'error',message:String(error&&error.message||error)}});});"
@@ -1262,6 +1275,12 @@ public final class MonitorService extends Service {
         if (value == null) return false;
         String path = Uri.parse(value).getPath();
         return "/login".equals(path) || "/ga-auth".equals(path) || "/unlock-ip".equals(path);
+    }
+
+    private boolean requiresInteractiveAuthentication(String value) {
+        if (value == null || value.isEmpty()) return false;
+        String path = Uri.parse(value).getPath();
+        return "/ga-auth".equals(path) || "/unlock-ip".equals(path);
     }
 
     private boolean sameOrigin(String expected, String actual) {

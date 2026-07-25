@@ -109,7 +109,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
 
-    if requiresAuthentication(currentURL) {
+    if requiresInteractiveAuthentication(currentURL) {
       handleAuthenticationRequired("平台登录已失效。")
       return
     }
@@ -132,7 +132,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
     webView.callAsyncJavaScript(
       ScanScript.body,
-      arguments: ["sampleLimit": activeSampleLimit],
+      arguments: [
+        "sampleLimit": activeSampleLimit,
+        "fallbackToken": credentialStore.profile(for: configuration.id)?.token ?? "",
+      ],
       in: nil,
       in: .page
     ) { [weak self] result in
@@ -736,6 +739,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     ["/login", "/ga-auth", "/unlock-ip"].contains(url.path)
   }
 
+  private func requiresInteractiveAuthentication(_ url: URL) -> Bool {
+    ["/ga-auth", "/unlock-ip"].contains(url.path)
+  }
+
   private func isMonitorOrigin(_ url: URL) -> Bool {
     url.scheme == configuration.targetURL.scheme
       && url.host == configuration.targetURL.host
@@ -745,12 +752,20 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard let url = webView.url else { return }
 
-    if requiresAuthentication(url) {
+    if requiresInteractiveAuthentication(url) {
       handleAuthenticationRequired("平台需要重新登录。")
       return
     }
 
     guard isMonitorOrigin(url) else { return }
+    if url.path == "/login" {
+      guard !autoLoginInProgress, needsImmediateScan else { return }
+      needsImmediateScan = false
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+        self?.scanNow()
+      }
+      return
+    }
     autoLoginInProgress = false
     autoLoginStage = ""
     captchaAutoLoginAttempts = 0

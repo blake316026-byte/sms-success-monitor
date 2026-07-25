@@ -12,7 +12,7 @@ if (!match) {
 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const executeScan = new AsyncFunction('sampleLimit', match[1]);
+const executeScan = new AsyncFunction('sampleLimit', 'fallbackToken', match[1]);
 
 class MemoryStorage {
   constructor(values = {}) {
@@ -77,7 +77,7 @@ function check(condition, message) {
 globalThis.window = makeWindow(async () => {
   throw new Error('fetch should not run without authentication');
 }, false);
-const unauthenticated = await executeScan(200);
+const unauthenticated = await executeScan(200, '');
 check(unauthenticated.kind === 'auth', 'returns an authentication state when no token is present');
 
 let singlePageCalls = 0;
@@ -89,7 +89,7 @@ globalThis.window = makeWindow(async () => {
   }));
   return responseFor(rows, 5000);
 });
-const singlePage = await executeScan(200);
+const singlePage = await executeScan(200, '');
 check(singlePage.kind === 'ok', 'accepts a successful API response');
 check(singlePage.statuses.length === 200, 'returns exactly 200 statuses from a full page');
 check(singlePage.statuses.filter((status) => status === 'SUCCESS').length === 120, 'preserves raw SUCCESS statuses');
@@ -122,5 +122,16 @@ globalThis.window = makeWindow(async (_url, options) => {
 const configuredPages = await executeScan(350);
 check(configuredPages.statuses.length === 350, 'returns the manually configured sample count');
 check(configuredPageCalls === 18, 'fetches enough capped pages for a configured sample count');
+
+let fallbackTokenSeen = false;
+globalThis.window = makeWindow(async (_url, options) => {
+  fallbackTokenSeen = options.headers.Auth === 'saved-token';
+  return responseFor([{ id: 'fallback-1', status: 'SUCCESS' }], 1);
+}, false);
+const fallbackTokenResult = await executeScan(200, 'saved-token');
+check(
+  fallbackTokenResult.kind === 'ok' && fallbackTokenSeen,
+  'uses the encrypted saved token before starting automatic login'
+);
 
 console.log('All scan-script checks passed');
