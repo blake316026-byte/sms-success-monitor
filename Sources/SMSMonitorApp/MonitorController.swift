@@ -30,6 +30,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var autoLoginStage = ""
   private var autoLoginCooldownUntil: Date?
   private var autoLoginOutcomeWorkItem: DispatchWorkItem?
+  private var pageSessionRecoveryAttempted = false
   private var mockScenario: String?
 
   init(
@@ -226,15 +227,19 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         lastMetrics = metrics
         let scannedAt = Date()
 
-        if webView.url?.path == "/login", usedFallbackToken {
-          if restoredPageSession {
+        if webView.url?.path == "/login" {
+          if !pageSessionRecoveryAttempted {
+            pageSessionRecoveryAttempted = true
             needsImmediateScan = true
-            emit(.starting("Token 仍有效，正在恢复后台页面"), nextScanAt: nil)
-            webView.reload()
+            let recoveryDetail = usedFallbackToken && restoredPageSession
+              ? "已恢复本机 Token"
+              : "Token 仍有效"
+            emit(.starting("\(recoveryDetail)，正在打开短信记录页"), nextScanAt: nil)
+            webView.load(URLRequest(url: monitoringPageURL))
           } else {
             handleAuthenticationRequired(
-              "Token 仍有效，但登录页缺少可恢复的网页会话。",
-              progressMessage: "正在自动登录以恢复后台页面"
+              "Token 可读取接口，但网页会话仍停留在登录页。",
+              progressMessage: "网页会话无法恢复，正在自动登录"
             )
           }
           return
@@ -296,6 +301,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     autoLoginCooldownUntil = nil
     autoLoginInProgress = false
     autoLoginStage = ""
+    pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
     persistCurrentToken()
     guard let currentURL = webView.url, requiresAuthentication(currentURL) else { return }
@@ -646,6 +652,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     return components?.url ?? configuration.targetURL
   }
 
+  private var monitoringPageURL: URL {
+    guard var components = URLComponents(url: configuration.targetURL, resolvingAgainstBaseURL: false)
+    else { return configuration.targetURL }
+    components.path = "/sms-record-list"
+    return components.url ?? configuration.targetURL
+  }
+
   private static func timeText(_ date: Date) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm:ss"
@@ -791,6 +804,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     captchaAutoLoginAttempts = 0
     totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
+    pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
     persistCurrentToken()
     guard needsImmediateScan else { return }
