@@ -18,9 +18,13 @@ import {
 
 const modulesPath = fileURLToPath(new URL('./modules.json', import.meta.url));
 const modules = JSON.parse(fs.readFileSync(modulesPath, 'utf8'));
-assert.equal(modules.length, 9);
-assert.equal(new Set(modules.map((module) => module.id)).size, 9);
-assert.equal(new Set(modules.map((module) => new URL(module.url).host)).size, 9);
+assert.equal(modules.length, 10);
+assert.equal(new Set(modules.map((module) => module.id)).size, 10);
+assert.equal(new Set(modules.map((module) => new URL(module.url).host)).size, 10);
+assert.deepEqual(
+  modules.map((module) => module.name),
+  ['BIllS02-OTP', 'BIllS', 'BIllS3', 'BIllS4', 'cg01', 'cg02', 'cg03（nine01）', 'cg04', 'bs01', 'OK01']
+);
 
 const low = calculateMetrics([
   ...Array(69).fill('SUCCESS'),

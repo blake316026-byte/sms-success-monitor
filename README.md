@@ -4,7 +4,7 @@
 
 开发、维护、技术决策与跨窗口交接统一以 [`DEVELOPMENT.md`](DEVELOPMENT.md) 为真源。
 
-固定后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`。
+固定后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`、`OK01`。
 
 ## 立即下载
 
@@ -16,6 +16,8 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
+当前正式版本：**v0.3.15**（macOS build 19、Android versionCode 19）。本版新增第十个固定后台 `OK01`，接入 `zwpeq3.sixsass.com` 的短信记录、独立登录会话和本地自动登录。正式发布页：[SMS Success Monitor v0.3.15](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.15)。
+
 ## 监控口径
 
 - 数据源：每个后台自身域名下的 `/api/sms_record/page`
@@ -24,7 +26,7 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 - 报警：`成功数 / 实际样本数 < 50%`
 - 周期：每 60 秒扫描一次，也可以手动扫描当前后台或全部后台
 - 自恢复：同一后台连续两次扫描异常时，只重载该后台连接并立即重试，不清除登录状态
-- 自动登录：优先复用页面或本机加密保存的 Token；只有接口明确确认 Token 失效后，才使用本机账号密码、图片验证码识别和可选 Google 动态码自动重新登录
+- 自动登录：优先复用页面或本机加密保存的 Token；接口确认 Token 失效，或有效 Token 无法恢复网页会话时，使用本机账号密码、图片验证码识别和可选 Google 动态码自动重新登录
 - 聚合：只比较已经登录并取得统计值的后台；多个报警同时存在时展示成功率最低者，无报警时展示当前最低健康值
 - 登录态：未登录后台只在总览中标记，不会覆盖已有监控值；仅当全部后台都没有有效值时才显示“需登录”
 - 本地安全：macOS 使用应用专用 AES-GCM 加密文件、Windows 使用 DPAPI `safeStorage`、Android 使用 Keystore AES-GCM；账号、密码、Google 密钥和 Token 不上传数据库
@@ -36,7 +38,7 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 - 原生 Swift/AppKit + WebKit 客户端
 - Universal 2 架构，同时支持 Apple Silicon 和 Intel Mac
-- 9 个固定后台使用独立持久化资料库，可同时保持不同账号登录
+- 10 个固定后台使用独立持久化资料库，可同时保持不同账号登录
 - 支持额外独立页面并自动加入监控总览、标准复制粘贴快捷键、`Command-F` 当前后台网页查找、总览表、常驻最上层浮窗和本机通知
 - 固定后台和额外独立页面均可配置本地自动登录；敏感信息保存在应用专用加密文件并在保存后回读校验
 - 工具栏样本按钮可统一设置全部后台的样本条数，设置保存在本机并立即重扫
@@ -44,7 +46,7 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 ### Windows
 
-- Electron 客户端，9 个后台分别使用独立的持久化 Session
+- Electron 客户端，10 个后台分别使用独立的持久化 Session
 - 工作台、独立标签、额外页面、复制粘贴、总览表、常驻最上层浮窗和 Windows 通知
 - 固定后台和额外页面均支持自动登录；配置使用 Windows DPAPI 加密，网页渲染进程无法读取已保存的密码和 Token
 - 地址栏旁可直接修改样本条数，设置保存在当前 Windows 用户目录并立即重扫
@@ -55,7 +57,7 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 ### Android
 
-- 原生 Java + Android WebView 客户端，9 个后台登录态保存在应用私有目录
+- 原生 Java + Android WebView 客户端，10 个后台登录态保存在应用私有目录
 - 前台监控服务每分钟扫描，切换到其他 App 后仍保留监控通知
 - 自动登录配置使用 Android Keystore 加密，Activity 关闭后前台服务仍可完成 Token 恢复
 - 导航栏样本按钮可修改样本条数，设置保存在应用私有目录并立即重扫
@@ -89,7 +91,7 @@ macOS：解压后把 `SMS Success Monitor.app` 放入“应用程序”。首次
 
 Windows：把 ZIP 完整解压到固定目录，运行 `SMS Success Monitor.exe`。不要只把 EXE 单独拖出文件夹；首次出现 SmartScreen 时选择“更多信息”并确认运行。
 
-Android：把 APK 发送到设备并安装；系统询问时允许该来源安装应用。打开后完成 9 个后台登录和悬浮窗授权。
+Android：把 APK 发送到设备并安装；系统询问时允许该来源安装应用。打开后完成 10 个后台登录和悬浮窗授权。
 
 ## 本地构建
 

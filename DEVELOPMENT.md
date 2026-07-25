@@ -8,7 +8,7 @@
 
 - 产品：独立短信发送成功率监控客户端。
 - 支持平台：macOS、Windows、Android。
-- 固定监控后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`。
+- 固定监控后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`、`OK01`。
 - 客户端直接复用各后台的本机登录会话，读取后台自身域名的短信记录接口。
 - 本项目不依赖 AI Automation 的数据库、任务表、调度器或生产服务；不要为了客户端需求修改这些系统。
 - 各设备的登录态、自动登录资料、自定义页面和样本条数互不同步。
@@ -87,7 +87,7 @@ SMS Success Monitor
 ### Windows
 
 - Electron 主进程维护后台会话、扫描、自动登录、通知和窗口生命周期。
-- 九个固定后台使用独立持久化 Session。
+- 十个固定后台使用独立持久化 Session。
 - 敏感配置必须留在主进程，并使用 Windows DPAPI `safeStorage`；渲染进程不得读取密码、Token 或 TOTP 密钥。
 
 ### Android
@@ -205,11 +205,54 @@ dist/android/SMS-Success-Monitor-Android.apk
 1. 用户明确授权发布；普通开发或“打包看看”不等于允许上传 Release。
 2. 记录目标 commit，确认工作树范围和发布分支。
 3. 运行全量测试与三端打包，计算并记录 SHA-256。
-4. 做对应平台实机冒烟：启动、九后台隔离登录、扫描、手动重扫、低于/等于 50% 边界、通知/浮窗、退出重启、自动登录失败冷却。
+4. 做对应平台实机冒烟：启动、全部固定后台隔离登录、扫描、手动重扫、低于/等于 50% 边界、通知/浮窗、退出重启、自动登录失败冷却。
 5. 核对 GitHub Release 附件来自目标 commit，文件名和校验值匹配。
 6. 保留回滚到上一 Release 的路径。
 
 当前 macOS 临时签名、Windows 未正式代码签名、Android 使用调试证书属于已知发布限制。配置正式签名之前，不得宣称已消除系统来源警告。
+
+### 8.1 当前已核验发布基线
+
+截至 2026-07-25，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
+
+| 项目 | 已核验值 |
+| --- | --- |
+| 正式版本 | `v0.3.15` |
+| macOS | `0.3.15 (19)` |
+| Windows | `0.3.15` |
+| Android | `versionName 0.3.15` / `versionCode 19` |
+| 开发仓库分支 | `feat/standalone-sms-success-monitor` |
+| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.15` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.15` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.15 (19)` |
+
+Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
+
+v0.3.14 的实际登录恢复顺序：
+
+1. 读取页面 Token 与本机加密 Token，二者不同时依次验证；
+2. Token 有效且当前停留 `/login` 时，先打开 `/sms-record-list`；
+3. 若网页仍返回 `/login`，进入账号密码和图片验证码自动登录；
+4. 登录进入 `/ga-auth` 后生成并提交本机 Google 动态码；
+5. 图片验证码最多 10 次，Google 验证码最多 5 次，达到各自上限后转人工处理。
+
+本轮发布已通过项目全量测试、macOS Universal 2 打包与本地 OCR/TOTP/page-find 自检、Windows x64 交叉打包、Android Lint 与 APK 构建。已在本机 macOS 验证客户端启动及 cg02 恢复正常扫描；Windows 10/11 和 Android 8.0+ 实机自动登录仍未验证，不能据此宣称三端实机验收完成。
+
+### 8.2 OK01 接入契约
+
+`OK01`（`https://zwpeq3.sixsass.com`）已加入第十个固定后台，三端配置 ID 为 `ok01`，默认工作台地址为 `/sms-record-list`，macOS 使用独立持久化会话 UUID `53D12001-4A6B-4C00-9000-000000000301`。
+
+2026-07-25 使用已登录 Chrome 会话完成只读协议核验：
+
+- `POST /api/sms_record/page` 返回 HTTP 200、业务状态 `0`；
+- 响应分页字段为 `page.content`、`totalElements`、`totalPages`；
+- 原始短信状态包含 `SENT` 与 `SUCCESS`，现有成功率口径无需修改；
+- 不传 `ddCreated`、仅传 `pageNo/pageSize` 仍成功返回，因此现有扫描脚本兼容；
+- 请求继续使用 `Auth`、`COUNTRY`、`LANGUAGE`、`Tkk`，未记录任何头值；
+- 登录页字段 `#username`、`#password`、`#code` 和验证码图片 `/api/verify_code/image_code...` 与现有自动登录脚本兼容；
+- Google 二次验证页面根据用户提供截图确认存在，但尚未使用真实账号执行自动提交验证。
+
+OK01 的真实接口与登录页已经完成只读兼容性核验；Google 动态码自动提交仍需在客户端配置真实账号后完成验收。
 
 ## 9. 常见变更的影响面
 

@@ -194,6 +194,18 @@ public struct MonitorConfiguration: Equatable, Sendable {
     alertThreshold: 0.50
   )
 
+  public static let ok01 = MonitorConfiguration(
+    id: "ok01",
+    displayName: "OK01",
+    targetURL: URL(
+      string: "https://zwpeq3.sixsass.com/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    )!,
+    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000301")!,
+    sampleLimit: 200,
+    scanInterval: 60,
+    alertThreshold: 0.50
+  )
+
   public static let allModules: [MonitorConfiguration] = [
     .bills02,
     .bills,
@@ -204,6 +216,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     .cg03,
     .cg04,
     .bs01,
+    .ok01,
   ]
 }
 

@@ -106,7 +106,7 @@ check(
 )
 
 let configuredModules = MonitorConfiguration.allModules
-check(configuredModules.count == 9, "configures all nine monitored platforms")
+check(configuredModules.count == 10, "configures all ten monitored platforms")
 check(
   configuredModules.map(\.displayName) == [
     "BIllS02-OTP",
@@ -118,6 +118,7 @@ check(
     "cg03（nine01）",
     "cg04",
     "bs01",
+    "OK01",
   ],
   "preserves the configured backend names"
 )
@@ -130,8 +131,8 @@ check(
   "uses one independent origin per monitored platform"
 )
 check(
-  configuredModules.compactMap(\.profileIdentifier).count == 8,
-  "keeps the existing primary session and isolates eight added sessions"
+  configuredModules.compactMap(\.profileIdentifier).count == 9,
+  "keeps the existing primary session and isolates nine added sessions"
 )
 
 let aggregateCandidates = [
