@@ -211,6 +211,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       switch kind {
       case "ok":
         let statuses = payload["statuses"] as? [String] ?? []
+        let usedFallbackToken = payload["tokenSource"] as? String == "fallback"
+        let restoredPageSession = payload["restoredPageSession"] as? Bool ?? false
         let metrics = MetricsCalculator.calculate(
           statuses: statuses,
           sampleLimit: activeSampleLimit
@@ -223,6 +225,21 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         consecutiveScanFailures = 0
         lastMetrics = metrics
         let scannedAt = Date()
+
+        if webView.url?.path == "/login", usedFallbackToken {
+          if restoredPageSession {
+            needsImmediateScan = true
+            emit(.starting("Token 仍有效，正在恢复后台页面"), nextScanAt: nil)
+            webView.reload()
+          } else {
+            handleAuthenticationRequired(
+              "Token 仍有效，但登录页缺少可恢复的网页会话。",
+              progressMessage: "正在自动登录以恢复后台页面"
+            )
+          }
+          return
+        }
+
         scheduleNextScanAfterCurrentRun()
         if metrics.shouldAlert(threshold: configuration.alertThreshold) {
           emit(.alert(metrics, scannedAt), nextScanAt: nextScanAt)
@@ -285,7 +302,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     handleAuthenticationRequired("自动登录配置已更新。")
   }
 
-  private func handleAuthenticationRequired(_ message: String) {
+  private func handleAuthenticationRequired(
+    _ message: String,
+    progressMessage: String = "Token 已失效，正在自动登录"
+  ) {
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
     activeScanID = nil
@@ -312,7 +332,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       autoLoginCooldownUntil = nil
     }
 
-    emit(.starting("Token 已失效，正在自动登录"), nextScanAt: nextScanAt)
+    emit(.starting(progressMessage), nextScanAt: nextScanAt)
     if let currentURL = webView.url, requiresAuthentication(currentURL) {
       attemptAutoLogin(profile: profile, url: currentURL)
     } else {

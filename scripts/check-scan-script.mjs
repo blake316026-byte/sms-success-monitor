@@ -30,6 +30,10 @@ class MemoryStorage {
   getItem(key) {
     return this.values.get(key) ?? null;
   }
+
+  setItem(key, value) {
+    this.values.set(key, String(value));
+  }
 }
 
 function makeWindow(fetchImplementation, authenticated = true) {
@@ -132,6 +136,37 @@ const fallbackTokenResult = await executeScan(200, 'saved-token');
 check(
   fallbackTokenResult.kind === 'ok' && fallbackTokenSeen,
   'uses the encrypted saved token before starting automatic login'
+);
+check(
+  fallbackTokenResult.tokenSource === 'fallback' && fallbackTokenResult.restoredPageSession === false,
+  'reports when the saved token worked but no page session existed to restore'
+);
+
+let staleTokenCalls = 0;
+globalThis.window = makeWindow(async (_url, options) => {
+  staleTokenCalls += 1;
+  if (options.headers.Auth === 'stale-page-token') {
+    return { ok: false, status: 401 };
+  }
+  return responseFor([{ id: 'fallback-2', status: 'SUCCESS' }], 1);
+});
+globalThis.window.localStorage.setItem(
+  'gamebox-admin-lt-user',
+  JSON.stringify({ token: 'stale-page-token', username: 'blake' })
+);
+const recoveredTokenResult = await executeScan(200, 'fresh-saved-token');
+const recoveredUser = JSON.parse(
+  globalThis.window.localStorage.getItem('gamebox-admin-lt-user')
+);
+check(
+  recoveredTokenResult.kind === 'ok' && staleTokenCalls === 2,
+  'retries the encrypted saved token when the page token is stale'
+);
+check(
+  recoveredTokenResult.restoredPageSession === true
+    && recoveredUser.token === 'fresh-saved-token'
+    && recoveredUser.username === 'blake',
+  'restores the valid token into the existing page session without losing other fields'
 );
 
 console.log('All scan-script checks passed');

@@ -33,9 +33,12 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
   };
 
   const user = readStoredValue('lt-user');
-  const pageToken = user && typeof user === 'object' ? user.token : null;
-  const token = String(pageToken || fallbackToken || '').trim();
-  if (!token) {
+  const pageToken = String(user && typeof user === 'object' ? user.token || '' : '').trim();
+  const savedToken = String(fallbackToken || '').trim();
+  const tokenCandidates = [];
+  if (pageToken) tokenCandidates.push({ token: pageToken, source: 'page' });
+  if (savedToken && savedToken !== pageToken) tokenCandidates.push({ token: savedToken, source: 'fallback' });
+  if (tokenCandidates.length === 0) {
     return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
   }
 
@@ -44,87 +47,99 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
   const language = String(readStoredValue('locale') || 'zh-cn');
   const tkk = urlCache.Tkk || readStoredValue('Tkk');
   const endpoint = new URL('/api/sms_record/page', window.location.origin).href;
-  const headers = {
-    Accept: 'application/json',
-    'Content-Type': 'application/json; charset=utf-8',
-    Auth: String(token),
-    COUNTRY: country,
-    LANGUAGE: language
-  };
-  if (tkk) headers.Tkk = String(tkk);
+  let lastAuthenticationMessage = '客户端登录态已失效，请重新登录。';
+  for (const candidate of tokenCandidates) {
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json; charset=utf-8',
+      Auth: candidate.token,
+      COUNTRY: country,
+      LANGUAGE: language
+    };
+    if (tkk) headers.Tkk = String(tkk);
 
-  const collected = [];
-  const seen = new Set();
-  let reportedTotal = null;
+    const collected = [];
+    const seen = new Set();
+    let reportedTotal = null;
+    let candidateRejected = false;
 
-  for (let pageNo = 1; pageNo <= maximumPages && collected.length < requestedLimit; pageNo += 1) {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 20000);
-    let response;
-    try {
-      response = await window.fetch(endpoint, {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({ query: { pageNo, pageSize: requestedLimit } }),
-        signal: controller.signal
-      });
-    } catch (error) {
-      window.clearTimeout(timeout);
-      return {
-        kind: 'error',
-        message: error && error.name === 'AbortError' ? '请求超过 20 秒。' : '无法连接短信记录接口。'
-      };
-    }
-    window.clearTimeout(timeout);
-
-    if (response.status === 401 || response.status === 403) {
-      return { kind: 'auth', message: `平台返回 HTTP ${response.status}，请重新登录。` };
-    }
-    if (!response.ok) {
-      return { kind: 'error', message: `短信记录接口返回 HTTP ${response.status}。` };
-    }
-
-    let payload;
-    try {
-      payload = await response.json();
-    } catch (_) {
-      return { kind: 'error', message: '短信记录接口没有返回有效 JSON。' };
-    }
-
-    const apiStatus = Number(payload && payload.status);
-    if (apiStatus !== 0) {
-      if ([1010, 1011, 1012, 1013, 1014].includes(apiStatus)) {
-        return { kind: 'auth', message: payload.message || `登录状态异常 (${apiStatus})。` };
+    for (let pageNo = 1; pageNo <= maximumPages && collected.length < requestedLimit; pageNo += 1) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20000);
+      let response;
+      try {
+        response = await window.fetch(endpoint, {
+          method: 'POST',
+          credentials: 'include',
+          headers,
+          body: JSON.stringify({ query: { pageNo, pageSize: requestedLimit } }),
+          signal: controller.signal
+        });
+      } catch (error) {
+        window.clearTimeout(timeout);
+        return {
+          kind: 'error',
+          message: error && error.name === 'AbortError' ? '请求超过 20 秒。' : '无法连接短信记录接口。'
+        };
       }
-      return { kind: 'error', message: payload.message || `短信记录接口状态异常 (${apiStatus})。` };
+      window.clearTimeout(timeout);
+
+      if (response.status === 401 || response.status === 403) {
+        lastAuthenticationMessage = `平台返回 HTTP ${response.status}，请重新登录。`;
+        candidateRejected = true;
+        break;
+      }
+      if (!response.ok) {
+        return { kind: 'error', message: `短信记录接口返回 HTTP ${response.status}。` };
+      }
+
+      let payload;
+      try {
+        payload = await response.json();
+      } catch (_) {
+        return { kind: 'error', message: '短信记录接口没有返回有效 JSON。' };
+      }
+
+      const apiStatus = Number(payload && payload.status);
+      if (apiStatus !== 0) {
+        if ([1010, 1011, 1012, 1013, 1014].includes(apiStatus)) {
+          lastAuthenticationMessage = payload.message || `登录状态异常 (${apiStatus})。`;
+          candidateRejected = true;
+          break;
+        }
+        return { kind: 'error', message: payload.message || `短信记录接口状态异常 (${apiStatus})。` };
+      }
+
+      const page = payload.page || {};
+      const rows = Array.isArray(page.content) ? page.content : [];
+      if (reportedTotal == null) {
+        const parsedTotal = Number(page.totalElements);
+        reportedTotal = Number.isFinite(parsedTotal) ? parsedTotal : rows.length;
+      }
+
+      for (let index = 0; index < rows.length && collected.length < requestedLimit; index += 1) {
+        const row = rows[index] || {};
+        const dedupeKey = row.id != null
+          ? `id:${row.id}`
+          : `row:${row.phone || ''}|${row.code || ''}|${row.createTime || ''}|${row.status || ''}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        collected.push(String(row.status || ''));
+      }
+
+      if (rows.length === 0 || collected.length >= requestedLimit || collected.length >= reportedTotal) {
+        break;
+      }
     }
 
-    const page = payload.page || {};
-    const rows = Array.isArray(page.content) ? page.content : [];
-    if (reportedTotal == null) {
-      const parsedTotal = Number(page.totalElements);
-      reportedTotal = Number.isFinite(parsedTotal) ? parsedTotal : rows.length;
-    }
-
-    for (let index = 0; index < rows.length && collected.length < requestedLimit; index += 1) {
-      const row = rows[index] || {};
-      const dedupeKey = row.id != null
-        ? `id:${row.id}`
-        : `row:${row.phone || ''}|${row.code || ''}|${row.createTime || ''}|${row.status || ''}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      collected.push(String(row.status || ''));
-    }
-
-    if (rows.length === 0 || collected.length >= requestedLimit || collected.length >= reportedTotal) {
-      break;
-    }
+    if (candidateRejected) continue;
+    return {
+      kind: 'ok',
+      statuses: collected,
+      reportedTotal: reportedTotal == null ? collected.length : reportedTotal,
+      tokenSource: candidate.source
+    };
   }
 
-  return {
-    kind: 'ok',
-    statuses: collected,
-    reportedTotal: reportedTotal == null ? collected.length : reportedTotal
-  };
+  return { kind: 'auth', message: lastAuthenticationMessage };
 };
