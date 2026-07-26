@@ -42,6 +42,7 @@
 除非用户明确批准产品口径变化，否则以下规则视为稳定契约：
 
 1. 数据源为当前后台 origin 下的 `POST /api/sms_record/page`。
+   请求必须带与短信记录页一致的 `ddCreated` 最近日期范围（本地当天零点向前 3 天，到次日零点），否则平台可能返回更早的历史记录，导致“最近 N 条”统计口径失真。
 2. 默认样本数为 200，允许范围为 10–500。
 3. 只有去除首尾空白并忽略大小写后等于 `SUCCESS` 的状态计为成功；`SENT`、`PENDING`、`FAILED` 等均不算成功。
 4. 成功率为 `成功数 / 实际取得的去重样本数`。
@@ -219,14 +220,14 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.18` |
-| macOS | `0.3.18 (22)` |
-| Windows | `0.3.18` |
-| Android | `versionName 0.3.18` / `versionCode 22` |
+| 正式版本 | `v0.3.19` |
+| macOS | `0.3.19 (23)` |
+| Windows | `0.3.19` |
+| Android | `versionName 0.3.19` / `versionCode 23` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
-| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.18` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.18` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.18 (22)` |
+| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.19` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.19` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.19 (23)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 

@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.18**（macOS build 22、Android versionCode 22）。本版在登录成功立即重扫和四分钟旧报警失效的基础上，增加启动连接兜底：页面加载完成后即使错过导航回调，也会自动发起首次扫描，不再长期停留在“等待连接”。正式发布页：[SMS Success Monitor v0.3.18](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.18)。
+当前正式版本：**v0.3.19**（macOS build 23、Android versionCode 23）。本版修正短信统计的数据范围：请求携带与后台短信记录页一致的最近日期范围，再按发送状态 `SUCCESS` 统计最近样本，避免混入更早历史记录造成误报警。正式发布页：[SMS Success Monitor v0.3.19](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.19)。
 
 ## 监控口径
 

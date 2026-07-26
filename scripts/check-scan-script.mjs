@@ -85,8 +85,10 @@ const unauthenticated = await executeScan(200, '');
 check(unauthenticated.kind === 'auth', 'returns an authentication state when no token is present');
 
 let singlePageCalls = 0;
-globalThis.window = makeWindow(async () => {
+let singlePageQuery;
+globalThis.window = makeWindow(async (_url, options) => {
   singlePageCalls += 1;
+  singlePageQuery = JSON.parse(options.body).query;
   const rows = Array.from({ length: 200 }, (_, index) => ({
     id: `single-${index}`,
     status: index < 120 ? 'SUCCESS' : 'SENT'
@@ -98,6 +100,12 @@ check(singlePage.kind === 'ok', 'accepts a successful API response');
 check(singlePage.statuses.length === 200, 'returns exactly 200 statuses from a full page');
 check(singlePage.statuses.filter((status) => status === 'SUCCESS').length === 120, 'preserves raw SUCCESS statuses');
 check(singlePageCalls === 1, 'uses one request when the API accepts pageSize 200');
+check(
+  Number.isFinite(singlePageQuery.ddCreated.start)
+    && Number.isFinite(singlePageQuery.ddCreated.finish)
+    && singlePageQuery.ddCreated.finish > singlePageQuery.ddCreated.start,
+  'queries the same recent creation-date window used by the SMS record page'
+);
 
 let cappedPageCalls = 0;
 globalThis.window = makeWindow(async (_url, options) => {

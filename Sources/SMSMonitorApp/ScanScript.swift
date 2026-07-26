@@ -2,6 +2,16 @@ enum ScanScript {
   static let body = #"""
     const requestedLimit = Math.min(500, Math.max(10, Math.round(Number(sampleLimit) || 200)));
     const maximumPages = Math.max(1, Math.ceil(requestedLimit / 20));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const createdStart = new Date(today);
+    createdStart.setDate(createdStart.getDate() - 3);
+    const createdFinish = new Date(today);
+    createdFinish.setDate(createdFinish.getDate() + 1);
+    const createdRange = {
+      start: createdStart.getTime(),
+      finish: createdFinish.getTime()
+    };
 
     const readStoredValue = (suffix) => {
       for (const store of [window.localStorage, window.sessionStorage]) {
@@ -73,7 +83,13 @@ enum ScanScript {
             method: 'POST',
             credentials: 'include',
             headers,
-            body: JSON.stringify({ query: { pageNo, pageSize: requestedLimit } }),
+            body: JSON.stringify({
+              query: {
+                pageNo,
+                pageSize: requestedLimit,
+                ddCreated: createdRange
+              }
+            }),
             signal: controller.signal
           });
         } catch (error) {
