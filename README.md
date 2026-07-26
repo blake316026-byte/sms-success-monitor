@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.15**（macOS build 19、Android versionCode 19）。本版新增第十个固定后台 `OK01`，接入 `zwpeq3.sixsass.com` 的短信记录、独立登录会话和本地自动登录。正式发布页：[SMS Success Monitor v0.3.15](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.15)。
+当前正式版本：**v0.3.16**（macOS build 20、Android versionCode 20）。本版将 macOS 工作台全部后台标签改为可重命名、可删除、可拖拽排序，并在重启后恢复本机布局；删除入口不会清除本机登录资料或网页会话。正式发布页：[SMS Success Monitor v0.3.16](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.16)。
 
 ## 监控口径
 
@@ -39,7 +39,8 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 - 原生 Swift/AppKit + WebKit 客户端
 - Universal 2 架构，同时支持 Apple Silicon 和 Intel Mac
 - 10 个固定后台使用独立持久化资料库，可同时保持不同账号登录
-- 支持额外独立页面并自动加入监控总览、标准复制粘贴快捷键、`Command-F` 当前后台网页查找、总览表、常驻最上层浮窗和本机通知
+- 全部后台标签均可重命名、删除和拖拽排序，布局重启后保持；支持新增独立页面并自动加入监控总览
+- 支持标准复制粘贴快捷键、`Command-F` 当前后台网页查找、总览表、常驻最上层浮窗和本机通知
 - 固定后台和额外独立页面均可配置本地自动登录；敏感信息保存在应用专用加密文件并在保存后回读校验
 - 工具栏样本按钮可统一设置全部后台的样本条数，设置保存在本机并立即重扫
 - 红色报警时显示呼吸光、闪烁和抖动；右键浮窗可扫描、打开工作台、静音或退出

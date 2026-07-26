@@ -11,7 +11,7 @@
 - 固定监控后台：`BIllS02-OTP`、`BIllS`、`BIllS3`、`BIllS4`、`cg01`、`cg02`、`cg03（nine01）`、`cg04`、`bs01`、`OK01`。
 - 客户端直接复用各后台的本机登录会话，读取后台自身域名的短信记录接口。
 - 本项目不依赖 AI Automation 的数据库、任务表、调度器或生产服务；不要为了客户端需求修改这些系统。
-- 各设备的登录态、自动登录资料、自定义页面和样本条数互不同步。
+- 各设备的登录态、自动登录资料、工作台标签布局和样本条数互不同步。
 - 不保存手机号、短信验证码、Message ID 或短信正文；验证码识别只在设备本地执行。
 
 禁止把本项目描述为短信发送器。它只读取短信记录并报警，不应触发真实短信、修改平台数据或写入 AI Automation 生产环境。
@@ -23,7 +23,7 @@
 | 监控算法、固定后台、macOS 状态模型 | `Sources/SMSMonitorCore/MonitorModels.swift` |
 | macOS 扫描接口契约 | `Sources/SMSMonitorApp/ScanScript.swift` |
 | macOS 调度、恢复、自动登录、聚合 | `Sources/SMSMonitorApp/MonitorController.swift` |
-| macOS 工作台、自定义页面 | `Sources/SMSMonitorApp/PlatformWorkspaceController.swift` |
+| macOS 工作台、标签增删改名与排序 | `Sources/SMSMonitorApp/PlatformWorkspaceController.swift` |
 | macOS 本机凭据 | `Sources/SMSMonitorApp/LocalCredentialStore.swift` |
 | Windows/Android 共用后台清单 | `clients/shared/modules.json` |
 | Windows/Android 共用监控算法 | `clients/shared/monitor-core.mjs`、`clients/shared/scan.js` |
@@ -51,7 +51,7 @@
 8. 结果超过四分钟未刷新视为过期，不能继续显示为健康结果。
 9. 聚合只使用已取得有效指标的后台。存在多个报警时聚焦成功率最低者；无报警时聚焦最低健康值。
 10. 登录失效、接口异常和业务低成功率是三种不同状态，不得互相替代。
-11. 固定后台必须使用互相隔离的持久化会话；自定义页面加入同一监控聚合，但不能删除固定后台。
+11. 默认后台与新增后台都使用互相隔离的持久化会话并加入同一监控聚合。macOS 工作台不锁死默认标签：全部标签都可改名、删除和拖拽排序，布局写入本机 `SMSMonitorPlatformLayout.v2` 并在重启后恢复。删除只移除客户端入口和对应运行中监控，不删除平台账号、平台短信数据、本机加密登录资料或 WebKit 会话数据。
 12. 图片验证码和 Google 验证码使用独立计数器：图片验证码最多连续尝试 10 次，Google 验证码最多尝试 5 次；分别达到上限后才暂停自动登录并提示人工处理。
 13. `/login` 页面本身不代表 Token 已失效。客户端必须先用页面 Token 或本机加密保存的 Token 调用只读短信记录接口；只有无 Token、HTTP 401/403 或平台明确认证失效状态码才启动自动登录。
 14. 页面 Token 与本机加密 Token 不同时必须依次验证，不能让失效的页面 Token 遮蔽仍有效的本机 Token。macOS 在登录页验证本机 Token 有效后应恢复现有网页会话；页面没有可恢复会话时再执行账号自动登录。
@@ -81,7 +81,8 @@ SMS Success Monitor
 
 - `AppDelegate` 组装通知、监控器和常驻浮窗。
 - 每个后台由一个 `ModuleMonitorController` 管理独立 `WKWebView`、扫描调度、恢复和自动登录。
-- `MonitorController` 汇总状态、处理过期结果、管理工作台和自定义页面。
+- `MonitorController` 汇总状态、处理过期结果，并按工作台当前标签集合与顺序管理监控实例。
+- `PlatformWorkspaceController` 统一管理默认与新增标签；旧版 `SMSMonitorPlatformPages.v1` 自定义页面首次启动时迁移为 `SMSMonitorPlatformLayout.v2`。新版本以后新增的默认后台会自动补到现有布局末尾，用户已删除的默认后台不会在重启后自行恢复。
 - `LocalCredentialStore` 使用应用专用 AES-GCM 加密文件；不得恢复旧 Keychain 依赖。
 
 ### Windows
@@ -213,18 +214,18 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 ### 8.1 当前已核验发布基线
 
-截至 2026-07-25，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
+截至 2026-07-26，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.15` |
-| macOS | `0.3.15 (19)` |
-| Windows | `0.3.15` |
-| Android | `versionName 0.3.15` / `versionCode 19` |
+| 正式版本 | `v0.3.16` |
+| macOS | `0.3.16 (20)` |
+| Windows | `0.3.16` |
+| Android | `versionName 0.3.16` / `versionCode 20` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
-| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.15` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.15` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.15 (19)` |
+| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.16` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.16` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.16 (20)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 

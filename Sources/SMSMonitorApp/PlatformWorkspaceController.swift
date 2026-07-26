@@ -8,7 +8,7 @@ struct MonitoredPlatformPage {
   let webView: WKWebView
 }
 
-struct CustomPlatformPageDescriptor {
+struct PlatformPageDescriptor {
   let profileIdentifier: UUID
   let credentialID: String
   let displayName: String
@@ -24,8 +24,14 @@ struct PlatformAutoLoginTarget {
 
 private struct SavedPlatformPage: Codable {
   let id: UUID
+  let monitorID: String?
   let name: String
   let startURL: URL
+}
+
+private struct SavedWorkspaceLayout: Codable {
+  let pages: [SavedPlatformPage]
+  let knownBuiltInIDs: [String]
 }
 
 private final class PlatformPageViewController: NSViewController {
@@ -94,10 +100,74 @@ private final class PlatformPageViewController: NSViewController {
 
 private final class WorkspaceTabViewController: NSTabViewController {
   var onSelectionChange: (() -> Void)?
+  var onMoveTab: ((Int, Int) -> Void)?
+  private var tabDragRecognizer: NSPanGestureRecognizer?
+  private var draggedIndex: Int?
+
+  override func viewDidAppear() {
+    super.viewDidAppear()
+    guard tabDragRecognizer == nil, let control = findSegmentedControl(in: view) else { return }
+    let recognizer = NSPanGestureRecognizer(target: self, action: #selector(handleTabDrag(_:)))
+    control.addGestureRecognizer(recognizer)
+    tabDragRecognizer = recognizer
+  }
 
   override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
     super.tabView(tabView, didSelect: tabViewItem)
     onSelectionChange?()
+  }
+
+  private func findSegmentedControl(in root: NSView) -> NSSegmentedControl? {
+    if let control = root as? NSSegmentedControl,
+      control.segmentCount == tabViewItems.count
+    {
+      return control
+    }
+    for subview in root.subviews {
+      if let match = findSegmentedControl(in: subview) { return match }
+    }
+    return nil
+  }
+
+  @objc private func handleTabDrag(_ recognizer: NSPanGestureRecognizer) {
+    guard let control = recognizer.view as? NSSegmentedControl,
+      control.segmentCount == tabViewItems.count,
+      control.segmentCount > 1
+    else { return }
+    switch recognizer.state {
+    case .began:
+      draggedIndex = segmentIndex(at: recognizer.location(in: control), control: control)
+    case .changed:
+      guard let source = draggedIndex,
+        let target = segmentIndex(at: recognizer.location(in: control), control: control),
+        source != target
+      else { return }
+      onMoveTab?(source, target)
+      draggedIndex = target
+    default:
+      draggedIndex = nil
+    }
+  }
+
+  private func segmentIndex(at point: NSPoint, control: NSSegmentedControl) -> Int? {
+    guard control.bounds.contains(point) else { return nil }
+    let estimatedWidths = (0..<control.segmentCount).map { index -> CGFloat in
+      let configuredWidth = control.width(forSegment: index)
+      if configuredWidth > 0 { return configuredWidth }
+      let label = control.label(forSegment: index) ?? ""
+      let labelWidth = (label as NSString).size(
+        withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+      ).width
+      return labelWidth + 32
+    }
+    let totalWidth = estimatedWidths.reduce(0, +)
+    let scale = totalWidth > 0 ? control.bounds.width / totalWidth : 1
+    var rightEdge: CGFloat = 0
+    for (index, width) in estimatedWidths.enumerated() {
+      rightEdge += width * scale
+      if point.x <= rightEdge { return index }
+    }
+    return control.segmentCount - 1
   }
 }
 
@@ -107,9 +177,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   let window: NSWindow
   var onAutoLoginSettings: ((PlatformAutoLoginTarget) -> Void)?
   var onSampleLimitSettings: (() -> Void)?
-  var onCustomPageAdded: ((CustomPlatformPageDescriptor) -> Void)?
-  var onCustomPageUpdated: ((CustomPlatformPageDescriptor) -> Void)?
-  var onCustomPageRemoved: ((String) -> Void)?
+  var onPageAdded: ((PlatformPageDescriptor) -> Void)?
+  var onPageUpdated: ((PlatformPageDescriptor) -> Void)?
+  var onPageRemoved: ((String) -> Void)?
+  var onPageOrderChanged: (([String]) -> Void)?
 
   private enum ToolbarIdentifier {
     static let toolbar = NSToolbar.Identifier("SMSMonitorPlatformToolbar")
@@ -126,12 +197,13 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private static let savedPagesKey = "SMSMonitorPlatformPages.v1"
+  private static let savedLayoutKey = "SMSMonitorPlatformLayout.v2"
 
   private let defaultInitialURL: URL
-  private let credentialStore: LocalCredentialStore
   private var sampleLimit: Int
   private let tabController = WorkspaceTabViewController()
   private var pages: [PlatformPageViewController] = []
+  private var knownBuiltInIDs: Set<String> = []
   private var addressField: NSTextField?
   private var findField: NSSearchField?
   private var findNavigationControl: NSSegmentedControl?
@@ -146,11 +218,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   init(
     sampleLimit: Int,
     monitoredPages: [MonitoredPlatformPage],
-    credentialStore: LocalCredentialStore
+    credentialStore _: LocalCredentialStore
   ) {
     precondition(!monitoredPages.isEmpty)
     self.defaultInitialURL = monitoredPages[0].configuration.targetURL
-    self.credentialStore = credentialStore
     self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1260, height: 800),
@@ -172,7 +243,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       descriptor.webView.uiDelegate = self
       addPage(page, select: index == 0)
     }
-    restoreAdditionalPages()
+    knownBuiltInIDs = Set(monitoredPages.map(\.configuration.id))
+    restoreWorkspaceLayout()
     updateWindowSubtitle()
     updateToolbar()
   }
@@ -223,8 +295,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     }
   }
 
-  func customPageDescriptors() -> [CustomPlatformPageDescriptor] {
-    pages.filter { !$0.isBuiltIn }.map(Self.descriptor)
+  func pageDescriptors() -> [PlatformPageDescriptor] {
+    pages.map(Self.descriptor)
   }
 
   func refreshMonitorCount() {
@@ -237,6 +309,9 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     tabController.onSelectionChange = { [weak self] in
       self?.updateToolbar()
       self?.findInSelectedPage(backwards: false)
+    }
+    tabController.onMoveTab = { [weak self] source, target in
+      self?.movePage(from: source, to: target)
     }
 
     window.contentViewController = tabController
@@ -261,7 +336,50 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       "\(pages.count) 个监控后台 · 样本 \(sampleLimit) 条 · 不同标签使用独立登录会话"
   }
 
-  private func restoreAdditionalPages() {
+  private func restoreWorkspaceLayout() {
+    if let data = UserDefaults.standard.data(forKey: Self.savedLayoutKey),
+      let layout = try? JSONDecoder().decode(SavedWorkspaceLayout.self, from: data)
+    {
+      let fixedPages = Dictionary(
+        uniqueKeysWithValues: pages.compactMap { page in
+          page.monitorID.map { ($0, page) }
+        }
+      )
+      var orderedPages: [PlatformPageViewController] = []
+      for savedPage in layout.pages {
+        if let monitorID = savedPage.monitorID, let page = fixedPages[monitorID] {
+          page.pageName = savedPage.name
+          page.title = savedPage.name
+          orderedPages.append(page)
+        } else if savedPage.monitorID == nil {
+          let page = makeAdditionalPage(
+            id: savedPage.id,
+            name: savedPage.name,
+            startURL: savedPage.startURL
+          )
+          orderedPages.append(page)
+          page.webView.load(URLRequest(url: savedPage.startURL))
+        }
+      }
+      let known = Set(layout.knownBuiltInIDs)
+      knownBuiltInIDs.formUnion(known)
+      orderedPages.append(
+        contentsOf: pages.filter {
+          guard let monitorID = $0.monitorID else { return false }
+          return !known.contains(monitorID)
+        }
+      )
+      pages = orderedPages
+      rebuildTabs()
+      saveWorkspaceLayout()
+      return
+    }
+
+    restoreLegacyAdditionalPages()
+    saveWorkspaceLayout()
+  }
+
+  private func restoreLegacyAdditionalPages() {
     guard
       let data = UserDefaults.standard.data(forKey: Self.savedPagesKey),
       let savedPages = try? JSONDecoder().decode([SavedPlatformPage].self, from: data)
@@ -297,13 +415,30 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     }
   }
 
-  private func createAdditionalPage(
-    id: UUID = UUID(),
-    name: String,
-    startURL: URL,
-    select: Bool,
-    persist: Bool = true
-  ) {
+  private func rebuildTabs() {
+    while let item = tabController.tabViewItems.last {
+      tabController.removeTabViewItem(item)
+    }
+    for page in pages {
+      attachTab(for: page)
+    }
+    if !pages.isEmpty {
+      tabController.selectedTabViewItemIndex = 0
+    }
+  }
+
+  private func attachTab(for page: PlatformPageViewController) {
+    page.onNavigationStateChange = { [weak self] in self?.updateToolbar() }
+    let item = NSTabViewItem(identifier: page.monitorID ?? page.id.uuidString)
+    item.viewController = page
+    item.label = page.pageName
+    item.toolTip = "\(page.pageName) · 等待连接"
+    tabController.addTabViewItem(item)
+  }
+
+  private func makeAdditionalPage(id: UUID, name: String, startURL: URL)
+    -> PlatformPageViewController
+  {
     let configuration = WKWebViewConfiguration()
     if #available(macOS 14.0, *) {
       configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: id)
@@ -311,25 +446,28 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       configuration.websiteDataStore = .nonPersistent()
     }
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-
     let webView = WKWebView(
       frame: NSRect(x: 0, y: 0, width: 1180, height: 720),
       configuration: configuration
     )
     webView.uiDelegate = self
+    return PlatformPageViewController(id: id, name: name, startURL: startURL, webView: webView)
+  }
 
-    let page = PlatformPageViewController(
-      id: id,
-      name: name,
-      startURL: startURL,
-      webView: webView
-    )
+  private func createAdditionalPage(
+    id: UUID = UUID(),
+    name: String,
+    startURL: URL,
+    select: Bool,
+    persist: Bool = true
+  ) {
+    let page = makeAdditionalPage(id: id, name: name, startURL: startURL)
     addPage(page, select: select)
-    webView.load(URLRequest(url: startURL))
-    onCustomPageAdded?(Self.descriptor(page))
+    page.webView.load(URLRequest(url: startURL))
+    onPageAdded?(Self.descriptor(page))
 
     if persist {
-      saveAdditionalPages()
+      saveWorkspaceLayout()
     }
     updateWindowSubtitle()
   }
@@ -341,12 +479,17 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private func updateToolbar() {
-    guard let page = selectedPage else { return }
+    guard let page = selectedPage else {
+      closePageItem?.isEnabled = false
+      renamePageItem?.isEnabled = false
+      autoLoginItem?.isEnabled = false
+      return
+    }
     addressField?.stringValue = page.webView.url?.absoluteString ?? page.startURL.absoluteString
     backItem?.isEnabled = page.webView.canGoBack
     forwardItem?.isEnabled = page.webView.canGoForward
-    closePageItem?.isEnabled = !page.isBuiltIn
-    renamePageItem?.isEnabled = !page.isBuiltIn
+    closePageItem?.isEnabled = true
+    renamePageItem?.isEnabled = true
     autoLoginItem?.isEnabled = true
 
     let isLoading = page.webView.isLoading
@@ -357,12 +500,21 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     reloadItem?.toolTip = isLoading ? "停止加载" : "刷新当前页面"
   }
 
-  private func saveAdditionalPages() {
-    let savedPages = pages.filter { !$0.isBuiltIn }.map {
-      SavedPlatformPage(id: $0.id, name: $0.pageName, startURL: $0.startURL)
+  private func saveWorkspaceLayout() {
+    let savedPages = pages.map {
+      SavedPlatformPage(
+        id: $0.id,
+        monitorID: $0.monitorID,
+        name: $0.pageName,
+        startURL: $0.startURL
+      )
     }
-    guard let data = try? JSONEncoder().encode(savedPages) else { return }
-    UserDefaults.standard.set(data, forKey: Self.savedPagesKey)
+    let layout = SavedWorkspaceLayout(
+      pages: savedPages,
+      knownBuiltInIDs: knownBuiltInIDs.sorted()
+    )
+    guard let data = try? JSONEncoder().encode(layout) else { return }
+    UserDefaults.standard.set(data, forKey: Self.savedLayoutKey)
   }
 
   private static func normalizedURL(from value: String) -> URL? {
@@ -512,8 +664,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
     if !page.isBuiltIn {
       page.startURL = url
-      saveAdditionalPages()
-      onCustomPageUpdated?(Self.descriptor(page))
+      saveWorkspaceLayout()
+      onPageUpdated?(Self.descriptor(page))
     }
     page.webView.load(URLRequest(url: url))
   }
@@ -565,35 +717,24 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   @objc private func closeCurrentPage() {
-    guard let page = selectedPage, !page.isBuiltIn else { return }
+    guard let page = selectedPage else { return }
     guard let item = tabController.tabViewItems.first(where: { $0.viewController === page }) else {
       return
     }
 
-    let pageID = page.id
     let credentialID = page.credentialID
-    onCustomPageRemoved?(credentialID)
-    credentialStore.remove(moduleID: credentialID)
+    onPageRemoved?(credentialID)
     page.webView.stopLoading()
     tabController.removeTabViewItem(item)
     pages.removeAll { $0 === page }
-    saveAdditionalPages()
+    saveWorkspaceLayout()
+    onPageOrderChanged?(pages.map(\.credentialID))
     updateToolbar()
     updateWindowSubtitle()
-
-    if #available(macOS 14.0, *) {
-      DispatchQueue.main.async {
-        WKWebsiteDataStore.remove(forIdentifier: pageID) { error in
-          if let error {
-            NSLog("Unable to remove platform page data store: %@", error.localizedDescription)
-          }
-        }
-      }
-    }
   }
 
   @objc private func renameCurrentPage() {
-    guard let page = selectedPage, !page.isBuiltIn else { return }
+    guard let page = selectedPage else { return }
     let alert = NSAlert()
     alert.messageText = "修改页面名称"
     alert.addButton(withTitle: "保存")
@@ -610,8 +751,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
         item.label = name
         item.toolTip = name
       }
-      self.saveAdditionalPages()
-      self.onCustomPageUpdated?(Self.descriptor(page))
+      self.saveWorkspaceLayout()
+      self.onPageUpdated?(Self.descriptor(page))
       self.updateToolbar()
     }
   }
@@ -804,10 +945,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
         identifier: itemIdentifier,
         label: "关闭页面",
         symbol: "xmark.circle",
-        toolTip: "关闭当前自定义页面",
+        toolTip: "删除当前后台入口（保留本机登录资料）",
         action: #selector(closeCurrentPage)
       )
-      item.isEnabled = selectedPage?.isBuiltIn == false
+      item.isEnabled = selectedPage != nil
       closePageItem = item
       return item
 
@@ -816,10 +957,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
         identifier: itemIdentifier,
         label: "重命名",
         symbol: "pencil",
-        toolTip: "修改当前自定义页面名称",
+        toolTip: "修改当前后台名称",
         action: #selector(renameCurrentPage)
       )
-      item.isEnabled = selectedPage?.isBuiltIn == false
+      item.isEnabled = selectedPage != nil
       renamePageItem = item
       return item
 
@@ -840,8 +981,22 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     return nil
   }
 
-  private static func descriptor(_ page: PlatformPageViewController) -> CustomPlatformPageDescriptor {
-    CustomPlatformPageDescriptor(
+  private func movePage(from source: Int, to target: Int) {
+    guard pages.indices.contains(source), pages.indices.contains(target), source != target else {
+      return
+    }
+    let page = pages.remove(at: source)
+    pages.insert(page, at: target)
+    let item = tabController.tabViewItems[source]
+    tabController.removeTabViewItem(item)
+    tabController.insertTabViewItem(item, at: target)
+    tabController.selectedTabViewItemIndex = target
+    saveWorkspaceLayout()
+    onPageOrderChanged?(pages.map(\.credentialID))
+  }
+
+  private static func descriptor(_ page: PlatformPageViewController) -> PlatformPageDescriptor {
+    PlatformPageDescriptor(
       profileIdentifier: page.id,
       credentialID: page.credentialID,
       displayName: page.pageName,

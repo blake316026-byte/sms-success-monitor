@@ -913,22 +913,31 @@ final class MonitorController {
     self.workspaceController.onSampleLimitSettings = { [weak self] in
       self?.showSampleLimitSettings()
     }
-    self.workspaceController.onCustomPageAdded = { [weak self] page in
-      self?.registerCustomPage(page)
+    self.workspaceController.onPageAdded = { [weak self] page in
+      self?.registerPage(page)
     }
-    self.workspaceController.onCustomPageUpdated = { [weak self] page in
-      self?.updateCustomPage(page)
+    self.workspaceController.onPageUpdated = { [weak self] page in
+      self?.updatePage(page)
     }
-    self.workspaceController.onCustomPageRemoved = { [weak self] credentialID in
-      self?.removeCustomPage(credentialID: credentialID)
+    self.workspaceController.onPageRemoved = { [weak self] credentialID in
+      self?.removePage(credentialID: credentialID)
+    }
+    self.workspaceController.onPageOrderChanged = { [weak self] credentialIDs in
+      self?.applyPageOrder(credentialIDs)
     }
 
     for monitor in monitors {
       bind(monitor)
     }
-    for page in workspaceController.customPageDescriptors() {
-      registerCustomPage(page)
+    let activePages = workspaceController.pageDescriptors()
+    let activeIDs = Set(activePages.map(\.credentialID))
+    for page in activePages {
+      registerPage(page)
     }
+    for credentialID in Array(monitorsByID.keys) where !activeIDs.contains(credentialID) {
+      removePage(credentialID: credentialID)
+    }
+    applyPageOrder(activePages.map(\.credentialID))
   }
 
   deinit {
@@ -1213,21 +1222,22 @@ final class MonitorController {
     }
   }
 
-  private func configuration(for page: CustomPlatformPageDescriptor) -> MonitorConfiguration {
+  private func configuration(for page: PlatformPageDescriptor) -> MonitorConfiguration {
     MonitorConfiguration(
       id: page.credentialID,
       displayName: page.displayName,
       targetURL: page.startURL,
-      profileIdentifier: page.profileIdentifier,
+      profileIdentifier: monitorsByID[page.credentialID]?.configuration.profileIdentifier
+        ?? page.profileIdentifier,
       sampleLimit: sampleLimit,
       scanInterval: 60,
       alertThreshold: 0.50
     )
   }
 
-  private func registerCustomPage(_ page: CustomPlatformPageDescriptor) {
+  private func registerPage(_ page: PlatformPageDescriptor) {
     guard monitorsByID[page.credentialID] == nil else {
-      updateCustomPage(page)
+      updatePage(page)
       return
     }
 
@@ -1259,9 +1269,9 @@ final class MonitorController {
     }
   }
 
-  private func updateCustomPage(_ page: CustomPlatformPageDescriptor) {
+  private func updatePage(_ page: PlatformPageDescriptor) {
     guard let monitor = monitorsByID[page.credentialID] else {
-      registerCustomPage(page)
+      registerPage(page)
       return
     }
     let pageConfiguration = configuration(for: page)
@@ -1281,11 +1291,17 @@ final class MonitorController {
     publish(changedModuleID: page.credentialID)
   }
 
-  private func removeCustomPage(credentialID: String) {
+  private func removePage(credentialID: String) {
     monitorsByID.removeValue(forKey: credentialID)?.stop()
     orderedMonitorIDs.removeAll { $0 == credentialID }
     snapshotsByID.removeValue(forKey: credentialID)
     workspaceController.refreshMonitorCount()
+    publish(changedModuleID: nil)
+  }
+
+  private func applyPageOrder(_ credentialIDs: [String]) {
+    let active = Set(monitorsByID.keys)
+    orderedMonitorIDs = credentialIDs.filter { active.contains($0) }
     publish(changedModuleID: nil)
   }
 }
