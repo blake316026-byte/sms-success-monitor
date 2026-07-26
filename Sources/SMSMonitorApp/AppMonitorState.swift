@@ -3,7 +3,7 @@ import SMSMonitorCore
 
 enum AppMonitorState {
   case starting(String)
-  case scanning(ScanMetrics?)
+  case scanning(ScanMetrics?, Date?)
   case healthy(ScanMetrics, Date)
   case alert(ScanMetrics, Date)
   case authenticationRequired(String)
@@ -11,7 +11,7 @@ enum AppMonitorState {
 
   var metrics: ScanMetrics? {
     switch self {
-    case .scanning(let metrics):
+    case .scanning(let metrics, _):
       return metrics
     case .healthy(let metrics, _), .alert(let metrics, _):
       return metrics
@@ -22,6 +22,8 @@ enum AppMonitorState {
 
   var scannedAt: Date? {
     switch self {
+    case .scanning(_, let date):
+      return date
     case .healthy(_, let date), .alert(_, let date):
       return date
     case .error(_, let date):

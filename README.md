@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.16**（macOS build 20、Android versionCode 20）。本版将 macOS 工作台全部后台标签改为可重命名、可删除、可拖拽排序，并在重启后恢复本机布局；删除入口不会清除本机登录资料或网页会话。正式发布页：[SMS Success Monitor v0.3.16](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.16)。
+当前正式版本：**v0.3.17**（macOS build 21、Android versionCode 21）。本版修复 macOS 新增后台登录成功后没有立即重扫，以及扫描卡住时继续显示超过四分钟的旧成功率和旧报警。正式发布页：[SMS Success Monitor v0.3.17](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.17)。
 
 ## 监控口径
 

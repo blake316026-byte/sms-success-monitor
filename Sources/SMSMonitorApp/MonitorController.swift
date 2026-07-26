@@ -22,6 +22,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var scanStartedAt: Date?
   private var sampleLimit: Int
   private var lastMetrics: ScanMetrics?
+  private var lastMetricsScannedAt: Date?
   private var needsImmediateScan = true
   private var consecutiveScanFailures = 0
   private var captchaAutoLoginAttempts = 0
@@ -129,7 +130,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     scanStartedAt = Date()
     let activeSampleLimit = sampleLimit
     scheduleScanTimeout(for: scanID)
-    emit(.scanning(lastMetrics), nextScanAt: nil)
+    emit(.scanning(lastMetrics, lastMetricsScannedAt), nextScanAt: nil)
 
     webView.callAsyncJavaScript(
       ScanScript.body,
@@ -151,6 +152,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard normalized != sampleLimit else { return }
     sampleLimit = normalized
     lastMetrics = nil
+    lastMetricsScannedAt = nil
     needsImmediateScan = true
     emit(.starting("样本已改为 \(normalized) 条，正在重新扫描"), nextScanAt: nil)
     if !isScanning {
@@ -165,6 +167,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard targetChanged else { return }
 
     lastMetrics = nil
+    lastMetricsScannedAt = nil
     consecutiveScanFailures = 0
     needsImmediateScan = true
     emit(.starting("后台地址已更新，正在重新连接"), nextScanAt: nil)
@@ -226,6 +229,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         consecutiveScanFailures = 0
         lastMetrics = metrics
         let scannedAt = Date()
+        lastMetricsScannedAt = scannedAt
 
         if webView.url?.path == "/login" {
           if !pageSessionRecoveryAttempted {
@@ -799,6 +803,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       }
       return
     }
+    let completedAuthentication =
+      autoLoginInProgress || !autoLoginStage.isEmpty || pageSessionRecoveryAttempted
     autoLoginInProgress = false
     autoLoginStage = ""
     captchaAutoLoginAttempts = 0
@@ -807,6 +813,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
     persistCurrentToken()
+    if completedAuthentication {
+      needsImmediateScan = true
+    }
     guard needsImmediateScan else { return }
     needsImmediateScan = false
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -1170,7 +1179,7 @@ final class MonitorController {
     var staleMonitorIDs: [String] = []
     for monitorID in orderedMonitorIDs {
       guard let snapshot = snapshotsByID[monitorID],
-        snapshot.state.isHealthy || snapshot.state.isAlert,
+        snapshot.state.metrics != nil,
         let scannedAt = snapshot.state.scannedAt,
         MonitorRefreshPolicy.resultIsStale(
           scannedAt: scannedAt,

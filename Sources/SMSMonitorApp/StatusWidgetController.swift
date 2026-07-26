@@ -876,7 +876,7 @@ final class StatusWidgetController: NSWindowController {
         isAlert: false,
         isScanning: false
       )
-    case .scanning(let metrics):
+    case .scanning(let metrics, _):
       return WidgetPresentation(
         color: MonitorColors.scanning,
         primaryText: metrics?.percentageText ?? "扫描中",
