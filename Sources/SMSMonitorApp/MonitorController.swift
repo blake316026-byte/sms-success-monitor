@@ -15,6 +15,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private let automationRuntime: LocalAutomationRuntime
   private let loginAutomation: LoginPageAutomation
   private var nextScanWorkItem: DispatchWorkItem?
+  private var connectionKickoffWorkItem: DispatchWorkItem?
+  private var connectionKickoffDeadline: Date?
   private var scanTimeoutWorkItem: DispatchWorkItem?
   private var nextScanAt: Date?
   private var isScanning = false
@@ -33,6 +35,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var autoLoginOutcomeWorkItem: DispatchWorkItem?
   private var pageSessionRecoveryAttempted = false
   private var mockScenario: String?
+  private var isStarted = false
 
   init(
     configuration: MonitorConfiguration,
@@ -77,11 +80,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   deinit {
     nextScanWorkItem?.cancel()
+    connectionKickoffWorkItem?.cancel()
     scanTimeoutWorkItem?.cancel()
     autoLoginOutcomeWorkItem?.cancel()
   }
 
   func start() {
+    isStarted = true
     mockScenario = ProcessInfo.processInfo.environment["SMS_MONITOR_TEST_SCENARIO"]
     if mockScenario != nil {
       emitMockState()
@@ -91,12 +96,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     emit(.starting("正在连接平台"), nextScanAt: nil)
     guard webView.url != nil else {
       webView.load(URLRequest(url: configuration.targetURL))
+      scheduleConnectionKickoff()
       return
     }
-    guard !webView.isLoading else { return }
-    DispatchQueue.main.async { [weak self] in
-      self?.scanNow()
-    }
+    scheduleConnectionKickoff(after: 0)
   }
 
   func scanNow() {
@@ -131,6 +134,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let activeSampleLimit = sampleLimit
     scheduleScanTimeout(for: scanID)
     emit(.scanning(lastMetrics, lastMetricsScannedAt), nextScanAt: nil)
+    NSLog("[SMSMonitor] %@ scan started at %@", configuration.id, currentURL.absoluteString)
 
     webView.callAsyncJavaScript(
       ScanScript.body,
@@ -174,8 +178,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func stop() {
+    isStarted = false
     nextScanWorkItem?.cancel()
     nextScanWorkItem = nil
+    connectionKickoffWorkItem?.cancel()
+    connectionKickoffWorkItem = nil
+    connectionKickoffDeadline = nil
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
     nextScanAt = nil
@@ -185,12 +193,36 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     webView.stopLoading()
   }
 
+  private func scheduleConnectionKickoff(after delay: TimeInterval = 1) {
+    connectionKickoffWorkItem?.cancel()
+    if connectionKickoffDeadline == nil {
+      connectionKickoffDeadline = Date().addingTimeInterval(10)
+    }
+    let workItem = DispatchWorkItem { [weak self] in
+      guard let self, self.isStarted else { return }
+      if self.webView.isLoading,
+        let deadline = self.connectionKickoffDeadline,
+        Date() < deadline
+      {
+        self.scheduleConnectionKickoff()
+        return
+      }
+      self.connectionKickoffWorkItem = nil
+      self.connectionKickoffDeadline = nil
+      self.needsImmediateScan = false
+      self.scanNow()
+    }
+    connectionKickoffWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+  }
+
   private func finishScan(
     _ result: Result<Any, Error>,
     sampleLimit activeSampleLimit: Int,
     scanID: UUID
   ) {
     guard activeScanID == scanID else { return }
+    NSLog("[SMSMonitor] %@ scan callback received", configuration.id)
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
     activeScanID = nil
@@ -797,10 +829,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard isMonitorOrigin(url) else { return }
     if url.path == "/login" {
       guard !autoLoginInProgress, needsImmediateScan else { return }
-      needsImmediateScan = false
-      DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-        self?.scanNow()
-      }
+      scheduleConnectionKickoff()
       return
     }
     let completedAuthentication =
@@ -817,10 +846,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       needsImmediateScan = true
     }
     guard needsImmediateScan else { return }
-    needsImmediateScan = false
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-      self?.scanNow()
-    }
+    scheduleConnectionKickoff()
   }
 
   func webView(
