@@ -828,7 +828,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
     guard isMonitorOrigin(url) else { return }
     if url.path == "/login" {
-      guard !autoLoginInProgress, needsImmediateScan else { return }
+      guard !autoLoginInProgress else { return }
+      needsImmediateScan = true
       scheduleConnectionKickoff()
       return
     }

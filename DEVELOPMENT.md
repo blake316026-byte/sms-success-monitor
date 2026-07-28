@@ -58,6 +58,7 @@
 14. 页面 Token 与本机加密 Token 不同时必须依次验证，不能让失效的页面 Token 遮蔽仍有效的本机 Token。macOS 在登录页验证本机 Token 有效后应恢复现有网页会话；页面没有可恢复会话时再执行账号自动登录。
 15. 固定后台入口若配置为 `/login`，接口 Token 有效不能作为停留登录页的理由。macOS 应先打开 `/sms-record-list` 验证网页会话；若仍返回登录页，必须进入验证码自动登录流程。
 16. macOS 登录成功或页面会话恢复到后台页后必须立即触发扫描。客户端启动时还必须安排独立的首次连接兜底，不能只依赖 WebKit 导航完成回调；页面加载完成后应自动发起扫描。扫描期间可以暂时展示上一次指标，但必须同时保留其扫描时间；指标超过四分钟后必须移除旧成功率和旧报警，切换为连接异常并重试。
+17. 已运行中的后台只要导航回 `/login`，必须重新标记为需要立即扫描并进入 Token 校验/自动登录；不能因为上一轮正常扫描已经清除了 `needsImmediateScan` 就忽略登录页，否则账号密码虽由网页保留，图片验证码也不会启动 OCR 或写入 code。
 
 扫描脚本会从页面本地存储读取 Token、国家、语言和可选 `Tkk`，在接口限制单页条数时自动翻页，并优先按记录 ID 去重。调整请求字段、鉴权头、状态映射或去重键属于跨平台协议变更，必须三端同步验证。
 
@@ -220,14 +221,14 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.19` |
-| macOS | `0.3.19 (23)` |
-| Windows | `0.3.19` |
-| Android | `versionName 0.3.19` / `versionCode 23` |
+| 正式版本 | `v0.3.20` |
+| macOS | `0.3.20 (24)` |
+| Windows | `0.3.20` |
+| Android | `versionName 0.3.20` / `versionCode 24` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
-| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.19` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.19` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.19 (23)` |
+| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.20` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.20` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.20 (24)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 

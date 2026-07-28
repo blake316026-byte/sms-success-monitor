@@ -5,6 +5,7 @@ SCRIPT_DIR="${0:A:h}"
 ROOT_DIR="${SCRIPT_DIR:h}"
 
 "${SCRIPT_DIR}/check-no-macos-keychain.sh"
+"${SCRIPT_DIR}/check-macos-login-trigger.sh"
 swift run --package-path "${ROOT_DIR}" SMSMonitorCoreChecks
 node "${ROOT_DIR}/scripts/check-scan-script.mjs"
 node "${ROOT_DIR}/scripts/check-login-page.mjs"
