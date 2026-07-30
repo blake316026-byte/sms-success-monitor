@@ -27,6 +27,7 @@ public enum AutoLoginAttemptPolicy {
 public enum MonitorRefreshPolicy {
   public static let minimumNextScanDelay: TimeInterval = 1
   public static let minimumStaleAge: TimeInterval = 4 * 60
+  public static let maximumStartupSpread: TimeInterval = 30
 
   public static func nextScanDelay(
     scanInterval: TimeInterval,
@@ -45,6 +46,39 @@ public enum MonitorRefreshPolicy {
     scanInterval: TimeInterval
   ) -> Bool {
     now.timeIntervalSince(scannedAt) > staleAge(scanInterval: scanInterval)
+  }
+
+  public static func staggeredDelay(
+    index: Int,
+    count: Int,
+    maximumSpread: TimeInterval = maximumStartupSpread
+  ) -> TimeInterval {
+    guard count > 1, index > 0 else { return 0 }
+    let boundedIndex = min(index, count - 1)
+    return max(0, maximumSpread) * Double(boundedIndex) / Double(count - 1)
+  }
+}
+
+public enum InactivePageMaintenancePolicy {
+  public static let recycleAfter: TimeInterval = 2 * 60 * 60
+
+  public static func shouldRecycle(
+    isActive: Bool,
+    inactiveSince: Date?,
+    lastSuccessfulScanAt: Date?,
+    lastRecycleAt: Date?,
+    now: Date,
+    scanInterval: TimeInterval
+  ) -> Bool {
+    guard !isActive,
+      let inactiveSince,
+      let lastSuccessfulScanAt,
+      now.timeIntervalSince(inactiveSince) >= recycleAfter,
+      now.timeIntervalSince(lastSuccessfulScanAt)
+        <= max(2 * scanInterval, MonitorRefreshPolicy.minimumNextScanDelay)
+    else { return false }
+
+    return lastRecycleAt.map { now.timeIntervalSince($0) >= recycleAfter } ?? true
   }
 }
 

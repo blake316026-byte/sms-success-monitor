@@ -41,6 +41,7 @@ private final class PlatformPageViewController: NSViewController {
   var pageName: String
   var startURL: URL
   var onNavigationStateChange: (() -> Void)?
+  private var isPerformanceActive = false
 
   var isBuiltIn: Bool { monitorID != nil }
   var credentialID: String {
@@ -76,6 +77,9 @@ private final class PlatformPageViewController: NSViewController {
       },
       webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
         self?.onNavigationStateChange?()
+        if self?.webView.isLoading == false {
+          self?.applyPerformanceMode()
+        }
       },
     ]
   }
@@ -95,6 +99,53 @@ private final class PlatformPageViewController: NSViewController {
       webView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
     view = contentView
+  }
+
+  func setPerformanceActive(_ active: Bool) {
+    guard isPerformanceActive != active else {
+      applyPerformanceMode()
+      return
+    }
+    isPerformanceActive = active
+    applyPerformanceMode()
+  }
+
+  private func applyPerformanceMode() {
+    let active = isPerformanceActive
+    if #available(macOS 11.0, *) {
+      webView.setAllMediaPlaybackSuspended(!active, completionHandler: nil)
+    }
+    webView.callAsyncJavaScript(
+      """
+      const root = document.documentElement;
+      if (!root) return false;
+      let style = document.getElementById("sms-monitor-inactive-style");
+      if (!style) {
+        style = document.createElement("style");
+        style.id = "sms-monitor-inactive-style";
+        style.textContent = `
+          html[data-sms-monitor-inactive="true"] *,
+          html[data-sms-monitor-inactive="true"] *::before,
+          html[data-sms-monitor-inactive="true"] *::after {
+            animation-play-state: paused !important;
+            transition: none !important;
+            caret-color: transparent !important;
+          }
+        `;
+        (document.head || root).appendChild(style);
+      }
+      root.dataset.smsMonitorInactive = active ? "false" : "true";
+      for (const marquee of document.querySelectorAll("marquee")) {
+        try {
+          if (active) marquee.start(); else marquee.stop();
+        } catch (_) {}
+      }
+      return true;
+      """,
+      arguments: ["active": active],
+      in: nil,
+      in: .page
+    ) { _ in }
   }
 }
 
@@ -181,6 +232,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   var onPageUpdated: ((PlatformPageDescriptor) -> Void)?
   var onPageRemoved: ((String) -> Void)?
   var onPageOrderChanged: (([String]) -> Void)?
+  var onSelectedPageChanged: ((String?) -> Void)?
 
   private enum ToolbarIdentifier {
     static let toolbar = NSToolbar.Identifier("SMSMonitorPlatformToolbar")
@@ -247,6 +299,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     restoreWorkspaceLayout()
     updateWindowSubtitle()
     updateToolbar()
+    applySelectedPagePerformanceMode()
   }
 
   func show(moduleID: String? = nil) {
@@ -309,6 +362,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     tabController.onSelectionChange = { [weak self] in
       self?.updateToolbar()
       self?.findInSelectedPage(backwards: false)
+      self?.applySelectedPagePerformanceMode()
     }
     tabController.onMoveTab = { [weak self] source, target in
       self?.movePage(from: source, to: target)
@@ -476,6 +530,18 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     let index = tabController.selectedTabViewItemIndex
     guard pages.indices.contains(index) else { return nil }
     return pages[index]
+  }
+
+  var selectedCredentialID: String? {
+    selectedPage?.credentialID
+  }
+
+  private func applySelectedPagePerformanceMode() {
+    let activeID = selectedPage?.credentialID
+    for page in pages {
+      page.setPerformanceActive(page.credentialID == activeID)
+    }
+    onSelectedPageChanged?(activeID)
   }
 
   private func updateToolbar() {

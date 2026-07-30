@@ -15,6 +15,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private let automationRuntime: LocalAutomationRuntime
   private let loginAutomation: LoginPageAutomation
   private var nextScanWorkItem: DispatchWorkItem?
+  private var startupWorkItem: DispatchWorkItem?
   private var connectionKickoffWorkItem: DispatchWorkItem?
   private var connectionKickoffDeadline: Date?
   private var scanTimeoutWorkItem: DispatchWorkItem?
@@ -36,6 +37,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var pageSessionRecoveryAttempted = false
   private var mockScenario: String?
   private var isStarted = false
+  private var isPageActive = false
+  private var inactiveSince: Date?
+  private var lastPageRecycleAt: Date?
 
   init(
     configuration: MonitorConfiguration,
@@ -80,12 +84,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   deinit {
     nextScanWorkItem?.cancel()
+    startupWorkItem?.cancel()
     connectionKickoffWorkItem?.cancel()
     scanTimeoutWorkItem?.cancel()
     autoLoginOutcomeWorkItem?.cancel()
   }
 
-  func start() {
+  func start(after delay: TimeInterval = 0) {
     isStarted = true
     mockScenario = ProcessInfo.processInfo.environment["SMS_MONITOR_TEST_SCENARIO"]
     if mockScenario != nil {
@@ -93,6 +98,22 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
 
+    let safeDelay = max(0, delay)
+    if safeDelay > 0 {
+      emit(.starting("已错峰排队，监控将在 \(Int(ceil(safeDelay))) 秒内启动"), nextScanAt: nil)
+      let item = DispatchWorkItem { [weak self] in
+        guard let self, self.isStarted else { return }
+        self.startupWorkItem = nil
+        self.beginConnection()
+      }
+      startupWorkItem = item
+      DispatchQueue.main.asyncAfter(deadline: .now() + safeDelay, execute: item)
+      return
+    }
+    beginConnection()
+  }
+
+  private func beginConnection() {
     emit(.starting("正在连接平台"), nextScanAt: nil)
     guard webView.url != nil else {
       webView.load(URLRequest(url: configuration.targetURL))
@@ -100,6 +121,16 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
     scheduleConnectionKickoff(after: 0)
+  }
+
+  func setPageActive(_ active: Bool) {
+    guard isPageActive != active else { return }
+    isPageActive = active
+    if active {
+      inactiveSince = nil
+    } else {
+      inactiveSince = Date()
+    }
   }
 
   func scanNow() {
@@ -179,6 +210,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   func stop() {
     isStarted = false
+    startupWorkItem?.cancel()
+    startupWorkItem = nil
     nextScanWorkItem?.cancel()
     nextScanWorkItem = nil
     connectionKickoffWorkItem?.cancel()
@@ -287,6 +320,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         } else {
           emit(.healthy(metrics, scannedAt), nextScanAt: nextScanAt)
         }
+        recycleInactivePageIfNeeded(now: scannedAt)
 
       case "auth":
         let message = payload["message"] as? String ?? "平台登录已失效。"
@@ -328,6 +362,23 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       .error("\(message)；正在自动重载后台连接。", Date()),
       nextScanAt: nextScanAt
     )
+    webView.reload()
+  }
+
+  private func recycleInactivePageIfNeeded(now: Date) {
+    guard InactivePageMaintenancePolicy.shouldRecycle(
+      isActive: isPageActive,
+      inactiveSince: inactiveSince,
+      lastSuccessfulScanAt: lastMetricsScannedAt,
+      lastRecycleAt: lastPageRecycleAt,
+      now: now,
+      scanInterval: configuration.scanInterval
+    ) else { return }
+
+    lastPageRecycleAt = now
+    inactiveSince = now
+    needsImmediateScan = true
+    NSLog("[SMSMonitor] %@ recycling long-idle WebKit page after fresh scan", configuration.id)
     webView.reload()
   }
 
@@ -961,6 +1012,9 @@ final class MonitorController {
     self.workspaceController.onPageOrderChanged = { [weak self] credentialIDs in
       self?.applyPageOrder(credentialIDs)
     }
+    self.workspaceController.onSelectedPageChanged = { [weak self] credentialID in
+      self?.applyActivePage(credentialID)
+    }
 
     for monitor in monitors {
       bind(monitor)
@@ -974,6 +1028,7 @@ final class MonitorController {
       removePage(credentialID: credentialID)
     }
     applyPageOrder(activePages.map(\.credentialID))
+    applyActivePage(workspaceController.selectedCredentialID)
   }
 
   deinit {
@@ -993,8 +1048,12 @@ final class MonitorController {
     scheduleHealthCheck()
     workspaceController.show(moduleID: orderedMonitorIDs.first)
     publish(changedModuleID: nil)
-    for monitorID in orderedMonitorIDs {
-      monitorsByID[monitorID]?.start()
+    for (index, monitorID) in orderedMonitorIDs.enumerated() {
+      let delay = MonitorRefreshPolicy.staggeredDelay(
+        index: index,
+        count: orderedMonitorIDs.count
+      )
+      monitorsByID[monitorID]?.start(after: delay)
     }
   }
 
@@ -1003,8 +1062,15 @@ final class MonitorController {
       monitorsByID[moduleID]?.scanNow()
       return
     }
-    for monitorID in orderedMonitorIDs {
-      monitorsByID[monitorID]?.scanNow()
+    for (index, monitorID) in orderedMonitorIDs.enumerated() {
+      let delay = MonitorRefreshPolicy.staggeredDelay(
+        index: index,
+        count: orderedMonitorIDs.count
+      )
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        guard self?.hasStarted == true else { return }
+        self?.monitorsByID[monitorID]?.scanNow()
+      }
     }
   }
 
@@ -1301,7 +1367,20 @@ final class MonitorController {
     workspaceController.refreshMonitorCount()
     publish(changedModuleID: nil)
     if hasStarted {
-      monitor.start()
+      let index = orderedMonitorIDs.firstIndex(of: page.credentialID) ?? 0
+      monitor.start(
+        after: MonitorRefreshPolicy.staggeredDelay(
+          index: index,
+          count: orderedMonitorIDs.count
+        )
+      )
+    }
+    monitor.setPageActive(workspaceController.selectedCredentialID == page.credentialID)
+  }
+
+  private func applyActivePage(_ credentialID: String?) {
+    for (monitorID, monitor) in monitorsByID {
+      monitor.setPageActive(monitorID == credentialID)
     }
   }
 

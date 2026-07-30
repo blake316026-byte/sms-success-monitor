@@ -78,6 +78,59 @@ check(
   MonitorRefreshPolicy.nextScanDelay(scanInterval: 60, scanDuration: 75) == 1,
   "reschedules immediately after a scan overruns its interval"
 )
+let staggeredDelays = (0..<14).map {
+  MonitorRefreshPolicy.staggeredDelay(index: $0, count: 14)
+}
+check(staggeredDelays.first == 0, "starts the selected monitor without delay")
+check(
+  staggeredDelays.last == MonitorRefreshPolicy.maximumStartupSpread,
+  "spreads fourteen monitor starts across the bounded startup window"
+)
+check(
+  zip(staggeredDelays, staggeredDelays.dropFirst()).allSatisfy(<),
+  "uses distinct increasing scan phases"
+)
+
+let maintenanceNow = Date(timeIntervalSince1970: 10_000)
+check(
+  InactivePageMaintenancePolicy.shouldRecycle(
+    isActive: false,
+    inactiveSince: maintenanceNow.addingTimeInterval(
+      -InactivePageMaintenancePolicy.recycleAfter - 1
+    ),
+    lastSuccessfulScanAt: maintenanceNow.addingTimeInterval(-30),
+    lastRecycleAt: nil,
+    now: maintenanceNow,
+    scanInterval: 60
+  ),
+  "recycles only a long-idle page after a fresh successful scan"
+)
+check(
+  !InactivePageMaintenancePolicy.shouldRecycle(
+    isActive: true,
+    inactiveSince: maintenanceNow.addingTimeInterval(
+      -InactivePageMaintenancePolicy.recycleAfter - 1
+    ),
+    lastSuccessfulScanAt: maintenanceNow.addingTimeInterval(-30),
+    lastRecycleAt: nil,
+    now: maintenanceNow,
+    scanInterval: 60
+  ),
+  "never recycles the visible page"
+)
+check(
+  !InactivePageMaintenancePolicy.shouldRecycle(
+    isActive: false,
+    inactiveSince: maintenanceNow.addingTimeInterval(
+      -InactivePageMaintenancePolicy.recycleAfter - 1
+    ),
+    lastSuccessfulScanAt: maintenanceNow.addingTimeInterval(-180),
+    lastRecycleAt: nil,
+    now: maintenanceNow,
+    scanInterval: 60
+  ),
+  "does not recycle when monitoring data is stale"
+)
 let refreshReference = Date(timeIntervalSince1970: 1_000)
 check(
   !MonitorRefreshPolicy.resultIsStale(

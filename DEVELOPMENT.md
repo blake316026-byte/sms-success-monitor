@@ -59,6 +59,9 @@
 15. 固定后台入口若配置为 `/login`，接口 Token 有效不能作为停留登录页的理由。macOS 应先打开 `/sms-record-list` 验证网页会话；若仍返回登录页，必须进入验证码自动登录流程。
 16. macOS 登录成功或页面会话恢复到后台页后必须立即触发扫描。客户端启动时还必须安排独立的首次连接兜底，不能只依赖 WebKit 导航完成回调；页面加载完成后应自动发起扫描。扫描期间可以暂时展示上一次指标，但必须同时保留其扫描时间；指标超过四分钟后必须移除旧成功率和旧报警，切换为连接异常并重试。
 17. 已运行中的后台只要导航回 `/login`，必须重新标记为需要立即扫描并进入 Token 校验/自动登录；不能因为上一轮正常扫描已经清除了 `needsImmediateScan` 就忽略登录页，否则账号密码虽由网页保留，图片验证码也不会启动 OCR 或写入 code。
+18. macOS 工作台只有当前选中的标签保留完整视觉运行。未选中标签必须暂停 CSS 动画、过渡、媒体和原生跑马灯，但不得全局覆盖网页 `setTimeout`、`setInterval`、`requestAnimationFrame` 或停止短信扫描状态机，避免破坏登录、Token 恢复和实时报警。
+19. macOS 后台监控继续由 `ScanScript` 直接调用只读短信记录接口，不依赖短信列表页面持续布局或动画。全部后台启动和“扫描全部”必须在最多 30 秒窗口内均匀错峰；每台后台启动后仍维持 60 秒周期，错峰不能以停止、挂起或合并报警扫描为代价。
+20. 长期未选中的 WebKit 页面只允许在刚完成成功扫描、监控数据仍新鲜时自动重载回收。回收前保留最新状态，页面完成恢复后立即重扫；当前可见页面、数据已过期页面和认证中的页面不得为了性能治理主动回收。WebContent 进程被系统终止时仍由原恢复路径重载并继续监控。
 
 扫描脚本会从页面本地存储读取 Token、国家、语言和可选 `Tkk`，在接口限制单页条数时自动翻页，并优先按记录 ID 去重。调整请求字段、鉴权头、状态映射或去重键属于跨平台协议变更，必须三端同步验证。
 
@@ -84,8 +87,9 @@ SMS Success Monitor
 
 - `AppDelegate` 组装通知、监控器和常驻浮窗。
 - 每个后台由一个 `ModuleMonitorController` 管理独立 `WKWebView`、扫描调度、恢复和自动登录。
-- `MonitorController` 汇总状态、处理过期结果，并按工作台当前标签集合与顺序管理监控实例。
-- `PlatformWorkspaceController` 统一管理默认与新增标签；旧版 `SMSMonitorPlatformPages.v1` 自定义页面首次启动时迁移为 `SMSMonitorPlatformLayout.v2`。新版本以后新增的默认后台会自动补到现有布局末尾，用户已删除的默认后台不会在重启后自行恢复。
+- `MonitorController` 汇总状态、处理过期结果，并按工作台当前标签集合与顺序管理监控实例。首次连接和“扫描全部”使用 `MonitorRefreshPolicy.staggeredDelay` 在 30 秒内错峰，单台周期仍为 60 秒。
+- `PlatformWorkspaceController` 统一管理默认与新增标签，并把当前选中项同步给页面降载和监控维护策略。未选中页面保留同一持久化 WebKit 会话和接口执行能力，只暂停非必要视觉工作。旧版 `SMSMonitorPlatformPages.v1` 自定义页面首次启动时迁移为 `SMSMonitorPlatformLayout.v2`。新版本以后新增的默认后台会自动补到现有布局末尾，用户已删除的默认后台不会在重启后自行恢复。
+- `InactivePageMaintenancePolicy` 是页面回收门禁：默认连续未选中两小时后，仅在最近成功扫描仍新鲜时允许重载；重载完成由现有导航回调立即恢复扫描。它是资源回收兜底，不替代每分钟接口监控。
 - `LocalCredentialStore` 使用应用专用 AES-GCM 加密文件；不得恢复旧 Keychain 依赖。
 
 ### Windows
@@ -217,18 +221,18 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 ### 8.1 当前已核验发布基线
 
-截至 2026-07-26，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
+截至 2026-07-30，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.20` |
-| macOS | `0.3.20 (24)` |
-| Windows | `0.3.20` |
-| Android | `versionName 0.3.20` / `versionCode 24` |
+| 正式版本 | `v0.3.21` |
+| macOS | `0.3.21 (25)` |
+| Windows | `0.3.21` |
+| Android | `versionName 0.3.21` / `versionCode 25` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
-| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.20` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.20` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.20 (24)` |
+| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.21` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.21` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.21 (25)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 
