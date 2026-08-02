@@ -138,6 +138,37 @@ check(
   'keeps SMS monitoring healthy when the finance dashboard is unavailable'
 );
 
+let sassDashboardBody;
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) {
+    return { ok: true, status: 200, async json() { return { status: 1012 }; } };
+  }
+  if (url.includes('/api/all_country_realtime_record/with_day')) {
+    sassDashboardBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          status: 0,
+          list: [
+            { type: 'COUNTRY_HOUR', columns: { rechargeAmount: 1, withdrawAmount: 1 } },
+            { type: 'COUNTRY_DAY', columns: { rechargeAmount: 120196, withdrawAmount: 85521 } }
+          ]
+        };
+      }
+    };
+  }
+  return responseFor([{ id: 'sass-finance', status: 'SUCCESS' }], 1);
+});
+const sassFinance = await executeScan(200, '');
+check(
+  sassFinance.dailyFinancial.rechargeAmount === 120196
+    && sassFinance.dailyFinancial.withdrawAmount === 85521
+    && sassDashboardBody.dayOffset === 0,
+  'reads sixsass COUNTRY_DAY recharge and withdrawal amounts'
+);
+
 let cappedPageCalls = 0;
 globalThis.window = makeWindow(async (url, options) => {
   if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
