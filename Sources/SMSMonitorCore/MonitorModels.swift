@@ -1,5 +1,19 @@
 import Foundation
 
+public struct DailyFinancialMetrics: Equatable, Sendable {
+  public let rechargeAmount: Double
+  public let withdrawAmount: Double
+
+  public init(rechargeAmount: Double, withdrawAmount: Double) {
+    self.rechargeAmount = rechargeAmount
+    self.withdrawAmount = withdrawAmount
+  }
+
+  public var differenceAmount: Double {
+    rechargeAmount - withdrawAmount
+  }
+}
+
 public enum ScanRecoveryPolicy {
   public static let defaultFailureThreshold = 2
 

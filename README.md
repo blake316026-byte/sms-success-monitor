@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.21**（macOS build 25、Android versionCode 25）。本版降低 macOS 多后台工作台长期运行的 CPU/内存占用：未选中标签暂停动画、跑马灯与媒体，后台接口扫描在 30 秒内错峰但仍各自保持每分钟监控；长期隐藏页面只在刚完成成功扫描后安全回收并立即恢复扫描。正式发布页：[SMS Success Monitor v0.3.21](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.21)。
+当前正式版本：**v0.3.22**（macOS build 26、Android versionCode 26）。macOS 悬浮窗新增全部平台“今日数据统计”，总览表新增每个平台的今日充值、今日提现和今日充提差；财务数据与短信监控同轮扫描，财务接口异常只显示 `--`，不会中断或误触发短信报警。正式发布页：[SMS Success Monitor v0.3.22](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.22)。
 
 ## 监控口径
 

@@ -231,6 +231,15 @@ check(
   "does not report an aggregate alert at exactly fifty percent"
 )
 
+let dailyFinancial = DailyFinancialMetrics(
+  rechargeAmount: 712_323.4,
+  withdrawAmount: 409_663.9
+)
+check(
+  abs(dailyFinancial.differenceAmount - 302_659.5) < 0.001,
+  "calculates today deposit-withdraw difference from dashboard amounts"
+)
+
 if failures > 0 {
   print("\(failures) core check(s) failed")
   exit(1)

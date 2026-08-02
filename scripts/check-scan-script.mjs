@@ -71,6 +71,19 @@ function responseFor(rows, totalElements = rows.length) {
   };
 }
 
+function dashboardResponse(rechargeAmount = 712323.4, withdrawAmount = 409663.9) {
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        status: 0,
+        model: { today: { rechargeSuccAmount: rechargeAmount, withdrawSuccAmount: withdrawAmount } }
+      };
+    }
+  };
+}
+
 function check(condition, message) {
   if (!condition) {
     throw new Error(`FAIL: ${message}`);
@@ -86,7 +99,8 @@ check(unauthenticated.kind === 'auth', 'returns an authentication state when no 
 
 let singlePageCalls = 0;
 let singlePageQuery;
-globalThis.window = makeWindow(async (_url, options) => {
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
   singlePageCalls += 1;
   singlePageQuery = JSON.parse(options.body).query;
   const rows = Array.from({ length: 200 }, (_, index) => ({
@@ -101,14 +115,32 @@ check(singlePage.statuses.length === 200, 'returns exactly 200 statuses from a f
 check(singlePage.statuses.filter((status) => status === 'SUCCESS').length === 120, 'preserves raw SUCCESS statuses');
 check(singlePageCalls === 1, 'uses one request when the API accepts pageSize 200');
 check(
+  singlePage.dailyFinancial.rechargeAmount === 712323.4
+    && singlePage.dailyFinancial.withdrawAmount === 409663.9,
+  'reads today recharge and withdrawal amounts in the same scan'
+);
+check(
   Number.isFinite(singlePageQuery.ddCreated.start)
     && Number.isFinite(singlePageQuery.ddCreated.finish)
     && singlePageQuery.ddCreated.finish > singlePageQuery.ddCreated.start,
   'queries the same recent creation-date window used by the SMS record page'
 );
 
+globalThis.window = makeWindow(async (url) => {
+  if (url.includes('/api/dashboard4bix/realtime')) throw new Error('finance unavailable');
+  return responseFor([{ id: 'finance-independent', status: 'SUCCESS' }], 1);
+});
+const financeUnavailable = await executeScan(200, '');
+check(
+  financeUnavailable.kind === 'ok'
+    && financeUnavailable.statuses.length === 1
+    && financeUnavailable.dailyFinancial === null,
+  'keeps SMS monitoring healthy when the finance dashboard is unavailable'
+);
+
 let cappedPageCalls = 0;
-globalThis.window = makeWindow(async (_url, options) => {
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
   cappedPageCalls += 1;
   const pageNo = JSON.parse(options.body).query.pageNo;
   const rows = Array.from({ length: 20 }, (_, index) => ({
@@ -122,7 +154,8 @@ check(cappedPages.statuses.length === 200, 'continues paging when the server cap
 check(cappedPageCalls === 10, 'stops after collecting 200 rows across ten capped pages');
 
 let configuredPageCalls = 0;
-globalThis.window = makeWindow(async (_url, options) => {
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
   configuredPageCalls += 1;
   const pageNo = JSON.parse(options.body).query.pageNo;
   const rows = Array.from({ length: 20 }, (_, index) => ({
@@ -136,7 +169,8 @@ check(configuredPages.statuses.length === 350, 'returns the manually configured 
 check(configuredPageCalls === 18, 'fetches enough capped pages for a configured sample count');
 
 let fallbackTokenSeen = false;
-globalThis.window = makeWindow(async (_url, options) => {
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
   fallbackTokenSeen = options.headers.Auth === 'saved-token';
   return responseFor([{ id: 'fallback-1', status: 'SUCCESS' }], 1);
 }, false);
@@ -151,7 +185,8 @@ check(
 );
 
 let staleTokenCalls = 0;
-globalThis.window = makeWindow(async (_url, options) => {
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
   staleTokenCalls += 1;
   if (options.headers.Auth === 'stale-page-token') {
     return { ok: false, status: 401 };

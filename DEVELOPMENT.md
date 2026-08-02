@@ -62,8 +62,11 @@
 18. macOS 工作台只有当前选中的标签保留完整视觉运行。未选中标签必须暂停 CSS 动画、过渡、媒体和原生跑马灯，但不得全局覆盖网页 `setTimeout`、`setInterval`、`requestAnimationFrame` 或停止短信扫描状态机，避免破坏登录、Token 恢复和实时报警。
 19. macOS 后台监控继续由 `ScanScript` 直接调用只读短信记录接口，不依赖短信列表页面持续布局或动画。全部后台启动和“扫描全部”必须在最多 30 秒窗口内均匀错峰；每台后台启动后仍维持 60 秒周期，错峰不能以停止、挂起或合并报警扫描为代价。
 20. 长期未选中的 WebKit 页面只允许在刚完成成功扫描、监控数据仍新鲜时自动重载回收。回收前保留最新状态，页面完成恢复后立即重扫；当前可见页面、数据已过期页面和认证中的页面不得为了性能治理主动回收。WebContent 进程被系统终止时仍由原恢复路径重载并继续监控。
+21. 当日财务数据源为当前后台 origin 下的只读 `POST /api/dashboard4bix/realtime`。字段固定读取 `model.today.rechargeSuccAmount`（今日充值金额）和 `model.today.withdrawSuccAmount`（今日提现金额），今日充提差由客户端按“充值金额 - 提现金额”计算。
+22. 财务接口必须与该后台短信扫描处于同一轮任务，并共用短信结果的扫描时间，不得另建会漂移的独立定时器。悬浮窗汇总只累加本轮拿到有效财务数据的平台；“全部后台”逐行显示原值，并在最近扫描列之后依次显示今日充值、今日提现、今日充提差。
+23. 财务接口无权限、超时、字段缺失或返回异常时，只把该平台三个金额显示为 `--`，不得把财务失败升级成短信成功率报警，也不得继续展示上一轮旧金额。短信扫描本身仍按既有规则继续运行和报警。
 
-扫描脚本会从页面本地存储读取 Token、国家、语言和可选 `Tkk`，在接口限制单页条数时自动翻页，并优先按记录 ID 去重。调整请求字段、鉴权头、状态映射或去重键属于跨平台协议变更，必须三端同步验证。
+扫描脚本会从页面本地存储读取 Token、国家、语言和可选 `Tkk`，在接口限制单页条数时自动翻页，并优先按记录 ID 去重；短信读取成功后在同一鉴权上下文读取当日财务汇总。调整请求字段、鉴权头、状态映射或去重键属于跨平台协议变更，必须三端同步验证。
 
 ## 4. 架构与目录
 
@@ -221,18 +224,18 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 ### 8.1 当前已核验发布基线
 
-截至 2026-07-30，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
+截至 2026-08-02，当前正式发布基线如下。它是维护入口，不替代发布前的现场复核；后续发布必须同步更新本节。
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.21` |
-| macOS | `0.3.21 (25)` |
-| Windows | `0.3.21` |
-| Android | `versionName 0.3.21` / `versionCode 25` |
+| 正式版本 | `v0.3.22` |
+| macOS | `0.3.22 (26)` |
+| Windows | `0.3.22` |
+| Android | `versionName 0.3.22` / `versionCode 26` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
-| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.21` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.21` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.21 (25)` |
+| Git 提交 | 通过开发分支 HEAD 与公开仓库 `v0.3.22` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.22` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.22 (26)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 

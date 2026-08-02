@@ -26,6 +26,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var sampleLimit: Int
   private var lastMetrics: ScanMetrics?
   private var lastMetricsScannedAt: Date?
+  private(set) var latestDailyFinancialMetrics: DailyFinancialMetrics?
   private var needsImmediateScan = true
   private var consecutiveScanFailures = 0
   private var captchaAutoLoginAttempts = 0
@@ -188,6 +189,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     sampleLimit = normalized
     lastMetrics = nil
     lastMetricsScannedAt = nil
+    latestDailyFinancialMetrics = nil
     needsImmediateScan = true
     emit(.starting("样本已改为 \(normalized) 条，正在重新扫描"), nextScanAt: nil)
     if !isScanning {
@@ -203,6 +205,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
     lastMetrics = nil
     lastMetricsScannedAt = nil
+    latestDailyFinancialMetrics = nil
     consecutiveScanFailures = 0
     needsImmediateScan = true
     emit(.starting("后台地址已更新，正在重新连接"), nextScanAt: nil)
@@ -293,6 +296,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
         consecutiveScanFailures = 0
         lastMetrics = metrics
+        latestDailyFinancialMetrics = Self.dailyFinancialMetrics(from: payload)
         let scannedAt = Date()
         lastMetricsScannedAt = scannedAt
 
@@ -334,6 +338,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func handleScanFailure(_ message: String) {
+    latestDailyFinancialMetrics = nil
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
     activeScanID = nil
@@ -363,6 +368,25 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       nextScanAt: nextScanAt
     )
     webView.reload()
+  }
+
+  private static func dailyFinancialMetrics(from payload: [String: Any]) -> DailyFinancialMetrics? {
+    guard let financial = payload["dailyFinancial"] as? [String: Any],
+      let rechargeAmount = number(financial["rechargeAmount"]),
+      let withdrawAmount = number(financial["withdrawAmount"]),
+      rechargeAmount.isFinite,
+      withdrawAmount.isFinite
+    else { return nil }
+    return DailyFinancialMetrics(
+      rechargeAmount: rechargeAmount,
+      withdrawAmount: withdrawAmount
+    )
+  }
+
+  private static func number(_ value: Any?) -> Double? {
+    if let value = value as? NSNumber { return value.doubleValue }
+    if let value = value as? String { return Double(value) }
+    return nil
   }
 
   private func recycleInactivePageIfNeeded(now: Date) {
@@ -399,6 +423,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     _ message: String,
     progressMessage: String = "Token 已失效，正在自动登录"
   ) {
+    latestDailyFinancialMetrics = nil
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
     activeScanID = nil
@@ -1249,7 +1274,8 @@ final class MonitorController {
     snapshotsByID[configuration.id] = ModuleMonitorSnapshot(
       configuration: configuration,
       state: state,
-      nextScanAt: nextScanAt
+      nextScanAt: nextScanAt,
+      dailyFinancialMetrics: monitorsByID[configuration.id]?.latestDailyFinancialMetrics
     )
     workspaceController.updateMonitorState(moduleID: configuration.id, state: state)
     publish(changedModuleID: configuration.id)
@@ -1396,7 +1422,8 @@ final class MonitorController {
       snapshotsByID[page.credentialID] = ModuleMonitorSnapshot(
         configuration: pageConfiguration,
         state: targetChanged ? .starting("后台地址已更新，正在重新连接") : current.state,
-        nextScanAt: targetChanged ? nil : current.nextScanAt
+        nextScanAt: targetChanged ? nil : current.nextScanAt,
+        dailyFinancialMetrics: targetChanged ? nil : current.dailyFinancialMetrics
       )
     }
     workspaceController.updateMonitorState(

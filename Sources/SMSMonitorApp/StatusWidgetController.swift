@@ -181,6 +181,87 @@ private final class GaugeView: NSView {
   }
 }
 
+private final class FinancialSummaryView: NSView {
+  private let titleLabel = NSTextField(labelWithString: "今日数据统计")
+  private let coverageLabel = NSTextField(labelWithString: "")
+  private let rechargeLabel = NSTextField(labelWithString: "--")
+  private let withdrawLabel = NSTextField(labelWithString: "--")
+  private let differenceLabel = NSTextField(labelWithString: "--")
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+    layer?.backgroundColor = MonitorColors.surface.cgColor
+    layer?.cornerRadius = 6
+    layer?.borderWidth = 1
+    layer?.borderColor = NSColor.white.withAlphaComponent(0.1).cgColor
+    titleLabel.font = .systemFont(ofSize: 10.5, weight: .semibold)
+    titleLabel.textColor = MonitorColors.primaryText
+    coverageLabel.font = .systemFont(ofSize: 9.5)
+    coverageLabel.textColor = MonitorColors.secondaryText
+    coverageLabel.alignment = .right
+    addSubview(titleLabel)
+    addSubview(coverageLabel)
+    for (title, label) in [("充值", rechargeLabel), ("提现", withdrawLabel), ("充提差", differenceLabel)] {
+      let caption = NSTextField(labelWithString: title)
+      caption.font = .systemFont(ofSize: 9)
+      caption.textColor = MonitorColors.secondaryText
+      caption.alignment = .center
+      addSubview(caption)
+      label.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+      label.textColor = MonitorColors.primaryText
+      label.alignment = .center
+      addSubview(label)
+      caption.identifier = NSUserInterfaceItemIdentifier("caption-\(title)")
+    }
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func layout() {
+    super.layout()
+    titleLabel.frame = NSRect(x: 9, y: bounds.height - 18, width: 90, height: 14)
+    coverageLabel.frame = NSRect(x: 100, y: bounds.height - 18, width: bounds.width - 109, height: 14)
+    let width = bounds.width / 3
+    let captions = subviews.compactMap { $0 as? NSTextField }.filter {
+      $0.identifier?.rawValue.hasPrefix("caption-") == true
+    }
+    for (index, caption) in captions.enumerated() {
+      caption.frame = NSRect(x: CGFloat(index) * width, y: 20, width: width, height: 12)
+    }
+    for (index, label) in [rechargeLabel, withdrawLabel, differenceLabel].enumerated() {
+      label.frame = NSRect(x: CGFloat(index) * width + 2, y: 4, width: width - 4, height: 16)
+    }
+  }
+
+  func update(snapshot: FleetMonitorSnapshot) {
+    coverageLabel.stringValue = "\(snapshot.financialCoverageCount)/\(snapshot.modules.count) 平台"
+    guard let totals = snapshot.dailyFinancialTotals else {
+      rechargeLabel.stringValue = "--"
+      withdrawLabel.stringValue = "--"
+      differenceLabel.stringValue = "--"
+      return
+    }
+    rechargeLabel.stringValue = FinancialAmountFormatter.string(totals.rechargeAmount)
+    withdrawLabel.stringValue = FinancialAmountFormatter.string(totals.withdrawAmount)
+    differenceLabel.stringValue = FinancialAmountFormatter.string(totals.differenceAmount)
+  }
+}
+
+private enum FinancialAmountFormatter {
+  static let formatter: NumberFormatter = {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .decimal
+    formatter.minimumFractionDigits = 0
+    formatter.maximumFractionDigits = 2
+    return formatter
+  }()
+
+  static func string(_ value: Double) -> String {
+    formatter.string(from: NSNumber(value: value)) ?? "--"
+  }
+}
+
 private final class StatusWidgetView: NSView {
   var onPrimaryAction: (() -> Void)?
   var onContextMenu: ((NSEvent) -> Void)?
@@ -189,6 +270,7 @@ private final class StatusWidgetView: NSView {
   private let nameLabel = NSTextField(labelWithString: "")
   private let statusPill = NSView()
   private let statusLabel = NSTextField(labelWithString: "")
+  private let financialSummaryView = FinancialSummaryView()
   private let gaugeView = GaugeView()
   private let footerView = NSView()
   private let footerIcon = NSImageView()
@@ -224,6 +306,7 @@ private final class StatusWidgetView: NSView {
     addSubview(statusPill)
     configureLabel(statusLabel, font: .systemFont(ofSize: 10.5, weight: .bold), parent: statusPill)
 
+    addSubview(financialSummaryView)
     addSubview(gaugeView)
 
     footerView.wantsLayer = true
@@ -253,6 +336,7 @@ private final class StatusWidgetView: NSView {
     nameLabel.frame = NSRect(x: 39, y: bounds.height - 33, width: 112, height: 22)
     statusPill.frame = NSRect(x: bounds.width - 72, y: bounds.height - 32, width: 58, height: 20)
     statusLabel.frame = statusPill.bounds
+    financialSummaryView.frame = NSRect(x: 14, y: bounds.height - 91, width: bounds.width - 28, height: 54)
     gaugeView.frame = NSRect(x: (bounds.width - 158) / 2, y: 45, width: 158, height: 158)
     footerView.frame = NSRect(x: 14, y: 12, width: bounds.width - 28, height: 28)
     footerIcon.frame = NSRect(x: 10, y: 6, width: 16, height: 16)
@@ -271,7 +355,11 @@ private final class StatusWidgetView: NSView {
     bounds.contains(point) ? self : nil
   }
 
-  func update(displayName: String, presentation: WidgetPresentation) {
+  func update(
+    displayName: String,
+    presentation: WidgetPresentation,
+    snapshot: FleetMonitorSnapshot
+  ) {
     nameLabel.stringValue = displayName
     nameLabel.font = .systemFont(
       ofSize: displayName.count > 12 ? 11.5 : 13,
@@ -283,6 +371,7 @@ private final class StatusWidgetView: NSView {
     statusPill.layer?.backgroundColor = presentation.color.withAlphaComponent(0.15).cgColor
     statusPill.layer?.borderColor = presentation.color.withAlphaComponent(0.38).cgColor
     statusPill.layer?.borderWidth = 1
+    financialSummaryView.update(snapshot: snapshot)
 
     footerLabel.stringValue = presentation.footerText
     footerLabel.textColor =
@@ -399,7 +488,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
 
   init(moduleCount: Int, sampleLimit: Int) {
     let window = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 780, height: 540),
+      contentRect: NSRect(x: 0, y: 0, width: 1120, height: 540),
       styleMask: [.titled, .closable, .utilityWindow, .resizable],
       backing: .buffered,
       defer: false
@@ -407,7 +496,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     window.title = "短信监控总览"
     window.subtitle = "\(moduleCount) 个后台 · 每分钟扫描最新 \(sampleLimit) 条"
     window.level = .floating
-    window.minSize = NSSize(width: 700, height: 440)
+    window.minSize = NSSize(width: 900, height: 440)
     window.isReleasedWhenClosed = false
     window.setFrameAutosaveName("SMSMonitorFleetDetailWindow")
     self.sampleLimit = sampleLimit
@@ -546,7 +635,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     summaries.orientation = .horizontal
     summaries.spacing = 16
     summaries.alignment = .centerY
-    summaries.frame = NSRect(x: 450, y: 484, width: 310, height: 24)
+    summaries.frame = NSRect(x: 790, y: 484, width: 310, height: 24)
     summaries.autoresizingMask = [.minXMargin, .minYMargin]
     contentView.addSubview(summaries)
 
@@ -557,6 +646,9 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       (.success, "成功 / 样本", 110),
       (.nonSuccess, "未成功", 78),
       (.updated, "最近扫描", 112),
+      (.recharge, "今日充值金额", 116),
+      (.withdraw, "今日提现金额", 116),
+      (.difference, "今日充提差", 116),
     ]
     for (identifier, title, width) in columns {
       let column = NSTableColumn(identifier: identifier)
@@ -571,19 +663,19 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     tableView.usesAlternatingRowBackgroundColors = true
     tableView.allowsMultipleSelection = false
     tableView.allowsEmptySelection = false
-    tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+    tableView.columnAutoresizingStyle = .noColumnAutoresizing
     tableView.doubleAction = #selector(openSelected)
     tableView.target = self
 
-    let scrollView = NSScrollView(frame: NSRect(x: 20, y: 96, width: 740, height: 358))
+    let scrollView = NSScrollView(frame: NSRect(x: 20, y: 96, width: 1080, height: 358))
     scrollView.autoresizingMask = [.width, .height]
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = false
+    scrollView.hasHorizontalScroller = true
     scrollView.borderType = .bezelBorder
     contentView.addSubview(scrollView)
 
-    let separator = NSBox(frame: NSRect(x: 20, y: 82, width: 740, height: 1))
+    let separator = NSBox(frame: NSRect(x: 20, y: 82, width: 1080, height: 1))
     separator.boxType = .separator
     separator.autoresizingMask = [.width, .maxYMargin]
     contentView.addSubview(separator)
@@ -604,7 +696,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       toolTip: "立即扫描全部后台",
       action: #selector(scanAll)
     )
-    scanAllButton.frame = NSRect(x: 644, y: 28, width: 34, height: 34)
+    scanAllButton.frame = NSRect(x: 984, y: 28, width: 34, height: 34)
     scanAllButton.autoresizingMask = [.minXMargin, .maxYMargin]
     contentView.addSubview(scanAllButton)
 
@@ -613,7 +705,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       toolTip: "扫描选中后台",
       action: #selector(scanSelected)
     )
-    scanButton.frame = NSRect(x: 684, y: 28, width: 34, height: 34)
+    scanButton.frame = NSRect(x: 1024, y: 28, width: 34, height: 34)
     scanButton.autoresizingMask = [.minXMargin, .maxYMargin]
     contentView.addSubview(scanButton)
 
@@ -622,7 +714,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       toolTip: "打开选中后台",
       action: #selector(openSelected)
     )
-    platformButton.frame = NSRect(x: 724, y: 28, width: 34, height: 34)
+    platformButton.frame = NSRect(x: 1064, y: 28, width: 34, height: 34)
     platformButton.autoresizingMask = [.minXMargin, .maxYMargin]
     contentView.addSubview(platformButton)
   }
@@ -692,6 +784,18 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       return module.state.metrics.map { String($0.nonSuccessCount) } ?? "--"
     case .updated:
       return dateText(module.state.scannedAt)
+    case .recharge:
+      return module.dailyFinancialMetrics.map {
+        FinancialAmountFormatter.string($0.rechargeAmount)
+      } ?? "--"
+    case .withdraw:
+      return module.dailyFinancialMetrics.map {
+        FinancialAmountFormatter.string($0.withdrawAmount)
+      } ?? "--"
+    case .difference:
+      return module.dailyFinancialMetrics.map {
+        FinancialAmountFormatter.string($0.differenceAmount)
+      } ?? "--"
     default:
       return ""
     }
@@ -754,6 +858,9 @@ extension NSUserInterfaceItemIdentifier {
   fileprivate static let success = NSUserInterfaceItemIdentifier("success")
   fileprivate static let nonSuccess = NSUserInterfaceItemIdentifier("nonSuccess")
   fileprivate static let updated = NSUserInterfaceItemIdentifier("updated")
+  fileprivate static let recharge = NSUserInterfaceItemIdentifier("recharge")
+  fileprivate static let withdraw = NSUserInterfaceItemIdentifier("withdraw")
+  fileprivate static let difference = NSUserInterfaceItemIdentifier("difference")
 }
 
 final class StatusWidgetController: NSWindowController {
@@ -769,7 +876,7 @@ final class StatusWidgetController: NSWindowController {
 
   init(configurations: [MonitorConfiguration], sampleLimit: Int) {
     precondition(!configurations.isEmpty)
-    let widgetSize = NSSize(width: 228, height: 236)
+    let widgetSize = NSSize(width: 228, height: 306)
     self.currentSnapshot = .initial(configurations: configurations)
     self.widgetView = StatusWidgetView(frame: NSRect(origin: .zero, size: widgetSize))
     self.detailController = DetailPanelController(
@@ -847,7 +954,8 @@ final class StatusWidgetController: NSWindowController {
     )
     widgetView.update(
       displayName: focus.configuration.displayName,
-      presentation: presentation
+      presentation: presentation,
+      snapshot: snapshot
     )
     detailController.update(snapshot: snapshot, muteDescription: muteDescription)
     NSApp.applicationIconImage = StatusIconRenderer.render(

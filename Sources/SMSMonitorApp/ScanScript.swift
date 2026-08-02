@@ -58,6 +58,29 @@ enum ScanScript {
     const language = String(readStoredValue('locale') || 'zh-cn');
     const tkk = urlCache.Tkk || readStoredValue('Tkk');
     const endpoint = new URL('/api/sms_record/page', window.location.origin).href;
+    const dashboardEndpoint = new URL('/api/dashboard4bix/realtime', window.location.origin).href;
+    const readDailyFinancialMetrics = async (headers) => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await window.fetch(dashboardEndpoint, {
+          method: 'POST', credentials: 'include', headers, body: JSON.stringify({}),
+          signal: controller.signal
+        });
+        if (!response.ok) return null;
+        const payload = await response.json();
+        if (Number(payload && payload.status) !== 0) return null;
+        const model = payload && payload.model && payload.model.today;
+        const rechargeAmount = Number(model && model.rechargeSuccAmount);
+        const withdrawAmount = Number(model && model.withdrawSuccAmount);
+        if (!Number.isFinite(rechargeAmount) || !Number.isFinite(withdrawAmount)) return null;
+        return { rechargeAmount, withdrawAmount };
+      } catch (_) {
+        return null;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
     let lastAuthenticationMessage = '客户端登录态已失效，请重新登录。';
     for (const candidate of tokenCandidates) {
       const headers = {
@@ -167,12 +190,14 @@ enum ScanScript {
           }
         }
       }
+      const dailyFinancial = await readDailyFinancialMetrics(headers);
       return {
         kind: 'ok',
         statuses: collected,
         reportedTotal: reportedTotal == null ? collected.length : reportedTotal,
         tokenSource: candidate.source,
-        restoredPageSession
+        restoredPageSession,
+        dailyFinancial
       };
     }
 

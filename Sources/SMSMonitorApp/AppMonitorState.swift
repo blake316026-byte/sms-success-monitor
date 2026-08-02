@@ -58,6 +58,19 @@ struct ModuleMonitorSnapshot {
   let configuration: MonitorConfiguration
   let state: AppMonitorState
   let nextScanAt: Date?
+  let dailyFinancialMetrics: DailyFinancialMetrics?
+
+  init(
+    configuration: MonitorConfiguration,
+    state: AppMonitorState,
+    nextScanAt: Date?,
+    dailyFinancialMetrics: DailyFinancialMetrics? = nil
+  ) {
+    self.configuration = configuration
+    self.state = state
+    self.nextScanAt = nextScanAt
+    self.dailyFinancialMetrics = dailyFinancialMetrics
+  }
 }
 
 struct FleetMonitorSnapshot {
@@ -117,5 +130,18 @@ struct FleetMonitorSnapshot {
 
   var errorCount: Int {
     modules.count(where: { $0.state.isError })
+  }
+
+  var financialCoverageCount: Int {
+    modules.count(where: { $0.dailyFinancialMetrics != nil })
+  }
+
+  var dailyFinancialTotals: DailyFinancialMetrics? {
+    let available = modules.compactMap(\.dailyFinancialMetrics)
+    guard !available.isEmpty else { return nil }
+    return DailyFinancialMetrics(
+      rechargeAmount: available.reduce(0) { $0 + $1.rechargeAmount },
+      withdrawAmount: available.reduce(0) { $0 + $1.withdrawAmount }
+    )
   }
 }
