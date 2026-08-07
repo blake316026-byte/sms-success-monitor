@@ -57,10 +57,11 @@ enum ScanScript {
     const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
     const language = String(readStoredValue('locale') || 'zh-cn');
     const tkk = urlCache.Tkk || readStoredValue('Tkk');
+    const apiPageSize = 20;
     const endpoint = new URL('/api/sms_record/page', window.location.origin).href;
     const dashboardEndpoint = new URL('/api/dashboard4bix/realtime', window.location.origin).href;
     const sassDashboardEndpoint = new URL(
-      '/api/all_country_realtime_record/with_day', window.location.origin
+      '/api/realtime_record/with_country', window.location.origin
     ).href;
     const readDailyFinancialMetrics = async (headers) => {
       try {
@@ -89,18 +90,21 @@ enum ScanScript {
         const timeout = window.setTimeout(() => controller.abort(), 20000);
         const response = await window.fetch(sassDashboardEndpoint, {
           method: 'POST', credentials: 'include', headers,
-          body: JSON.stringify({ dayOffset: 0 }), signal: controller.signal
+          body: JSON.stringify({ dayOffset: 0, countryId: country }), signal: controller.signal
         });
         window.clearTimeout(timeout);
         if (!response.ok) return null;
         const payload = await response.json();
         if (Number(payload && payload.status) !== 0) return null;
-        const rows = Array.isArray(payload && payload.list) ? payload.list : [];
-        const todayRow = rows.find((row) => row && row.type === 'COUNTRY_DAY');
-        const columns = todayRow && todayRow.columns;
-        const rechargeAmount = Number(columns && columns.rechargeAmount);
-        const withdrawAmount = Number(columns && columns.withdrawAmount);
-        if (!columns || !Number.isFinite(rechargeAmount) || !Number.isFinite(withdrawAmount)) return null;
+        const candidates = [payload, payload && payload.model, payload && payload.data];
+        const model = candidates.find((candidate) => {
+          const rechargeAmount = Number(candidate && candidate.rechargeAmount);
+          const withdrawAmount = Number(candidate && candidate.withdrawAmount);
+          return candidate && Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount);
+        });
+        const rechargeAmount = Number(model && model.rechargeAmount);
+        const withdrawAmount = Number(model && model.withdrawAmount);
+        if (!model || !Number.isFinite(rechargeAmount) || !Number.isFinite(withdrawAmount)) return null;
         return { rechargeAmount, withdrawAmount };
       } catch (_) {
         return null;
@@ -134,7 +138,7 @@ enum ScanScript {
             body: JSON.stringify({
               query: {
                 pageNo,
-                pageSize: requestedLimit,
+                pageSize: apiPageSize,
                 ddCreated: createdRange
               }
             }),

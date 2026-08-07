@@ -113,7 +113,7 @@ const singlePage = await executeScan(200, '');
 check(singlePage.kind === 'ok', 'accepts a successful API response');
 check(singlePage.statuses.length === 200, 'returns exactly 200 statuses from a full page');
 check(singlePage.statuses.filter((status) => status === 'SUCCESS').length === 120, 'preserves raw SUCCESS statuses');
-check(singlePageCalls === 1, 'uses one request when the API accepts pageSize 200');
+check(singlePageQuery.pageSize === 20, 'requests the SMS record API with pageSize 20');
 check(
   singlePage.dailyFinancial.rechargeAmount === 712323.4
     && singlePage.dailyFinancial.withdrawAmount === 409663.9,
@@ -143,7 +143,7 @@ globalThis.window = makeWindow(async (url, options) => {
   if (url.includes('/api/dashboard4bix/realtime')) {
     return { ok: true, status: 200, async json() { return { status: 1012 }; } };
   }
-  if (url.includes('/api/all_country_realtime_record/with_day')) {
+  if (url.includes('/api/realtime_record/with_country')) {
     sassDashboardBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -151,10 +151,8 @@ globalThis.window = makeWindow(async (url, options) => {
       async json() {
         return {
           status: 0,
-          list: [
-            { type: 'COUNTRY_HOUR', columns: { rechargeAmount: 1, withdrawAmount: 1 } },
-            { type: 'COUNTRY_DAY', columns: { rechargeAmount: 120196, withdrawAmount: 85521 } }
-          ]
+          rechargeAmount: 120196,
+          withdrawAmount: 85521
         };
       }
     };
@@ -165,8 +163,9 @@ const sassFinance = await executeScan(200, '');
 check(
   sassFinance.dailyFinancial.rechargeAmount === 120196
     && sassFinance.dailyFinancial.withdrawAmount === 85521
-    && sassDashboardBody.dayOffset === 0,
-  'reads sixsass COUNTRY_DAY recharge and withdrawal amounts'
+    && sassDashboardBody.dayOffset === 0
+    && sassDashboardBody.countryId === 'PH',
+  'reads sixsass with_country recharge and withdrawal amounts'
 );
 
 let cappedPageCalls = 0;

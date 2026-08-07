@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.23**（macOS build 27、Android versionCode 27）。本版补充 sixsass/OK01 的当日财务接口兼容，okbet 现在可在悬浮窗和“全部后台”中显示今日充值、今日提现和今日充提差；财务数据仍与短信监控同轮扫描，接口异常不会中断或误触发短信报警。正式发布页：[SMS Success Monitor v0.3.23](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.23)。
+当前正式版本：**v0.3.24**（macOS build 28、Android versionCode 28）。本版按 OKBET 当前接口修复短信记录分页和今日统计：短信扫描固定请求 `pageSize: 20` 并自动翻页；OKBET 今日统计改用 `/api/realtime_record/with_country`，按 `rechargeAmount - withdrawAmount` 显示今日充提差。正式发布页：[SMS Success Monitor v0.3.24](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.24)。
 
 ## 监控口径
 
