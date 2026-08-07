@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.28**（macOS build 32、Android versionCode 32）。本版移除公开 Release 内置的真实后台链接，macOS 从用户本机私有配置读取后台地址；Release 默认清单仅保留平台 ID、名称和占位域名。正式发布页：[SMS Success Monitor v0.3.28](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.28)。
+当前正式版本：**v0.3.29**（macOS build 33、Android versionCode 33）。本版修复新增后台停在登录页时不触发自动登录的问题，并增强验证码输入框识别；公开 Release 仍不内置真实后台链接。正式发布页：[SMS Success Monitor v0.3.29](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.29)。
 
 ## 监控口径
 

@@ -229,14 +229,14 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.28` |
-| macOS | `0.3.28 (32)` |
-| Windows | `0.3.28` |
-| Android | `versionName 0.3.28` / `versionCode 32` |
+| 正式版本 | `v0.3.29` |
+| macOS | `0.3.29 (33)` |
+| Windows | `0.3.29` |
+| Android | `versionName 0.3.29` / `versionCode 33` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
-| Git 提交 | 发布前通过开发分支 HEAD 与公开仓库 `v0.3.28` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.28` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.28 (32)` |
+| Git 提交 | 发布前通过开发分支 HEAD 与公开仓库 `v0.3.29` 标签现场核验 |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.29` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.29 (33)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 

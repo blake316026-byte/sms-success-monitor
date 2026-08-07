@@ -26,7 +26,10 @@
     '#password',
     'input[type="password"]',
     '#code',
-    'input[name="code"]'
+    'input[name="code"]',
+    'input[placeholder*="验证码"]',
+    'input[placeholder*="code" i]',
+    'input[placeholder*="captcha" i]'
   ].join(', ');
   let manualLoginActive = false;
   let clockSample = null;
@@ -34,7 +37,10 @@
   const isLoginControl = (element) => Boolean(
     element
     && typeof element.matches === 'function'
-    && element.matches(loginControlSelector)
+    && (
+      element.matches(loginControlSelector)
+      || (window.location.pathname === '/login' && element.matches('input, button'))
+    )
   );
 
   const markManualLogin = (event) => {
@@ -79,6 +85,48 @@
   const captchaImage = () => document.querySelector(
     'img[src*="/api/verify_code/image_code"], img[src*="verify_code"]'
   );
+
+  const visibleInputs = () => [...document.querySelectorAll('input')]
+    .filter((element) => {
+      if (!visible(element)) return false;
+      const type = String(element.getAttribute('type') || 'text').toLowerCase();
+      return !['hidden', 'password', 'checkbox', 'radio', 'submit', 'button'].includes(type);
+    });
+
+  const captchaField = () => {
+    const preferred = visibleInputs().find((element) => {
+      const id = String(element.id || '').toLowerCase();
+      const name = String(element.getAttribute('name') || '').toLowerCase();
+      const placeholder = String(element.getAttribute('placeholder') || '').toLowerCase();
+      return id === 'code'
+        || name === 'code'
+        || id.includes('captcha')
+        || name.includes('captcha')
+        || placeholder.includes('验证码')
+        || placeholder.includes('code')
+        || placeholder.includes('captcha');
+    });
+    if (preferred) return preferred;
+
+    const image = captchaImage();
+    if (!image || typeof image.getBoundingClientRect !== 'function') return null;
+    const imageRect = image.getBoundingClientRect();
+    let best = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const input of visibleInputs()) {
+      if (input.matches('#username, input[name="username"]')) continue;
+      if (typeof input.getBoundingClientRect !== 'function') continue;
+      const rect = input.getBoundingClientRect();
+      const horizontalGap = Math.max(0, imageRect.left - rect.right, rect.left - imageRect.right);
+      const verticalGap = Math.max(0, imageRect.top - rect.bottom, rect.top - imageRect.bottom);
+      const distance = horizontalGap + verticalGap;
+      if (distance < bestDistance) {
+        best = input;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  };
 
   const waitForImage = async (image, timeout = 12_000) => {
     const startedAt = Date.now();
@@ -165,13 +213,13 @@
     }
     const usernameField = document.querySelector('#username, input[name="username"]');
     const passwordField = document.querySelector('#password, input[type="password"]');
-    const captchaField = document.querySelector('#code, input[name="code"]');
-    if (!visible(usernameField) || !visible(passwordField) || !visible(captchaField)) {
+    const codeField = captchaField();
+    if (!visible(usernameField) || !visible(passwordField) || !visible(codeField)) {
       return { submitted: false, message: '登录输入框尚未加载完成' };
     }
     setValue(usernameField, username);
     setValue(passwordField, password);
-    setValue(captchaField, captcha);
+    setValue(codeField, captcha);
     await new Promise((resolve) => {
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
       else setTimeout(resolve, 0);
@@ -181,7 +229,7 @@
     }
     if (usernameField.value !== String(username ?? '')
       || passwordField.value !== String(password ?? '')
-      || captchaField.value !== String(captcha ?? '')) {
+      || codeField.value !== String(captcha ?? '')) {
       return { submitted: false, message: '登录输入框未正确接收内容' };
     }
     const button = document.querySelector('button.login-form-button, button[type="submit"]');

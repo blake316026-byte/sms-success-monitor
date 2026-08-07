@@ -35,9 +35,6 @@ final class CustomPageAutoLoginController {
 
   func navigationDidFinish() {
     guard let url = webView?.url else { return }
-    if url.path == "/login" {
-      return
-    }
     if requiresAuthentication(url) {
       attemptIfConfigured(url: url)
     } else {
