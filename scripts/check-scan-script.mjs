@@ -152,6 +152,12 @@ globalThis.window = makeWindow(async (url, options) => {
         return {
           code: 0,
           data: {
+            chart: [
+              {
+                rechargeAmount: 1810,
+                withdrawAmount: 1000
+              }
+            ],
             record: {
               rechargeAmount: 120196,
               withdrawAmount: 85521

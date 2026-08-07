@@ -71,24 +71,44 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     return ['OK', 'SUCCESS'].includes(String(rawStatus).trim().toUpperCase());
   };
   const findAmounts = (root, rechargeKey, withdrawKey) => {
-    const queue = [root];
+    const queue = [{ value: root, path: '' }];
     const seen = new Set();
+    const candidates = [];
     while (queue.length > 0) {
-      const value = queue.shift();
+      const item = queue.shift();
+      const value = item && item.value;
+      const path = item && item.path || '';
       if (!value || typeof value !== 'object' || seen.has(value)) continue;
       seen.add(value);
 
       const rechargeAmount = Number(value[rechargeKey]);
       const withdrawAmount = Number(value[withdrawKey]);
       if (Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)) {
-        return { rechargeAmount, withdrawAmount };
+        const pathText = path.toLowerCase();
+        const dayScore = /(^|[._-])(today|day|country_day|summary|total|record|data|model)([._-]|$)/.test(pathText) ? 1000 : 0;
+        const detailPenalty = /(hour|chart|trend|series|statistic|statistics|items|list|rows|content|\[\d+\])/.test(pathText) ? 500 : 0;
+        candidates.push({
+          rechargeAmount,
+          withdrawAmount,
+          score: dayScore - detailPenalty + rechargeAmount + withdrawAmount
+        });
       }
 
-      for (const child of Array.isArray(value) ? value : Object.values(value)) {
-        if (child && typeof child === 'object') queue.push(child);
+      if (Array.isArray(value)) {
+        value.forEach((child, index) => {
+          if (child && typeof child === 'object') queue.push({ value: child, path: `${path}[${index}]` });
+        });
+      } else {
+        for (const [key, child] of Object.entries(value)) {
+          if (child && typeof child === 'object') queue.push({ value: child, path: path ? `${path}.${key}` : key });
+        }
       }
     }
-    return null;
+    candidates.sort((left, right) => right.score - left.score);
+    return candidates[0] ? {
+      rechargeAmount: candidates[0].rechargeAmount,
+      withdrawAmount: candidates[0].withdrawAmount
+    } : null;
   };
   const readDailyFinancialMetrics = async (headers) => {
     try {

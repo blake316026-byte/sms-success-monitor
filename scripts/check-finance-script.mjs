@@ -75,9 +75,15 @@ globalThis.window = makeWindow(async (url, options) => {
         return {
           code: 0,
           data: {
+            chart: [
+              {
+                rechargeAmount: 1810,
+                withdrawAmount: 1000
+              }
+            ],
             record: {
-              rechargeAmount: '980.50',
-              withdrawAmount: 120.25
+              rechargeAmount: '26129',
+              withdrawAmount: 20329
             }
           }
         };
@@ -94,9 +100,9 @@ check(
   'requests OKBET finance with dayOffset 0 and countryId PH'
 );
 check(
-  okbetFinance.dailyFinancial.rechargeAmount === 980.5
-    && okbetFinance.dailyFinancial.withdrawAmount === 120.25,
-  'reads nested OKBET recharge and withdrawal amounts'
+  okbetFinance.dailyFinancial.rechargeAmount === 26129
+    && okbetFinance.dailyFinancial.withdrawAmount === 20329,
+  'prefers OKBET daily totals over chart detail amounts'
 );
 
 globalThis.window = makeWindow(async () => {
