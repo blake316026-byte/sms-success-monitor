@@ -150,9 +150,13 @@ globalThis.window = makeWindow(async (url, options) => {
       status: 200,
       async json() {
         return {
-          status: 0,
-          rechargeAmount: 120196,
-          withdrawAmount: 85521
+          code: 0,
+          data: {
+            record: {
+              rechargeAmount: 120196,
+              withdrawAmount: 85521
+            }
+          }
         };
       }
     };

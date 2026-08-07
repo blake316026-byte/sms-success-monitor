@@ -10,6 +10,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private static let autoLoginCooldown: TimeInterval = 5 * 60
   private static let maximumScanDuration: TimeInterval = 3 * 60
+  private static let financialRefreshInterval: TimeInterval = 20
 
   private let credentialStore: LocalCredentialStore
   private let automationRuntime: LocalAutomationRuntime
@@ -19,14 +20,17 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var connectionKickoffWorkItem: DispatchWorkItem?
   private var connectionKickoffDeadline: Date?
   private var scanTimeoutWorkItem: DispatchWorkItem?
+  private var financialRefreshWorkItem: DispatchWorkItem?
   private var nextScanAt: Date?
   private var isScanning = false
+  private var isRefreshingFinancial = false
   private var activeScanID: UUID?
   private var scanStartedAt: Date?
   private var sampleLimit: Int
   private var lastMetrics: ScanMetrics?
   private var lastMetricsScannedAt: Date?
   private(set) var latestDailyFinancialMetrics: DailyFinancialMetrics?
+  private var latestEmittedState: AppMonitorState?
   private var needsImmediateScan = true
   private var consecutiveScanFailures = 0
   private var captchaAutoLoginAttempts = 0
@@ -88,6 +92,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     startupWorkItem?.cancel()
     connectionKickoffWorkItem?.cancel()
     scanTimeoutWorkItem?.cancel()
+    financialRefreshWorkItem?.cancel()
     autoLoginOutcomeWorkItem?.cancel()
   }
 
@@ -116,6 +121,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private func beginConnection() {
     emit(.starting("正在连接平台"), nextScanAt: nil)
+    scheduleFinancialRefresh(after: Self.financialRefreshInterval)
     guard webView.url != nil else {
       webView.load(URLRequest(url: configuration.targetURL))
       scheduleConnectionKickoff()
@@ -222,6 +228,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     connectionKickoffDeadline = nil
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
+    financialRefreshWorkItem?.cancel()
+    financialRefreshWorkItem = nil
+    isRefreshingFinancial = false
     nextScanAt = nil
     activeScanID = nil
     scanStartedAt = nil
@@ -387,6 +396,81 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     if let value = value as? NSNumber { return value.doubleValue }
     if let value = value as? String { return Double(value) }
     return nil
+  }
+
+  private func scheduleFinancialRefresh(after delay: TimeInterval) {
+    guard isStarted, mockScenario == nil else { return }
+    financialRefreshWorkItem?.cancel()
+    let safeDelay = max(0, delay)
+    let item = DispatchWorkItem { [weak self] in
+      guard let self, self.isStarted else { return }
+      self.financialRefreshWorkItem = nil
+      self.refreshFinancialMetricsNow()
+    }
+    financialRefreshWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + safeDelay, execute: item)
+  }
+
+  private func refreshFinancialMetricsNow() {
+    guard !isRefreshingFinancial else {
+      scheduleFinancialRefresh(after: Self.financialRefreshInterval)
+      return
+    }
+    guard let currentURL = webView.url, isMonitorOrigin(currentURL),
+      !requiresInteractiveAuthentication(currentURL)
+    else {
+      scheduleFinancialRefresh(after: Self.financialRefreshInterval)
+      return
+    }
+
+    isRefreshingFinancial = true
+    webView.callAsyncJavaScript(
+      FinanceScript.body,
+      arguments: [
+        "fallbackToken": credentialStore.profile(for: configuration.id)?.token ?? "",
+      ],
+      in: nil,
+      in: .page
+    ) { [weak self] result in
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.isRefreshingFinancial = false
+        self.finishFinancialRefresh(result)
+        self.scheduleFinancialRefresh(after: Self.financialRefreshInterval)
+      }
+    }
+  }
+
+  private func finishFinancialRefresh(_ result: Result<Any, Error>) {
+    switch result {
+    case .failure(let error):
+      latestDailyFinancialMetrics = nil
+      NSLog("[SMSMonitor] %@ financial refresh script failed: %@", configuration.id, error.localizedDescription)
+
+    case .success(let rawValue):
+      guard let payload = rawValue as? [String: Any],
+        let kind = payload["kind"] as? String
+      else {
+        latestDailyFinancialMetrics = nil
+        NSLog("[SMSMonitor] %@ financial refresh returned unrecognized data", configuration.id)
+        break
+      }
+
+      if kind == "ok" {
+        latestDailyFinancialMetrics = Self.dailyFinancialMetrics(from: payload)
+        if latestDailyFinancialMetrics == nil {
+          NSLog("[SMSMonitor] %@ financial refresh missing amount fields", configuration.id)
+        }
+      } else {
+        latestDailyFinancialMetrics = nil
+        let message = payload["message"] as? String ?? "今日统计接口读取失败。"
+        NSLog("[SMSMonitor] %@ financial refresh failed: %@", configuration.id, message)
+      }
+    }
+
+    if let latestEmittedState {
+      emit(latestEmittedState, nextScanAt: nextScanAt)
+    }
   }
 
   private func recycleInactivePageIfNeeded(now: Date) {
@@ -833,6 +917,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func emit(_ state: AppMonitorState, nextScanAt: Date?) {
+    latestEmittedState = state
     onStateChange?(state, nextScanAt)
   }
 

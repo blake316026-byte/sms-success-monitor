@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.24**（macOS build 28、Android versionCode 28）。本版按 OKBET 当前接口修复短信记录分页和今日统计：短信扫描固定请求 `pageSize: 20` 并自动翻页；OKBET 今日统计改用 `/api/realtime_record/with_country`，按 `rechargeAmount - withdrawAmount` 显示今日充提差。正式发布页：[SMS Success Monitor v0.3.24](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.24)。
+当前正式版本：**v0.3.25**（macOS build 29、Android versionCode 29）。本版继续修复 OKBET 今日统计：macOS 客户端每 20 秒独立刷新 `/api/realtime_record/with_country`，并兼容金额字段包在 `data` 等嵌套对象里的响应；今日充提差仍按 `rechargeAmount - withdrawAmount` 计算。正式发布页：[SMS Success Monitor v0.3.25](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.25)。
 
 ## 监控口径
 

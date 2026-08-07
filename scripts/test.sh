@@ -8,6 +8,7 @@ ROOT_DIR="${SCRIPT_DIR:h}"
 "${SCRIPT_DIR}/check-macos-login-trigger.sh"
 swift run --package-path "${ROOT_DIR}" SMSMonitorCoreChecks
 node "${ROOT_DIR}/scripts/check-scan-script.mjs"
+node "${ROOT_DIR}/scripts/check-finance-script.mjs"
 node "${ROOT_DIR}/scripts/check-login-page.mjs"
 node "${ROOT_DIR}/clients/shared/test-shared.mjs"
 

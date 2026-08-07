@@ -63,6 +63,34 @@ enum ScanScript {
     const sassDashboardEndpoint = new URL(
       '/api/realtime_record/with_country', window.location.origin
     ).href;
+    const isSuccessfulPayload = (payload) => {
+      const rawStatus = payload && (
+        payload.status ?? payload.code ?? payload.statusCode ?? payload.resultCode
+      );
+      if (rawStatus == null) return true;
+      if (Number(rawStatus) === 0) return true;
+      return ['OK', 'SUCCESS'].includes(String(rawStatus).trim().toUpperCase());
+    };
+    const findAmounts = (root, rechargeKey, withdrawKey) => {
+      const queue = [root];
+      const seen = new Set();
+      while (queue.length > 0) {
+        const value = queue.shift();
+        if (!value || typeof value !== 'object' || seen.has(value)) continue;
+        seen.add(value);
+
+        const rechargeAmount = Number(value[rechargeKey]);
+        const withdrawAmount = Number(value[withdrawKey]);
+        if (Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)) {
+          return { rechargeAmount, withdrawAmount };
+        }
+
+        for (const child of Array.isArray(value) ? value : Object.values(value)) {
+          if (child && typeof child === 'object') queue.push(child);
+        }
+      }
+      return null;
+    };
     const readDailyFinancialMetrics = async (headers) => {
       try {
         const controller = new AbortController();
@@ -74,13 +102,9 @@ enum ScanScript {
         window.clearTimeout(timeout);
         if (response.ok) {
           const payload = await response.json();
-          const model = Number(payload && payload.status) === 0
-            ? payload && payload.model && payload.model.today
-            : null;
-          const rechargeAmount = Number(model && model.rechargeSuccAmount);
-          const withdrawAmount = Number(model && model.withdrawSuccAmount);
-          if (model && Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)) {
-            return { rechargeAmount, withdrawAmount };
+          if (isSuccessfulPayload(payload)) {
+            const metrics = findAmounts(payload, 'rechargeSuccAmount', 'withdrawSuccAmount');
+            if (metrics) return metrics;
           }
         }
       } catch (_) {}
@@ -95,17 +119,8 @@ enum ScanScript {
         window.clearTimeout(timeout);
         if (!response.ok) return null;
         const payload = await response.json();
-        if (Number(payload && payload.status) !== 0) return null;
-        const candidates = [payload, payload && payload.model, payload && payload.data];
-        const model = candidates.find((candidate) => {
-          const rechargeAmount = Number(candidate && candidate.rechargeAmount);
-          const withdrawAmount = Number(candidate && candidate.withdrawAmount);
-          return candidate && Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount);
-        });
-        const rechargeAmount = Number(model && model.rechargeAmount);
-        const withdrawAmount = Number(model && model.withdrawAmount);
-        if (!model || !Number.isFinite(rechargeAmount) || !Number.isFinite(withdrawAmount)) return null;
-        return { rechargeAmount, withdrawAmount };
+        if (!isSuccessfulPayload(payload)) return null;
+        return findAmounts(payload, 'rechargeAmount', 'withdrawAmount');
       } catch (_) {
         return null;
       }
