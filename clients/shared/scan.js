@@ -110,6 +110,21 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
       withdrawAmount: candidates[0].withdrawAmount
     } : null;
   };
+  const readDashboardTodayAmounts = (payload) => {
+    const candidates = [
+      payload && payload.model && payload.model.today,
+      payload && payload.data && payload.data.today,
+      payload && payload.today
+    ];
+    for (const candidate of candidates) {
+      const rechargeAmount = Number(candidate && candidate.rechargeSuccAmount);
+      const withdrawAmount = Number(candidate && candidate.withdrawSuccAmount);
+      if (candidate && Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)) {
+        return { rechargeAmount, withdrawAmount };
+      }
+    }
+    return null;
+  };
   const readDailyFinancialMetrics = async (headers) => {
     try {
       const controller = new AbortController();
@@ -122,7 +137,7 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
       if (response.ok) {
         const payload = await response.json();
         if (isSuccessfulPayload(payload)) {
-          const metrics = findAmounts(payload, 'rechargeSuccAmount', 'withdrawSuccAmount');
+          const metrics = readDashboardTodayAmounts(payload);
           if (metrics) return metrics;
         }
       }

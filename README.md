@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.26**（macOS build 30、Android versionCode 30）。本版修复 OKBET 今日统计金额选择：客户端不再取图表/小时明细里的第一组金额，改为优先选择今日汇总金额；今日充提差仍按 `rechargeAmount - withdrawAmount` 计算。正式发布页：[SMS Success Monitor v0.3.26](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.26)。
+当前正式版本：**v0.3.27**（macOS build 31、Android versionCode 31）。本版修复非 OKBET 平台今日统计金额选择：`/api/dashboard4bix/realtime` 严格读取 `model.today.rechargeSuccAmount` 和 `model.today.withdrawSuccAmount`，不再从图表或明细里挑金额；OKBET 继续使用今日汇总候选。正式发布页：[SMS Success Monitor v0.3.27](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.27)。
 
 ## 监控口径
 

@@ -61,6 +61,36 @@ function check(condition, message) {
   console.log(`PASS: ${message}`);
 }
 
+globalThis.window = makeWindow(async (url) => {
+  if (url.includes('/api/dashboard4bix/realtime')) {
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          status: 0,
+          model: {
+            chart: [{ rechargeSuccAmount: 706751.7, withdrawSuccAmount: 511000 }],
+            today: {
+              rechargeSuccAmount: 344524,
+              withdrawSuccAmount: 211297
+            }
+          }
+        };
+      }
+    };
+  }
+  throw new Error(`unexpected URL ${url}`);
+});
+
+const dashboardFinance = await executeFinance('');
+check(dashboardFinance.kind === 'ok', 'accepts dashboard4bix finance response');
+check(
+  dashboardFinance.dailyFinancial.rechargeAmount === 344524
+    && dashboardFinance.dailyFinancial.withdrawAmount === 211297,
+  'reads dashboard model.today instead of chart detail amounts'
+);
+
 let okbetBody;
 globalThis.window = makeWindow(async (url, options) => {
   if (url.includes('/api/dashboard4bix/realtime')) {

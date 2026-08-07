@@ -78,7 +78,10 @@ function dashboardResponse(rechargeAmount = 712323.4, withdrawAmount = 409663.9)
     async json() {
       return {
         status: 0,
-        model: { today: { rechargeSuccAmount: rechargeAmount, withdrawSuccAmount: withdrawAmount } }
+        model: {
+          chart: [{ rechargeSuccAmount: 706751.7, withdrawSuccAmount: 511000 }],
+          today: { rechargeSuccAmount: rechargeAmount, withdrawSuccAmount: withdrawAmount }
+        }
       };
     }
   };
