@@ -9,15 +9,20 @@ from pathlib import Path
 import sys
 
 source = Path(sys.argv[1]).read_text()
-expected = '''if url.path == "/login" {
-      guard !autoLoginInProgress else { return }
-      needsImmediateScan = true
-      scheduleConnectionKickoff()'''
+expected_direct = '''if let profile = credentialStore.profile(for: configuration.id), profile.canAutoLogin {
+        handleAuthenticationRequired(
+          "平台登录页已打开。",
+          progressMessage: "正在自动登录"
+        )'''
+expected_fallback = '''} else {
+        needsImmediateScan = true
+        scheduleConnectionKickoff()
+      }'''
 
-if expected not in source:
+if expected_direct not in source or expected_fallback not in source:
     raise SystemExit(
-        "FAIL: returning to /login must re-arm the immediate scan before auto login"
+        "FAIL: /login must start configured auto login and keep token fallback for unconfigured profiles"
     )
 
-print("PASS: returning to /login re-arms token validation and automatic login")
+print("PASS: /login starts configured auto login and keeps token fallback")
 PY

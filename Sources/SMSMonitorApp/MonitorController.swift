@@ -851,7 +851,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var monitoringPageURL: URL {
     guard var components = URLComponents(url: configuration.targetURL, resolvingAgainstBaseURL: false)
     else { return configuration.targetURL }
-    components.path = "/sms-record-list"
+    if ["/", "/login", "/ga-auth", "/unlock-ip"].contains(components.path) {
+      components.path = "/sms-record-list"
+    }
     return components.url ?? configuration.targetURL
   }
 
@@ -990,8 +992,15 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard isMonitorOrigin(url) else { return }
     if url.path == "/login" {
       guard !autoLoginInProgress else { return }
-      needsImmediateScan = true
-      scheduleConnectionKickoff()
+      if let profile = credentialStore.profile(for: configuration.id), profile.canAutoLogin {
+        handleAuthenticationRequired(
+          "平台登录页已打开。",
+          progressMessage: "正在自动登录"
+        )
+      } else {
+        needsImmediateScan = true
+        scheduleConnectionKickoff()
+      }
       return
     }
     let completedAuthentication =
