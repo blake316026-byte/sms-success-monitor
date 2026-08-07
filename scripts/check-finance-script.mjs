@@ -45,7 +45,7 @@ function makeWindow(fetchImplementation, authenticated = true) {
     sessionStorage: new MemoryStorage(),
     location: {
       hash: '#CC=eyJDT1VOVFJZIjoiUEgifQ==',
-      origin: 'https://zwpeq3.sixsass.com'
+      origin: 'https://ok01.local.sms-monitor.invalid'
     },
     atob,
     setTimeout,

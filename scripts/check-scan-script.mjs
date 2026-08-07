@@ -49,7 +49,7 @@ function makeWindow(fetchImplementation, authenticated = true) {
     sessionStorage: new MemoryStorage(),
     location: {
       hash: '#CC=eyJDT1VOVFJZIjoiUEgifQ==',
-      origin: 'https://qgxucm.npgaaa.com'
+      origin: 'https://bills02-otp.local.sms-monitor.invalid'
     },
     atob,
     setTimeout,
@@ -178,7 +178,7 @@ check(
     && sassFinance.dailyFinancial.withdrawAmount === 85521
     && sassDashboardBody.dayOffset === 0
     && sassDashboardBody.countryId === 'PH',
-  'reads sixsass with_country recharge and withdrawal amounts'
+  'reads OK01 with_country recharge and withdrawal amounts'
 );
 
 let cappedPageCalls = 0;

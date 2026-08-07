@@ -4,15 +4,22 @@ import SMSMonitorCore
 import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
-  private let configurations = MonitorConfiguration.allModules
+  private let configurations: [MonitorConfiguration]
   private var widgetController: StatusWidgetController!
   private var monitorController: MonitorController!
   private var alertNotifier: AlertNotifier!
   private var localAutomationCheckRuntime: LocalAutomationRuntime?
   private var localFindCheckWebView: WKWebView?
-  private var currentSnapshot = FleetMonitorSnapshot.initial(
-    configurations: MonitorConfiguration.allModules
-  )
+  private var currentSnapshot: FleetMonitorSnapshot
+
+  override init() {
+    let configurations = LocalModuleConfigurationStore.loadConfigurations(
+      fallback: MonitorConfiguration.allModules
+    )
+    self.configurations = configurations
+    self.currentSnapshot = FleetMonitorSnapshot.initial(configurations: configurations)
+    super.init()
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     if ProcessInfo.processInfo.environment["SMS_MONITOR_LOCAL_AUTOMATION_CHECK"] == "1" {

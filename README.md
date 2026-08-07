@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.27**（macOS build 31、Android versionCode 31）。本版修复非 OKBET 平台今日统计金额选择：`/api/dashboard4bix/realtime` 严格读取 `model.today.rechargeSuccAmount` 和 `model.today.withdrawSuccAmount`，不再从图表或明细里挑金额；OKBET 继续使用今日汇总候选。正式发布页：[SMS Success Monitor v0.3.27](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.27)。
+当前正式版本：**v0.3.28**（macOS build 32、Android versionCode 32）。本版移除公开 Release 内置的真实后台链接，macOS 从用户本机私有配置读取后台地址；Release 默认清单仅保留平台 ID、名称和占位域名。正式发布页：[SMS Success Monitor v0.3.28](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.28)。
 
 ## 监控口径
 
@@ -30,6 +30,7 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 - 聚合：只比较已经登录并取得统计值的后台；多个报警同时存在时展示成功率最低者，无报警时展示当前最低健康值
 - 登录态：未登录后台只在总览中标记，不会覆盖已有监控值；仅当全部后台都没有有效值时才显示“需登录”
 - 本地安全：macOS 使用应用专用 AES-GCM 加密文件、Windows 使用 DPAPI `safeStorage`、Android 使用 Keystore AES-GCM；账号、密码、Google 密钥和 Token 不上传数据库
+- 后台链接：公开 Release 不内置真实后台链接；macOS 从 `~/Library/Application Support/SMS Success Monitor/modules-v1.json` 读取本机私有后台清单
 - 隐私：客户端不保存手机号、短信验证码、Message ID 或短信正文；图片验证码只在设备本地识别
 
 ## 三端功能

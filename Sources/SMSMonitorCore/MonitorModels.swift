@@ -137,7 +137,8 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "bills02-otp",
     displayName: "BIllS02-OTP",
     targetURL: URL(
-      string: "https://qgxucm.npgaaa.com/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string:
+        "https://bills02-otp.local.sms-monitor.invalid/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     sampleLimit: 200,
     scanInterval: 60,
@@ -148,7 +149,8 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "bills",
     displayName: "BIllS",
     targetURL: URL(
-      string: "https://jns7yi.npgaaa.com/app-user-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string:
+        "https://bills.local.sms-monitor.invalid/app-user-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000001")!,
     sampleLimit: 200,
@@ -160,7 +162,8 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "bills3",
     displayName: "BIllS3",
     targetURL: URL(
-      string: "https://6dxogz.npgaaa.com/recharge-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string:
+        "https://bills3.local.sms-monitor.invalid/recharge-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000003")!,
     sampleLimit: 200,
@@ -173,7 +176,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     displayName: "BIllS4",
     targetURL: URL(
       string:
-        "https://sfk75o.npgaaa.com/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+        "https://bills4.local.sms-monitor.invalid/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000004")!,
     sampleLimit: 200,
@@ -185,7 +188,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "cg01",
     displayName: "cg01",
     targetURL: URL(
-      string: "https://jklm65.npgaaa.com/ck-dashboard#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string: "https://cg01.local.sms-monitor.invalid/ck-dashboard#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000101")!,
     sampleLimit: 200,
@@ -197,7 +200,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "cg02",
     displayName: "cg02",
     targetURL: URL(
-      string: "https://afzp7r.npgaaa.com/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string: "https://cg02.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000102")!,
     sampleLimit: 200,
@@ -210,7 +213,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     displayName: "cg03（nine01）",
     targetURL: URL(
       string:
-        "https://ijdzzs.npgaaa.com/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+        "https://cg03-nine01.local.sms-monitor.invalid/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000103")!,
     sampleLimit: 200,
@@ -222,7 +225,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "cg04",
     displayName: "cg04",
     targetURL: URL(
-      string: "https://cd0byx.npgaaa.com/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string: "https://cg04.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000104")!,
     sampleLimit: 200,
@@ -234,7 +237,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "bs01",
     displayName: "bs01",
     targetURL: URL(
-      string: "https://93zwv9.npgaaa.com/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string: "https://bs01.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000201")!,
     sampleLimit: 200,
@@ -246,7 +249,7 @@ public struct MonitorConfiguration: Equatable, Sendable {
     id: "ok01",
     displayName: "OK01",
     targetURL: URL(
-      string: "https://zwpeq3.sixsass.com/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+      string: "https://ok01.local.sms-monitor.invalid/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
     )!,
     profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000301")!,
     sampleLimit: 200,
