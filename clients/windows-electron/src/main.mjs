@@ -503,7 +503,10 @@ function createRemotePage(page) {
   view.webContents.on('did-finish-load', () => {
     view.webContents.setZoomFactor(workbenchZoomFactor);
     handlePageFinished(page.id);
+    setTimeout(() => refreshFinancialModule(page.id), 900);
   });
+  view.webContents.on('did-start-loading', () => broadcastSnapshot());
+  view.webContents.on('did-stop-loading', () => broadcastSnapshot());
   view.webContents.on('did-navigate', () => broadcastSnapshot());
   view.webContents.on('did-navigate-in-page', () => broadcastSnapshot());
   view.webContents.on('zoom-changed', (_event, direction) => {
@@ -1431,7 +1434,27 @@ function registerIPC() {
     const history = pages.get(selectedPageId)?.view.webContents.navigationHistory;
     if (history?.canGoForward()) history.goForward();
   });
-  ipcMain.handle('page:reload', () => pages.get(selectedPageId)?.view.webContents.reload());
+  ipcMain.handle('page:reload', async () => {
+    const page = pages.get(selectedPageId);
+    const state = moduleStates.get(selectedPageId);
+    if (!page || !state || page.view.webContents.isDestroyed()) {
+      return { ok: false, message: '当前平台页面不可用' };
+    }
+    state.smsPermissionBlocked = false;
+    state.financePermissionBlocked = false;
+    state.needsImmediateScan = true;
+    state.message = '正在刷新平台页面';
+    state.nextScanAt = null;
+    broadcastSnapshot(page.id);
+    try {
+      page.view.webContents.reloadIgnoringCache();
+      return { ok: true };
+    } catch (error) {
+      state.message = `刷新失败：${error.message}`;
+      broadcastSnapshot(page.id);
+      return { ok: false, message: state.message };
+    }
+  });
   ipcMain.handle('page:find', (_event, query, options) => {
     const page = pages.get(selectedPageId);
     const text = String(query || '');

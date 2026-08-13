@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.40**（macOS build 44、Android versionCode 44）。本版为 Windows 增加今日充值、提现、充提差和占比展示，并增加短信与财务接口的独立权限熔断：账号明确无权限后停止对应接口的定时请求，手动扫描或重新登录可重试。
+当前正式版本：**v0.3.41**（macOS build 45、Android versionCode 45）。本版修复 Windows 刷新按钮：强制无缓存重载当前平台，显示刷新状态，解除当前平台权限熔断并在页面完成后立即重查短信和财务。

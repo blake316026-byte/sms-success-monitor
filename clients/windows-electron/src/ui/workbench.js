@@ -231,7 +231,17 @@ document.querySelector('#address-form').addEventListener('submit', (event) => {
 });
 backButton.addEventListener('click', () => window.smsApi.goBack());
 forwardButton.addEventListener('click', () => window.smsApi.goForward());
-reloadButton.addEventListener('click', () => window.smsApi.reload());
+reloadButton.addEventListener('click', async () => {
+  if (reloadButton.disabled) return;
+  reloadButton.disabled = true;
+  reloadButton.classList.add('loading');
+  const result = await window.smsApi.reload();
+  if (!result?.ok) {
+    reloadButton.disabled = false;
+    reloadButton.classList.remove('loading');
+    window.alert(result?.message || '刷新失败，请重试');
+  }
+});
 sampleLimitInput.addEventListener('change', async () => {
   const result = await window.smsApi.setSampleLimit(sampleLimitInput.value);
   if (!result.ok) {

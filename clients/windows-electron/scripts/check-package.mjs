@@ -72,6 +72,10 @@ assert.match(mainSource, /financialRefreshIntervalMs = 20_000/, 'Windows refresh
 assert.match(mainSource, /financePermissionBlocked/, 'Windows stops finance requests after a permission denial');
 assert.match(mainSource, /smsPermissionBlocked/, 'Windows stops SMS requests after a permission denial');
 assert.match(mainSource, /dailyFinancialTotals/, 'Windows aggregates available financial totals');
+assert.match(mainSource, /reloadIgnoringCache/, 'manual refresh reloads the selected platform without cache');
+assert.match(mainSource, /setTimeout\(\(\) => refreshFinancialModule\(page\.id\), 900\)/, 'page refresh triggers an immediate finance refresh');
+assert.match(mainSource, /state\.smsPermissionBlocked = false/, 'manual refresh clears the SMS permission circuit breaker');
+assert.match(workbenchScript, /const result = await window\.smsApi\.reload\(\)/, 'refresh button awaits the main-process result');
 assert.match(workbenchSource.replace('workbench', 'workbench'), /id="rename-dialog"/, 'workbench keeps rename support');
 assert.doesNotMatch(
   workbenchScript,
