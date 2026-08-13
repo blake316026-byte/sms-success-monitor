@@ -47,7 +47,7 @@ public enum AutoLoginAttemptPolicy {
 public enum MonitorRefreshPolicy {
   public static let minimumNextScanDelay: TimeInterval = 1
   public static let minimumStaleAge: TimeInterval = 4 * 60
-  public static let maximumStartupSpread: TimeInterval = 30
+  public static let maximumStartupSpread: TimeInterval = 180
 
   public static func nextScanDelay(
     scanInterval: TimeInterval,

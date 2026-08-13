@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.43**（macOS build 47、Android versionCode 47）。本版修复 macOS 登录状态误判：后台页面落到登录页时先验证本机保存的 Token，Token 仍可读取短信接口时继续监控，不再错误触发图片验证码自动登录。
+当前正式版本：**v0.3.44**（macOS build 48、Android versionCode 48）。本版降低 macOS 启动负载：16 个后台首次连接由 30 秒扩展为 180 秒错峰启动，避免同时加载完整报表页面造成 CPU 峰值；正常短信和财务刷新频率不变。
