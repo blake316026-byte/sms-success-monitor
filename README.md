@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.42**（macOS build 46、Android versionCode 46）。本版修复 Windows 刷新成功路径：按钮每次刷新后都会恢复可用，主进程等待真实页面加载事件，未触发时强制重新加载当前网址。
+当前正式版本：**v0.3.43**（macOS build 47、Android versionCode 47）。本版修复 macOS 登录状态误判：后台页面落到登录页时先验证本机保存的 Token，Token 仍可读取短信接口时继续监控，不再错误触发图片验证码自动登录。

@@ -320,10 +320,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
             emit(.starting("\(recoveryDetail)，正在打开短信记录页"), nextScanAt: nil)
             webView.load(URLRequest(url: monitoringPageURL))
           } else {
-            handleAuthenticationRequired(
-              "Token 可读取接口，但网页会话仍停留在登录页。",
-              progressMessage: "网页会话无法恢复，正在自动登录"
-            )
+            scheduleNextScanAfterCurrentRun()
+            if metrics.shouldAlert(threshold: configuration.alertThreshold) {
+              emit(.alert(metrics, scannedAt), nextScanAt: nextScanAt)
+            } else {
+              emit(.healthy(metrics, scannedAt), nextScanAt: nextScanAt)
+            }
           }
           return
         }
@@ -1006,15 +1008,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard isMonitorOrigin(url) else { return }
     if url.path == "/login" {
       guard !autoLoginInProgress else { return }
-      if let profile = credentialStore.profile(for: configuration.id), profile.canAutoLogin {
-        handleAuthenticationRequired(
-          "平台登录页已打开。",
-          progressMessage: "正在自动登录"
-        )
-      } else {
-        needsImmediateScan = true
-        scheduleConnectionKickoff()
-      }
+      needsImmediateScan = true
+      scheduleConnectionKickoff()
       return
     }
     let completedAuthentication =
