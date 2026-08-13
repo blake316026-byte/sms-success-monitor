@@ -62,7 +62,7 @@
 18. macOS 工作台只有当前选中的标签保留完整视觉运行。未选中标签必须暂停 CSS 动画、过渡、媒体和原生跑马灯，但不得全局覆盖网页 `setTimeout`、`setInterval`、`requestAnimationFrame` 或停止短信扫描状态机，避免破坏登录、Token 恢复和实时报警。
 19. macOS 后台监控继续由 `ScanScript` 直接调用只读短信记录接口，不依赖短信列表页面持续布局或动画。全部后台启动和“扫描全部”必须在最多 30 秒窗口内均匀错峰；每台后台启动后仍维持 60 秒周期，错峰不能以停止、挂起或合并报警扫描为代价。
 20. 长期未选中的 WebKit 页面只允许在刚完成成功扫描、监控数据仍新鲜时自动重载回收。回收前保留最新状态，页面完成恢复后立即重扫；当前可见页面、数据已过期页面和认证中的页面不得为了性能治理主动回收。WebContent 进程被系统终止时仍由原恢复路径重载并继续监控。
-21. 当日财务数据优先读取当前后台 origin 下的只读 `POST /api/dashboard4bix/realtime`，严格使用 `model.today.rechargeSuccAmount` 和 `model.today.withdrawSuccAmount` 等今日汇总位置，不得从图表、小时趋势或明细候选中挑金额。OK01 使用只读 `POST /api/realtime_record/with_country`、请求体 `{dayOffset: 0, countryId: "PH"}`，从响应中的 `rechargeAmount` 和 `withdrawAmount` 读取，允许金额字段包在 `data`、`model` 等嵌套对象中。若响应里同时存在图表/小时明细和今日汇总金额，必须优先选择今日汇总金额，不得取第一条明细。今日充提差统一由客户端按“充值金额 - 提现金额”计算。
+21. 当日财务接口必须按平台严格分流，不允许失败后跨平台探测接口。普通 NPG 后台只读取当前 origin 下的只读 `POST /api/dashboard4bix/realtime`，严格使用 `model.today.rechargeSuccAmount` 和 `model.today.withdrawSuccAmount`。OK01 只使用只读 `POST /api/realtime_record/with_country`、请求体 `{dayOffset: 0, countryId: "PH"}`，并发送 `COUNTRY: PH` 与 `SYSTIMEZONE: Asia/Manila`；金额必须取响应 `list` 中 `countryId=PH`、`type=COUNTRY_DAY`、`timeType=DAY` 且无 `appId` 的汇总行，从 `columns.rechargeAmount` 和 `columns.withdrawAmount` 读取菲律宾比索，不得读取小时行或 APP 行。OK01 绝不请求 `/api/dashboard4bix/realtime`。财务数据由独立的 20 秒任务刷新，短信扫描不得附带财务请求。今日充提差统一由客户端按“充值金额 - 提现金额”计算。
 22. macOS 客户端的当日财务数据必须独立于短信成功率扫描，每 20 秒刷新一次。财务刷新失败只清空该平台金额并记录日志，不得改变短信成功率状态、报警状态或重启登录流程。
 23. 悬浮窗汇总只累加本轮拿到有效财务数据的平台；“全部后台”逐行显示原值，并在最近扫描列之后依次显示今日充值、今日提现、今日充提差。
 24. 财务接口无权限、超时、字段缺失或返回异常时，只把该平台三个金额显示为 `--`，不得把财务失败升级成短信成功率报警，也不得继续展示上一轮旧金额。短信扫描本身仍按既有规则继续运行和报警。
@@ -229,14 +229,14 @@ dist/android/SMS-Success-Monitor-Android.apk
 
 | 项目 | 已核验值 |
 | --- | --- |
-| 正式版本 | `v0.3.30` |
-| macOS | `0.3.30 (34)` |
-| Windows | `0.3.30` |
-| Android | `versionName 0.3.30` / `versionCode 34` |
+| 正式版本 | `v0.3.36` |
+| macOS | `0.3.36 (40)` |
+| Windows | `0.3.36` |
+| Android | `versionName 0.3.36` / `versionCode 40` |
 | 开发仓库分支 | `feat/standalone-sms-success-monitor` |
 | Git 提交 | 发布前通过开发分支 HEAD 与公开仓库 `v0.3.30` 标签现场核验 |
-| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.30` |
-| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.30 (34)` |
+| GitHub Release | `https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.36` |
+| 本机 macOS 安装 | `/Applications/SMS Success Monitor.app`，目标 `0.3.36 (40)` |
 
 Release 附件 SHA-256 以同一 Release 的 `SHA256SUMS.txt` 与 GitHub 附件 digest 现场核验，不在本文复制易漂移值。
 

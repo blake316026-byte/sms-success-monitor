@@ -16,7 +16,7 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.30**（macOS build 34、Android versionCode 34）。本版修复固定后台停在 `/login` 时绕过自动登录、只等待扫描重试的问题；已配置账号的后台会直接进入验证码识别和登录流程。公开 Release 仍不内置真实后台链接。正式发布页：[SMS Success Monitor v0.3.30](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.30)。
+当前正式版本：**v0.3.36**（macOS build 40、Android versionCode 40）。本版将短信扫描与财务刷新彻底分离：短信只读取有界分页样本，财务按平台调用汇总接口；OKBET 精确读取菲律宾 `COUNTRY_DAY` 汇总金额，并兼容本机新增的 `okbet` 自定义标签。公开 Release 仍不内置真实后台链接、登录凭据或 Token。正式发布页：[SMS Success Monitor v0.3.36](https://github.com/blake316026-byte/sms-success-monitor/releases/tag/v0.3.36)。
 
 ## 监控口径
 

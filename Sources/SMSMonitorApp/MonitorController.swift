@@ -305,7 +305,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
         consecutiveScanFailures = 0
         lastMetrics = metrics
-        latestDailyFinancialMetrics = Self.dailyFinancialMetrics(from: payload)
         let scannedAt = Date()
         lastMetricsScannedAt = scannedAt
 
@@ -428,6 +427,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       FinanceScript.body,
       arguments: [
         "fallbackToken": credentialStore.profile(for: configuration.id)?.token ?? "",
+        "platformID": configuration.id,
+        "platformName": configuration.displayName,
       ],
       in: nil,
       in: .page

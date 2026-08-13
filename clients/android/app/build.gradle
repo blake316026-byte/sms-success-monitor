@@ -10,8 +10,8 @@ android {
         applicationId 'com.local.smssuccessmonitor'
         minSdk 26
         targetSdk 35
-        versionCode 34
-        versionName '0.3.30'
+        versionCode 40
+        versionName '0.3.36'
     }
 
     sourceSets {

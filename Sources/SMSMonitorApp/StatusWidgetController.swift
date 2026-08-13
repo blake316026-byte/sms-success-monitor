@@ -262,6 +262,17 @@ private enum FinancialAmountFormatter {
   }
 }
 
+private enum FinancialRatioFormatter {
+  static func string(_ value: Double?) -> String {
+    guard let value, value.isFinite else { return "--" }
+    let percentage = value * 100
+    if percentage.rounded() == percentage {
+      return String(format: "%.0f%%", percentage)
+    }
+    return String(format: "%.1f%%", percentage)
+  }
+}
+
 private final class StatusWidgetView: NSView {
   var onPrimaryAction: (() -> Void)?
   var onContextMenu: ((NSEvent) -> Void)?
@@ -516,6 +527,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
   func update(snapshot: FleetMonitorSnapshot, muteDescription: String?) {
     self.snapshot = snapshot
     updateSubtitle()
+    let visibleOrigin = tableView.enclosingScrollView?.contentView.bounds.origin
     if selectedModuleID == nil
       || !snapshot.modules.contains(where: { $0.configuration.id == selectedModuleID })
     {
@@ -537,9 +549,25 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       })
     {
       tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-      tableView.scrollRowToVisible(row)
     }
+    restoreTableScrollPosition(visibleOrigin)
     updateSelectedModule()
+  }
+
+  private func restoreTableScrollPosition(_ origin: NSPoint?) {
+    guard
+      let origin,
+      let scrollView = tableView.enclosingScrollView
+    else { return }
+    let clipView = scrollView.contentView
+    let maxX = max(0, tableView.bounds.width - clipView.bounds.width)
+    let maxY = max(0, tableView.bounds.height - clipView.bounds.height)
+    let restoredOrigin = NSPoint(
+      x: min(max(origin.x, 0), maxX),
+      y: min(max(origin.y, 0), maxY)
+    )
+    clipView.setBoundsOrigin(restoredOrigin)
+    scrollView.reflectScrolledClipView(clipView)
   }
 
   private func updateSubtitle() {
@@ -649,6 +677,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       (.recharge, "今日充值金额", 116),
       (.withdraw, "今日提现金额", 116),
       (.difference, "今日充提差", 116),
+      (.differenceRatio, "今日充提差占比", 126),
     ]
     for (identifier, title, width) in columns {
       let column = NSTableColumn(identifier: identifier)
@@ -796,6 +825,8 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       return module.dailyFinancialMetrics.map {
         FinancialAmountFormatter.string($0.differenceAmount)
       } ?? "--"
+    case .differenceRatio:
+      return FinancialRatioFormatter.string(module.dailyFinancialMetrics?.differenceRatio)
     default:
       return ""
     }
@@ -861,6 +892,7 @@ extension NSUserInterfaceItemIdentifier {
   fileprivate static let recharge = NSUserInterfaceItemIdentifier("recharge")
   fileprivate static let withdraw = NSUserInterfaceItemIdentifier("withdraw")
   fileprivate static let difference = NSUserInterfaceItemIdentifier("difference")
+  fileprivate static let differenceRatio = NSUserInterfaceItemIdentifier("differenceRatio")
 }
 
 final class StatusWidgetController: NSWindowController {

@@ -39,45 +39,20 @@ enum FinanceScript {
       return ['OK', 'SUCCESS'].includes(String(rawStatus).trim().toUpperCase());
     };
 
-    const findAmounts = (root, rechargeKey, withdrawKey) => {
-      const queue = [{ value: root, path: '' }];
-      const seen = new Set();
-      const candidates = [];
-      while (queue.length > 0) {
-        const item = queue.shift();
-        const value = item && item.value;
-        const path = item && item.path || '';
-        if (!value || typeof value !== 'object' || seen.has(value)) continue;
-        seen.add(value);
-
-        const rechargeAmount = Number(value[rechargeKey]);
-        const withdrawAmount = Number(value[withdrawKey]);
-        if (Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)) {
-          const pathText = path.toLowerCase();
-          const dayScore = /(^|[._-])(today|day|country_day|summary|total|record|data|model)([._-]|$)/.test(pathText) ? 1000 : 0;
-          const detailPenalty = /(hour|chart|trend|series|statistic|statistics|items|list|rows|content|\[\d+\])/.test(pathText) ? 500 : 0;
-          candidates.push({
-            rechargeAmount,
-            withdrawAmount,
-            score: dayScore - detailPenalty + rechargeAmount + withdrawAmount
-          });
-        }
-
-        if (Array.isArray(value)) {
-          value.forEach((child, index) => {
-            if (child && typeof child === 'object') queue.push({ value: child, path: `${path}[${index}]` });
-          });
-        } else {
-          for (const [key, child] of Object.entries(value)) {
-            if (child && typeof child === 'object') queue.push({ value: child, path: path ? `${path}.${key}` : key });
-          }
-        }
-      }
-      candidates.sort((left, right) => right.score - left.score);
-      return candidates[0] ? {
-        rechargeAmount: candidates[0].rechargeAmount,
-        withdrawAmount: candidates[0].withdrawAmount
-      } : null;
+    const readOKBETTodayAmounts = (payload, countryId) => {
+      const rows = Array.isArray(payload && payload.list) ? payload.list : [];
+      const row = rows.find((candidate) => (
+        candidate
+        && String(candidate.countryId || '').toUpperCase() === String(countryId).toUpperCase()
+        && candidate.type === 'COUNTRY_DAY'
+        && candidate.timeType === 'DAY'
+        && !candidate.appId
+      ));
+      const rechargeAmount = Number(row && row.columns && row.columns.rechargeAmount);
+      const withdrawAmount = Number(row && row.columns && row.columns.withdrawAmount);
+      return Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)
+        ? { rechargeAmount, withdrawAmount }
+        : null;
     };
     const readDashboardTodayAmounts = (payload) => {
       const candidates = [
@@ -98,8 +73,10 @@ enum FinanceScript {
     const user = readStoredValue('lt-user');
     const pageToken = String(user && typeof user === 'object' ? user.token || '' : '').trim();
     const savedToken = String(fallbackToken || '').trim();
-    const token = pageToken || savedToken;
-    if (!token) {
+    const tokenCandidates = [];
+    if (pageToken) tokenCandidates.push(pageToken);
+    if (savedToken && savedToken !== pageToken) tokenCandidates.push(savedToken);
+    if (tokenCandidates.length === 0) {
       return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
     }
 
@@ -107,61 +84,64 @@ enum FinanceScript {
     const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
     const language = String(readStoredValue('locale') || 'zh-cn');
     const tkk = urlCache.Tkk || readStoredValue('Tkk');
-    const headers = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json; charset=utf-8',
-      Auth: token,
-      COUNTRY: country,
-      LANGUAGE: language
-    };
-    if (tkk) headers.Tkk = String(tkk);
-
     const dashboardEndpoint = new URL('/api/dashboard4bix/realtime', window.location.origin).href;
     const okbetEndpoint = new URL('/api/realtime_record/with_country', window.location.origin).href;
+    const normalizedPlatformID = String(platformID || '').trim().toLowerCase();
+    const normalizedPlatformName = String(platformName || '').trim().toLowerCase();
+    const isOKBET = normalizedPlatformID === 'ok01'
+      || normalizedPlatformName === 'okbet'
+      || normalizedPlatformName === 'ok01';
+    const isAuthenticationFailure = (response, payload) => {
+      if (response.status === 401 || response.status === 403) return true;
+      const status = Number(payload && (payload.status ?? payload.code));
+      return [1010, 1011, 1012, 1013, 1014].includes(status);
+    };
 
-    try {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 20000);
-      const response = await window.fetch(dashboardEndpoint, {
-        method: 'POST', credentials: 'include', headers, body: JSON.stringify({}),
-        signal: controller.signal
-      });
-      window.clearTimeout(timeout);
-      if (response.ok) {
-        const payload = await response.json();
-        if (isSuccessfulPayload(payload)) {
-          const metrics = readDashboardTodayAmounts(payload);
-          if (metrics) return { kind: 'ok', dailyFinancial: metrics };
-        }
-      }
-    } catch (_) {}
-
-    try {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 20000);
-      const response = await window.fetch(okbetEndpoint, {
-        method: 'POST', credentials: 'include', headers,
-        body: JSON.stringify({ dayOffset: 0, countryId: country }),
-        signal: controller.signal
-      });
-      window.clearTimeout(timeout);
-      if (!response.ok) {
-        return { kind: 'error', message: `今日统计接口返回 HTTP ${response.status}。` };
-      }
-      const payload = await response.json();
-      if (!isSuccessfulPayload(payload)) {
-        return { kind: 'error', message: payload.message || '今日统计接口状态异常。' };
-      }
-      const metrics = findAmounts(payload, 'rechargeAmount', 'withdrawAmount');
-      if (!metrics) {
-        return { kind: 'error', message: '今日统计接口缺少充值或提现金额。' };
-      }
-      return { kind: 'ok', dailyFinancial: metrics };
-    } catch (error) {
-      return {
-        kind: 'error',
-        message: error && error.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。'
+    for (const token of tokenCandidates) {
+      const headers = {
+        Accept: 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
+        Auth: token,
+        COUNTRY: country,
+        LANGUAGE: language
       };
+      if (tkk) headers.Tkk = String(tkk);
+      if (isOKBET && country.toUpperCase() === 'PH') headers.SYSTIMEZONE = 'Asia/Manila';
+
+      try {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 20000);
+        const response = await window.fetch(isOKBET ? okbetEndpoint : dashboardEndpoint, {
+          method: 'POST', credentials: 'include', headers,
+          body: JSON.stringify(isOKBET ? { dayOffset: 0, countryId: country } : {}),
+          signal: controller.signal
+        });
+        window.clearTimeout(timeout);
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch (_) {}
+        if (isAuthenticationFailure(response, payload)) continue;
+        if (!response.ok) {
+          return { kind: 'error', message: `今日统计接口返回 HTTP ${response.status}。` };
+        }
+        if (!isSuccessfulPayload(payload)) {
+          return { kind: 'error', message: payload && payload.message || '今日统计接口状态异常。' };
+        }
+        const metrics = isOKBET
+          ? readOKBETTodayAmounts(payload, country)
+          : readDashboardTodayAmounts(payload);
+        if (!metrics) {
+          return { kind: 'error', message: '今日统计接口缺少充值或提现金额。' };
+        }
+        return { kind: 'ok', dailyFinancial: metrics };
+      } catch (error) {
+        return {
+          kind: 'error',
+          message: error && error.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。'
+        };
+      }
     }
+    return { kind: 'auth', message: '今日统计登录态已失效，请重新登录。' };
     """#
 }

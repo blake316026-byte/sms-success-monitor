@@ -12,6 +12,12 @@ public struct DailyFinancialMetrics: Equatable, Sendable {
   public var differenceAmount: Double {
     rechargeAmount - withdrawAmount
   }
+
+  public var differenceRatio: Double? {
+    guard rechargeAmount.isFinite, rechargeAmount != 0 else { return nil }
+    let ratio = differenceAmount / rechargeAmount
+    return ratio.isFinite ? ratio : nil
+  }
 }
 
 public enum ScanRecoveryPolicy {

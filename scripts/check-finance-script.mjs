@@ -12,7 +12,7 @@ if (!match) {
 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const executeFinance = new AsyncFunction('fallbackToken', match[1]);
+const executeFinance = new AsyncFunction('fallbackToken', 'platformID', 'platformName', match[1]);
 
 class MemoryStorage {
   constructor(values = {}) {
@@ -29,6 +29,10 @@ class MemoryStorage {
 
   getItem(key) {
     return this.values.get(key) ?? null;
+  }
+
+  setItem(key, value) {
+    this.values.set(key, String(value));
   }
 }
 
@@ -83,7 +87,7 @@ globalThis.window = makeWindow(async (url) => {
   throw new Error(`unexpected URL ${url}`);
 });
 
-const dashboardFinance = await executeFinance('');
+const dashboardFinance = await executeFinance('', 'bills', 'BIllS01');
 check(dashboardFinance.kind === 'ok', 'accepts dashboard4bix finance response');
 check(
   dashboardFinance.dailyFinancial.rechargeAmount === 344524
@@ -92,30 +96,35 @@ check(
 );
 
 let okbetBody;
+let okbetRequestCount = 0;
 globalThis.window = makeWindow(async (url, options) => {
   if (url.includes('/api/dashboard4bix/realtime')) {
-    return { ok: true, status: 200, async json() { return { status: 1012 }; } };
+    throw new Error('OKBET must not request dashboard4bix');
   }
   if (url.includes('/api/realtime_record/with_country')) {
+    okbetRequestCount += 1;
     okbetBody = JSON.parse(options.body);
+    check(options.headers.SYSTIMEZONE === 'Asia/Manila', 'sends the Philippines system timezone');
     return {
       ok: true,
       status: 200,
       async json() {
         return {
-          code: 0,
-          data: {
-            chart: [
-              {
-                rechargeAmount: 1810,
-                withdrawAmount: 1000
-              }
-            ],
-            record: {
-              rechargeAmount: '26129',
-              withdrawAmount: 20329
+          status: 0,
+          list: [
+            {
+              id: 'PH-hour', countryId: 'PH', type: 'COUNTRY_HOUR', timeType: 'HOUR',
+              columns: { rechargeAmount: 2183, withdrawAmount: 2835 }
+            },
+            {
+              id: 'PH-app-day', countryId: 'PH', type: 'COUNTRY_APP_DAY', timeType: 'DAY', appId: 'APP1',
+              columns: { rechargeAmount: 12000, withdrawAmount: 8000 }
+            },
+            {
+              id: 'PH-day', countryId: 'PH', type: 'COUNTRY_DAY', timeType: 'DAY',
+              columns: { rechargeAmount: 76956, withdrawAmount: 56691 }
             }
-          }
+          ]
         };
       }
     };
@@ -123,22 +132,53 @@ globalThis.window = makeWindow(async (url, options) => {
   throw new Error(`unexpected URL ${url}`);
 });
 
-const okbetFinance = await executeFinance('');
+const okbetFinance = await executeFinance('', 'custom-a4e42517', 'okbet');
 check(okbetFinance.kind === 'ok', 'accepts OKBET with_country finance response');
 check(
-  okbetBody.dayOffset === 0 && okbetBody.countryId === 'PH',
-  'requests OKBET finance with dayOffset 0 and countryId PH'
+  okbetRequestCount === 1 && okbetBody.dayOffset === 0 && okbetBody.countryId === 'PH',
+  'requests only the OKBET finance endpoint with dayOffset 0 and countryId PH'
 );
 check(
-  okbetFinance.dailyFinancial.rechargeAmount === 26129
-    && okbetFinance.dailyFinancial.withdrawAmount === 20329,
-  'prefers OKBET daily totals over chart detail amounts'
+  okbetFinance.dailyFinancial.rechargeAmount === 76956
+    && okbetFinance.dailyFinancial.withdrawAmount === 56691,
+  'reads the Philippines COUNTRY_DAY total instead of hourly or app rows'
+);
+
+let staleTokenCalls = 0;
+globalThis.window = makeWindow(async (url, options) => {
+  if (!url.includes('/api/realtime_record/with_country')) {
+    throw new Error(`unexpected URL ${url}`);
+  }
+  staleTokenCalls += 1;
+  if (options.headers.Auth === 'test-token') {
+    return { ok: true, status: 200, async json() { return { status: 1012, message: 'expired' }; } };
+  }
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        status: 0,
+        list: [{
+          countryId: 'PH', type: 'COUNTRY_DAY', timeType: 'DAY',
+          columns: { rechargeAmount: 5000, withdrawAmount: 1200 }
+        }]
+      };
+    }
+  };
+});
+const fallbackFinance = await executeFinance('saved-token', 'custom-a4e42517', 'okbet');
+check(
+  fallbackFinance.kind === 'ok'
+    && fallbackFinance.dailyFinancial.rechargeAmount === 5000
+    && staleTokenCalls === 2,
+  'retries the same OKBET finance endpoint with the saved token when the page token expires'
 );
 
 globalThis.window = makeWindow(async () => {
   throw new Error('fetch should not run without authentication');
 }, false);
-const unauthenticated = await executeFinance('');
+const unauthenticated = await executeFinance('', 'custom-a4e42517', 'okbet');
 check(unauthenticated.kind === 'auth', 'returns auth when no token is present');
 
 console.log('All finance-script checks passed');

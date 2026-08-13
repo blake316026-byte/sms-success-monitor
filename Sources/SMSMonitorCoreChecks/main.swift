@@ -239,6 +239,14 @@ check(
   abs(dailyFinancial.differenceAmount - 302_659.5) < 0.001,
   "calculates today deposit-withdraw difference from dashboard amounts"
 )
+check(
+  abs((dailyFinancial.differenceRatio ?? 0) - (302_659.5 / 712_323.4)) < 0.000_001,
+  "calculates today deposit-withdraw difference ratio from recharge amount"
+)
+check(
+  DailyFinancialMetrics(rechargeAmount: 0, withdrawAmount: 100).differenceRatio == nil,
+  "does not calculate a deposit-withdraw ratio when recharge amount is zero"
+)
 
 if failures > 0 {
   print("\(failures) core check(s) failed")

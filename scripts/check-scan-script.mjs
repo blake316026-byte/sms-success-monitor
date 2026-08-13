@@ -117,68 +117,12 @@ check(singlePage.kind === 'ok', 'accepts a successful API response');
 check(singlePage.statuses.length === 200, 'returns exactly 200 statuses from a full page');
 check(singlePage.statuses.filter((status) => status === 'SUCCESS').length === 120, 'preserves raw SUCCESS statuses');
 check(singlePageQuery.pageSize === 20, 'requests the SMS record API with pageSize 20');
-check(
-  singlePage.dailyFinancial.rechargeAmount === 712323.4
-    && singlePage.dailyFinancial.withdrawAmount === 409663.9,
-  'reads today recharge and withdrawal amounts in the same scan'
-);
+check(singlePageCalls === 1, 'does not issue a finance request during an SMS scan');
 check(
   Number.isFinite(singlePageQuery.ddCreated.start)
     && Number.isFinite(singlePageQuery.ddCreated.finish)
     && singlePageQuery.ddCreated.finish > singlePageQuery.ddCreated.start,
   'queries the same recent creation-date window used by the SMS record page'
-);
-
-globalThis.window = makeWindow(async (url) => {
-  if (url.includes('/api/dashboard4bix/realtime')) throw new Error('finance unavailable');
-  return responseFor([{ id: 'finance-independent', status: 'SUCCESS' }], 1);
-});
-const financeUnavailable = await executeScan(200, '');
-check(
-  financeUnavailable.kind === 'ok'
-    && financeUnavailable.statuses.length === 1
-    && financeUnavailable.dailyFinancial === null,
-  'keeps SMS monitoring healthy when the finance dashboard is unavailable'
-);
-
-let sassDashboardBody;
-globalThis.window = makeWindow(async (url, options) => {
-  if (url.includes('/api/dashboard4bix/realtime')) {
-    return { ok: true, status: 200, async json() { return { status: 1012 }; } };
-  }
-  if (url.includes('/api/realtime_record/with_country')) {
-    sassDashboardBody = JSON.parse(options.body);
-    return {
-      ok: true,
-      status: 200,
-      async json() {
-        return {
-          code: 0,
-          data: {
-            chart: [
-              {
-                rechargeAmount: 1810,
-                withdrawAmount: 1000
-              }
-            ],
-            record: {
-              rechargeAmount: 120196,
-              withdrawAmount: 85521
-            }
-          }
-        };
-      }
-    };
-  }
-  return responseFor([{ id: 'sass-finance', status: 'SUCCESS' }], 1);
-});
-const sassFinance = await executeScan(200, '');
-check(
-  sassFinance.dailyFinancial.rechargeAmount === 120196
-    && sassFinance.dailyFinancial.withdrawAmount === 85521
-    && sassDashboardBody.dayOffset === 0
-    && sassDashboardBody.countryId === 'PH',
-  'reads OK01 with_country recharge and withdrawal amounts'
 );
 
 let cappedPageCalls = 0;

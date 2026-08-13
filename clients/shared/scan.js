@@ -58,10 +58,6 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
   const tkk = urlCache.Tkk || readStoredValue('Tkk');
   const apiPageSize = 20;
   const endpoint = new URL('/api/sms_record/page', window.location.origin).href;
-  const dashboardEndpoint = new URL('/api/dashboard4bix/realtime', window.location.origin).href;
-  const sassDashboardEndpoint = new URL(
-    '/api/realtime_record/with_country', window.location.origin
-  ).href;
   const isSuccessfulPayload = (payload) => {
     const rawStatus = payload && (
       payload.status ?? payload.code ?? payload.statusCode ?? payload.resultCode
@@ -124,40 +120,6 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
       }
     }
     return null;
-  };
-  const readDailyFinancialMetrics = async (headers) => {
-    try {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 20000);
-      const response = await window.fetch(dashboardEndpoint, {
-        method: 'POST', credentials: 'include', headers, body: JSON.stringify({}),
-        signal: controller.signal
-      });
-      window.clearTimeout(timeout);
-      if (response.ok) {
-        const payload = await response.json();
-        if (isSuccessfulPayload(payload)) {
-          const metrics = readDashboardTodayAmounts(payload);
-          if (metrics) return metrics;
-        }
-      }
-    } catch (_) {}
-
-    try {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 20000);
-      const response = await window.fetch(sassDashboardEndpoint, {
-        method: 'POST', credentials: 'include', headers,
-        body: JSON.stringify({ dayOffset: 0, countryId: country }), signal: controller.signal
-      });
-      window.clearTimeout(timeout);
-      if (!response.ok) return null;
-      const payload = await response.json();
-      if (!isSuccessfulPayload(payload)) return null;
-      return findAmounts(payload, 'rechargeAmount', 'withdrawAmount');
-    } catch (_) {
-      return null;
-    }
   };
   let lastAuthenticationMessage = '客户端登录态已失效，请重新登录。';
   for (const candidate of tokenCandidates) {
@@ -251,13 +213,11 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     }
 
     if (candidateRejected) continue;
-    const dailyFinancial = await readDailyFinancialMetrics(headers);
     return {
       kind: 'ok',
       statuses: collected,
       reportedTotal: reportedTotal == null ? collected.length : reportedTotal,
-      tokenSource: candidate.source,
-      dailyFinancial
+      tokenSource: candidate.source
     };
   }
 
