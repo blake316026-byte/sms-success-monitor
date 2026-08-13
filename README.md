@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.39**（macOS build 43、Android versionCode 43）。本版修复 Windows 编辑按钮：所有平台均可通过客户端内置弹窗修改本机显示名称，名称在重启后保持，并继续包含新增输入和删除修复。
+当前正式版本：**v0.3.40**（macOS build 44、Android versionCode 44）。本版为 Windows 增加今日充值、提现、充提差和占比展示，并增加短信与财务接口的独立权限熔断：账号明确无权限后停止对应接口的定时请求，手动扫描或重新登录可重试。

@@ -68,6 +68,11 @@ assert.match(
   'custom pages are included in the monitoring overview'
 );
 assert.match(mainSource, /function scanAllPages/, 'all-page scanning includes custom pages');
+assert.match(mainSource, /financialRefreshIntervalMs = 20_000/, 'Windows refreshes finance independently every 20 seconds');
+assert.match(mainSource, /financePermissionBlocked/, 'Windows stops finance requests after a permission denial');
+assert.match(mainSource, /smsPermissionBlocked/, 'Windows stops SMS requests after a permission denial');
+assert.match(mainSource, /dailyFinancialTotals/, 'Windows aggregates available financial totals');
+assert.match(workbenchSource.replace('workbench', 'workbench'), /id="rename-dialog"/, 'workbench keeps rename support');
 assert.doesNotMatch(
   workbenchScript,
   /credentialsButton\.disabled = !selected\.monitored/,

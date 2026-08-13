@@ -24,6 +24,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var nextScanAt: Date?
   private var isScanning = false
   private var isRefreshingFinancial = false
+  private var smsPermissionBlocked = false
+  private var financePermissionBlocked = false
   private var activeScanID: UUID?
   private var scanStartedAt: Date?
   private var sampleLimit: Int
@@ -145,7 +147,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       emitMockState()
       return
     }
-    guard !isScanning else { return }
+    guard !isScanning, !smsPermissionBlocked else { return }
     guard let currentURL = webView.url else {
       emit(.starting("平台页面尚未加载"), nextScanAt: nextScanAt)
       scheduleNextScan(after: 5)
@@ -338,6 +340,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         let message = payload["message"] as? String ?? "平台登录已失效。"
         handleAuthenticationRequired(message)
 
+      case "permission":
+        smsPermissionBlocked = true
+        let message = payload["message"] as? String ?? "当前账号无短信记录查看权限，已停止短信查询。"
+        emit(.error(message, Date()), nextScanAt: nil)
+
       default:
         let message = payload["message"] as? String ?? "短信记录接口扫描失败。"
         handleScanFailure(message)
@@ -411,6 +418,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func refreshFinancialMetricsNow() {
+    guard !financePermissionBlocked else { return }
     guard !isRefreshingFinancial else {
       scheduleFinancialRefresh(after: Self.financialRefreshInterval)
       return
@@ -462,6 +470,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         if latestDailyFinancialMetrics == nil {
           NSLog("[SMSMonitor] %@ financial refresh missing amount fields", configuration.id)
         }
+      } else if kind == "permission" {
+        latestDailyFinancialMetrics = nil
+        financePermissionBlocked = true
+        let message = payload["message"] as? String ?? "当前账号无财务数据查看权限，已停止财务查询。"
+        NSLog("[SMSMonitor] %@ financial refresh permission blocked: %@", configuration.id, message)
       } else {
         latestDailyFinancialMetrics = nil
         let message = payload["message"] as? String ?? "今日统计接口读取失败。"

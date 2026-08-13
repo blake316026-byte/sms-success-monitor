@@ -92,7 +92,7 @@ enum FinanceScript {
       || normalizedPlatformName === 'okbet'
       || normalizedPlatformName === 'ok01';
     const isAuthenticationFailure = (response, payload) => {
-      if (response.status === 401 || response.status === 403) return true;
+      if (response.status === 401) return true;
       const status = Number(payload && (payload.status ?? payload.code));
       return [1010, 1011, 1012, 1013, 1014].includes(status);
     };
@@ -121,11 +121,18 @@ enum FinanceScript {
         try {
           payload = await response.json();
         } catch (_) {}
+        if (response.status === 403) {
+          return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
+        }
         if (isAuthenticationFailure(response, payload)) continue;
         if (!response.ok) {
           return { kind: 'error', message: `今日统计接口返回 HTTP ${response.status}。` };
         }
         if (!isSuccessfulPayload(payload)) {
+          const message = String(payload && payload.message || '');
+          if (/无权限|没有权限|forbidden|permission|unauthorized/i.test(message)) {
+            return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
+          }
           return { kind: 'error', message: payload && payload.message || '今日统计接口状态异常。' };
         }
         const metrics = isOKBET

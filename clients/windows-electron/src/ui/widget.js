@@ -17,6 +17,11 @@ const value = document.querySelector('#widget-value');
 const sample = document.querySelector('#widget-sample');
 const footer = document.querySelector('#widget-footer-text');
 const footerIcon = document.querySelector('#widget-footer-icon');
+const finance = document.querySelector('#open-detail-finance');
+
+function amount(value) {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(value) || 0);
+}
 
 function render(snapshot) {
   const focus = snapshot.modules.find((module) => module.id === snapshot.summary.focusId);
@@ -28,6 +33,10 @@ function render(snapshot) {
   sample.textContent = status.sample;
   footer.textContent = status.footer;
   footerIcon.dataset.lucide = status.icon;
+  const totals = snapshot.summary.dailyFinancialTotals;
+  finance.textContent = totals
+    ? `${snapshot.summary.financialCount}/${snapshot.modules.length} 平台 · 充 ${amount(totals.rechargeAmount)} · 提 ${amount(totals.withdrawAmount)} · 差 ${amount(totals.rechargeAmount - totals.withdrawAmount)}`
+    : '财务等待首次刷新';
   root.dataset.status = status.kind;
   root.style.setProperty('--status-color', status.color);
   root.style.setProperty('--progress', `${Math.max(0, Math.min(1, focus.metrics?.successRate || 0)) * 360}deg`);
@@ -74,7 +83,7 @@ function presentation(focus, summary, sampleLimit) {
   };
 }
 
-for (const id of ['open-detail', 'open-detail-footer']) {
+for (const id of ['open-detail', 'open-detail-footer', 'open-detail-finance']) {
   document.querySelector(`#${id}`).addEventListener('click', () => window.smsApi.showDetail());
 }
 document.addEventListener('contextmenu', (event) => {

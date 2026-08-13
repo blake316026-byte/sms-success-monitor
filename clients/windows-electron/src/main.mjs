@@ -44,12 +44,14 @@ const sharedRoot = app.isPackaged
   : path.resolve(clientRoot, '../shared');
 const modules = JSON.parse(fs.readFileSync(path.join(sharedRoot, 'modules.json'), 'utf8'));
 const scanSource = fs.readFileSync(path.join(sharedRoot, 'scan.js'), 'utf8');
+const financeSource = fs.readFileSync(path.join(sharedRoot, 'finance.js'), 'utf8');
 const loginAutomationSource = fs.readFileSync(
   path.join(sharedRoot, 'auto-login/login-page.js'),
   'utf8'
 );
 const shellHeight = 112;
 const autoLoginCooldownMs = 5 * 60_000;
+const financialRefreshIntervalMs = 20_000;
 
 const pages = new Map();
 const moduleStates = new Map();
@@ -72,6 +74,7 @@ let localAutomationWindow;
 let localAutomationReady;
 let localAutomationError;
 let scanTimer;
+let financeTimer;
 let workbenchModalOpen = false;
 
 for (const module of modules) {
@@ -81,6 +84,11 @@ for (const module of modules) {
     status: 'starting',
     message: '等待连接',
     metrics: null,
+    dailyFinancial: null,
+    financeMessage: '等待首次财务查询',
+    financeRefreshing: false,
+    smsPermissionBlocked: false,
+    financePermissionBlocked: false,
     scannedAt: null,
     nextScanAt: null,
     scanning: false,
@@ -452,6 +460,11 @@ function ensurePageState(page) {
     status: 'starting',
     message: '等待连接',
     metrics: null,
+    dailyFinancial: null,
+    financeMessage: '等待首次财务查询',
+    financeRefreshing: false,
+    smsPermissionBlocked: false,
+    financePermissionBlocked: false,
     scannedAt: null,
     nextScanAt: null,
     scanning: false,
@@ -681,6 +694,8 @@ async function completeAutoLogin(id, token = '') {
   const page = pages.get(id);
   if (!state || !page) return;
   resetAutoLoginState(state);
+  state.smsPermissionBlocked = false;
+  state.financePermissionBlocked = false;
   if (token) await updateStoredToken(id, token);
   await persistCurrentToken(id);
   state.needsImmediateScan = true;
@@ -926,7 +941,7 @@ function handleScanFailure(id, message) {
 async function scanModule(id) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page || state.scanning) return;
+  if (!state || !page || state.scanning || state.smsPermissionBlocked) return;
   const currentURL = page.view.webContents.getURL();
   if (!currentURL) return;
   if (requiresInteractiveAuthentication(currentURL)) {
@@ -965,7 +980,14 @@ async function scanModule(id) {
     if (!result || typeof result !== 'object') {
       throw new Error('扫描结果无法识别');
     }
-    if (result.kind === 'auth') {
+    if (result.kind === 'permission') {
+      Object.assign(state, {
+        status: 'error', message: result.message, metrics: null,
+        smsPermissionBlocked: true, scannedAt: Date.now(), nextScanAt: null
+      });
+      broadcastSnapshot(id);
+      return;
+    } else if (result.kind === 'auth') {
       handleAuthenticationRequired(id, result.message || '平台登录已失效。');
       return;
     } else if (result.kind === 'ok') {
@@ -995,6 +1017,43 @@ async function scanModule(id) {
   }
   broadcastSnapshot(id);
   maybeNotify(id);
+}
+
+async function refreshFinancialModule(id) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page || state.financeRefreshing || state.financePermissionBlocked) return;
+  const currentURL = page.view.webContents.getURL();
+  if (!currentURL || !isConfiguredOrigin(state, currentURL) || requiresInteractiveAuthentication(currentURL)) return;
+  state.financeRefreshing = true;
+  try {
+    const fallbackToken = String(profileFor(id)?.token || '');
+    const result = await page.view.webContents.executeJavaScript(
+      `(async () => { ${financeSource}\nreturn await globalThis.smsMonitorFinance(${JSON.stringify(id)}, ${JSON.stringify(state.name)}, ${JSON.stringify(fallbackToken)}); })()`,
+      true
+    );
+    if (result?.kind === 'ok') {
+      state.dailyFinancial = result.dailyFinancial;
+      state.financeMessage = '';
+    } else {
+      state.dailyFinancial = null;
+      state.financeMessage = result?.message || '今日财务查询失败';
+      if (result?.kind === 'permission') state.financePermissionBlocked = true;
+    }
+  } catch (error) {
+    state.dailyFinancial = null;
+    state.financeMessage = `今日财务查询失败：${error.message}`;
+  } finally {
+    state.financeRefreshing = false;
+    broadcastSnapshot(id);
+  }
+}
+
+function refreshAllFinancialModules({ resetPermission = false } = {}) {
+  for (const state of moduleStates.values()) {
+    if (resetPermission) state.financePermissionBlocked = false;
+    refreshFinancialModule(state.id);
+  }
 }
 
 function scanAllPages() {
@@ -1031,9 +1090,18 @@ function buildSnapshot() {
       nextScanAt: state.nextScanAt,
       alertThreshold: ALERT_THRESHOLD,
       percentageText: percentageText(state.metrics)
+      ,dailyFinancial: state.dailyFinancial
+      ,financeMessage: state.financeMessage
+      ,smsPermissionBlocked: state.smsPermissionBlocked
+      ,financePermissionBlocked: state.financePermissionBlocked
     };
   });
   const summary = summarize(moduleList);
+  const financialRows = moduleList.map((module) => module.dailyFinancial).filter(Boolean);
+  const dailyFinancialTotals = financialRows.length > 0 ? {
+    rechargeAmount: financialRows.reduce((total, item) => total + Number(item.rechargeAmount || 0), 0),
+    withdrawAmount: financialRows.reduce((total, item) => total + Number(item.withdrawAmount || 0), 0)
+  } : null;
   return {
     modules: moduleList,
     pages: [...pages.values()].map(pageSnapshot),
@@ -1049,6 +1117,8 @@ function buildSnapshot() {
       healthyCount: summary.healthyCount,
       authenticationCount: summary.authenticationCount,
       errorCount: summary.errorCount,
+      financialCount: financialRows.length,
+      dailyFinancialTotals,
       focusId: summary.focus?.id || null
     }
   };
@@ -1461,8 +1531,13 @@ function registerIPC() {
     return { ok: true };
   });
   ipcMain.handle('monitor:scan', (_event, id) => {
-    if (id) scanModule(id);
-    else scanAllPages();
+    const targets = id ? [moduleStates.get(id)].filter(Boolean) : [...moduleStates.values()];
+    for (const state of targets) {
+      state.smsPermissionBlocked = false;
+      state.financePermissionBlocked = false;
+      scanModule(state.id);
+      refreshFinancialModule(state.id);
+    }
   });
   ipcMain.handle('settings:set-sample-limit', async (_event, value) => {
     const parsed = Math.round(Number(value));
@@ -1600,11 +1675,14 @@ app.whenReady().then(async () => {
   scanTimer = setInterval(() => {
     scanAllPages();
   }, SCAN_INTERVAL_MS);
+  refreshAllFinancialModules();
+  financeTimer = setInterval(() => refreshAllFinancialModules(), financialRefreshIntervalMs);
 });
 
 app.on('before-quit', () => {
   quitting = true;
   if (scanTimer) clearInterval(scanTimer);
+  if (financeTimer) clearInterval(financeTimer);
   for (const state of moduleStates.values()) {
     if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
   }
