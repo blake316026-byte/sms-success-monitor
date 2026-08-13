@@ -152,6 +152,7 @@ function render() {
     closeButton.disabled = false;
     renameButton.disabled = false;
     credentialsButton.disabled = false;
+    reloadButton.disabled = false;
     reloadButton.classList.toggle('loading', selected.loading);
   } else {
     address.value = '';
@@ -236,11 +237,9 @@ reloadButton.addEventListener('click', async () => {
   reloadButton.disabled = true;
   reloadButton.classList.add('loading');
   const result = await window.smsApi.reload();
-  if (!result?.ok) {
-    reloadButton.disabled = false;
-    reloadButton.classList.remove('loading');
-    window.alert(result?.message || '刷新失败，请重试');
-  }
+  reloadButton.disabled = false;
+  reloadButton.classList.remove('loading');
+  if (!result?.ok) window.alert(result?.message || '刷新失败，请重试');
 });
 sampleLimitInput.addEventListener('change', async () => {
   const result = await window.smsApi.setSampleLimit(sampleLimitInput.value);

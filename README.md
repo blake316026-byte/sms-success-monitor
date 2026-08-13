@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.41**（macOS build 45、Android versionCode 45）。本版修复 Windows 刷新按钮：强制无缓存重载当前平台，显示刷新状态，解除当前平台权限熔断并在页面完成后立即重查短信和财务。
+当前正式版本：**v0.3.42**（macOS build 46、Android versionCode 46）。本版修复 Windows 刷新成功路径：按钮每次刷新后都会恢复可用，主进程等待真实页面加载事件，未触发时强制重新加载当前网址。

@@ -1396,6 +1396,31 @@ function restartAutoLoginFor(id) {
   }
 }
 
+function waitForPageReload(webContents, timeoutMs = 15_000) {
+  return new Promise((resolve) => {
+    let started = false;
+    let fallbackTimer;
+    const finish = (result) => {
+      clearTimeout(fallbackTimer);
+      webContents.removeListener('did-start-loading', onStart);
+      webContents.removeListener('did-stop-loading', onStop);
+      webContents.removeListener('did-fail-load', onFail);
+      resolve(result);
+    };
+    const onStart = () => { started = true; };
+    const onStop = () => finish(started
+      ? { ok: true }
+      : { ok: false, message: '页面没有开始刷新' });
+    const onFail = (_event, code, description, _url, isMainFrame) => {
+      if (isMainFrame && code !== -3) finish({ ok: false, message: `刷新失败：${description}` });
+    };
+    webContents.on('did-start-loading', onStart);
+    webContents.on('did-stop-loading', onStop);
+    webContents.on('did-fail-load', onFail);
+    fallbackTimer = setTimeout(() => finish({ ok: false, message: '页面刷新超过 15 秒' }), timeoutMs);
+  });
+}
+
 function registerIPC() {
   ipcMain.handle('snapshot:get', () => buildSnapshot());
   ipcMain.handle('page:select', (_event, id) => {
@@ -1447,8 +1472,17 @@ function registerIPC() {
     state.nextScanAt = null;
     broadcastSnapshot(page.id);
     try {
+      const reloadResult = waitForPageReload(page.view.webContents);
       page.view.webContents.reloadIgnoringCache();
-      return { ok: true };
+      let result = await reloadResult;
+      if (!result.ok && page.view.webContents.getURL()) {
+        const fallbackResult = waitForPageReload(page.view.webContents);
+        await page.view.webContents.loadURL(page.view.webContents.getURL());
+        result = await fallbackResult;
+      }
+      if (!result.ok) state.message = result.message;
+      broadcastSnapshot(page.id);
+      return result;
     } catch (error) {
       state.message = `刷新失败：${error.message}`;
       broadcastSnapshot(page.id);
