@@ -36,7 +36,13 @@ assert.match(mainSource, /workbench:modal/, 'main process controls the workbench
 assert.match(mainSource, /function setWorkbenchModalOpen/, 'modal layer detaches the remote page view');
 assert.match(preloadSource, /setWorkbenchModalOpen/, 'preload exposes workbench modal visibility');
 assert.match(workbenchScript, /showWorkbenchDialog/, 'renderer hides the remote page before opening dialogs');
+assert.match(workbenchScript, /openingDialog/, 'renderer prevents overlapping dialog open requests');
 assert.match(workbenchScript, /addEventListener\('close', restoreWorkbenchView\)/, 'renderer restores the page after dialogs close');
+assert.doesNotMatch(workbenchScript, /closeButton\.disabled = selected\.monitored/, 'built-in platforms can be removed locally');
+assert.match(workbenchScript, /window\.confirm/, 'platform removal requires confirmation');
+assert.match(mainSource, /disabledModuleIds\.add\(id\)/, 'removed built-in platforms persist locally');
+assert.match(mainSource, /disabledModuleIds\.delete\(id\)/, 'failed persistence restores the built-in platform state');
+assert.match(mainSource, /if \(!disabledModuleIds\.has\(module\.id\)\)/, 'removed built-in platforms stay removed after restart');
 assert.match(workbenchSource, /id="zoom-out"/, 'workbench renders zoom out');
 assert.match(workbenchSource, /id="zoom-reset"/, 'workbench renders the zoom percentage');
 assert.match(workbenchSource, /id="zoom-in"/, 'workbench renders zoom in');

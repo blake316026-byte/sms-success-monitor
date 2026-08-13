@@ -52,6 +52,7 @@ let snapshot;
 let lastSelectedPageId;
 let findTimer;
 let lastFindQuery = '';
+let openingDialog = false;
 
 const tabs = document.querySelector('#tabs');
 const address = document.querySelector('#address');
@@ -88,12 +89,17 @@ const removeCredentialsButton = document.querySelector('#remove-credentials');
 let credentialModuleId;
 
 async function showWorkbenchDialog(target) {
+  if (openingDialog || target.open) return false;
+  openingDialog = true;
   await window.smsApi.setWorkbenchModalOpen(true);
   try {
     target.showModal();
+    return true;
   } catch (error) {
     await window.smsApi.setWorkbenchModalOpen(false);
     throw error;
+  } finally {
+    openingDialog = false;
   }
 }
 
@@ -137,10 +143,16 @@ function render() {
     address.value = selected.currentURL;
     backButton.disabled = !selected.canGoBack;
     forwardButton.disabled = !selected.canGoForward;
-    closeButton.disabled = selected.monitored;
+    closeButton.disabled = false;
     renameButton.disabled = selected.monitored;
     credentialsButton.disabled = false;
     reloadButton.classList.toggle('loading', selected.loading);
+  } else {
+    address.value = '';
+    for (const button of [backButton, forwardButton, reloadButton, closeButton, renameButton, credentialsButton]) {
+      button.disabled = true;
+    }
+    reloadButton.classList.remove('loading');
   }
   if (document.activeElement !== sampleLimitInput) {
     sampleLimitInput.value = String(snapshot.sampleLimit);
@@ -261,13 +273,23 @@ credentialsButton.addEventListener('click', async () => {
   credentialUsername.focus();
 });
 document.querySelector('#add').addEventListener('click', async () => {
+  if (openingDialog || dialog.open || credentialsDialog.open) return;
   dialogError.textContent = '';
   pageName.value = `后台账号 ${snapshot.pages.filter((page) => !page.monitored).length + 1}`;
   pageURL.value = snapshot.pages[0]?.url || '';
-  await showWorkbenchDialog(dialog);
-  pageName.select();
+  if (await showWorkbenchDialog(dialog)) pageName.select();
 });
-closeButton.addEventListener('click', () => window.smsApi.closePage(snapshot.selectedPageId));
+closeButton.addEventListener('click', async () => {
+  const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
+  if (!selected || openingDialog || dialog.open || credentialsDialog.open) return;
+  if (!window.confirm(`确定从本机客户端删除“${selected.name}”吗？`)) return;
+  closeButton.disabled = true;
+  const result = await window.smsApi.closePage(selected.id);
+  if (!result?.ok) {
+    closeButton.disabled = false;
+    window.alert(result?.message || '删除失败，请重试');
+  }
+});
 renameButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
   if (!selected || selected.monitored) return;

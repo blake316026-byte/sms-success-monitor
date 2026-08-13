@@ -65,6 +65,7 @@ let settingsPath;
 let credentialProfiles = {};
 let sampleLimit = SAMPLE_LIMIT;
 let workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
+let disabledModuleIds = new Set();
 let localAutomationServer;
 let localAutomationWindow;
 let localAutomationReady;
@@ -330,9 +331,15 @@ async function loadMonitorSettings() {
     const stored = JSON.parse(await fsPromises.readFile(settingsPath, 'utf8'));
     sampleLimit = normalizeSampleLimit(stored?.sampleLimit);
     workbenchZoomFactor = normalizeWorkbenchZoomFactor(stored?.workbenchZoomFactor);
+    disabledModuleIds = new Set(
+      Array.isArray(stored?.disabledModuleIds)
+        ? stored.disabledModuleIds.filter((id) => modules.some((module) => module.id === id))
+        : []
+    );
   } catch (_) {
     sampleLimit = SAMPLE_LIMIT;
     workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
+    disabledModuleIds = new Set();
   }
 }
 
@@ -340,7 +347,12 @@ async function saveMonitorSettings() {
   await fsPromises.mkdir(path.dirname(settingsPath), { recursive: true });
   await fsPromises.writeFile(
     settingsPath,
-    `${JSON.stringify({ version: 1, sampleLimit, workbenchZoomFactor }, null, 2)}\n`,
+    `${JSON.stringify({
+      version: 2,
+      sampleLimit,
+      workbenchZoomFactor,
+      disabledModuleIds: [...disabledModuleIds]
+    }, null, 2)}\n`,
     { mode: 0o600 }
   );
 }
@@ -1392,18 +1404,19 @@ function registerIPC() {
   });
   ipcMain.handle('page:close', async (_event, id) => {
     const page = pages.get(id);
-    if (!page || page.monitored) return false;
+    if (!page) return { ok: false, message: '所选平台已经不存在' };
+    if (page.monitored) {
+      disabledModuleIds.add(id);
+      try {
+        await saveMonitorSettings();
+      } catch (error) {
+        disabledModuleIds.delete(id);
+        return { ok: false, message: `无法保存删除设置：${error.message}` };
+      }
+    }
     if (attachedView === page.view) {
       workbenchWindow.contentView.removeChildView(page.view);
       attachedView = null;
-    }
-    const previousProfile = profileFor(id);
-    delete credentialProfiles[id];
-    try {
-      await saveCredentialProfiles();
-    } catch (_) {
-      if (previousProfile) credentialProfiles[id] = previousProfile;
-      return false;
     }
     const state = moduleStates.get(id);
     if (state?.autoLoginTimer) clearTimeout(state.autoLoginTimer);
@@ -1411,10 +1424,15 @@ function registerIPC() {
     pages.delete(id);
     await page.view.webContents.session.clearStorageData();
     page.view.webContents.close();
-    selectedPageId = modules[0].id;
-    await saveCustomPages();
+    selectedPageId = pages.keys().next().value || null;
+    try {
+      if (!page.monitored) await saveCustomPages();
+    } catch (error) {
+      return { ok: false, message: `平台已关闭，但删除设置保存失败：${error.message}` };
+    }
     attachSelectedView();
-    return true;
+    broadcastSnapshot();
+    return { ok: true };
   });
   ipcMain.handle('monitor:scan', (_event, id) => {
     if (id) scanModule(id);
@@ -1544,7 +1562,9 @@ app.whenReady().then(async () => {
   }
   createApplicationMenu();
   registerIPC();
-  for (const module of modules) createRemotePage({ ...module, monitored: true });
+  for (const module of modules) {
+    if (!disabledModuleIds.has(module.id)) createRemotePage({ ...module, monitored: true });
+  }
   for (const page of await loadCustomPages()) createRemotePage(page);
   createWorkbenchWindow();
   createWidgetWindow();
