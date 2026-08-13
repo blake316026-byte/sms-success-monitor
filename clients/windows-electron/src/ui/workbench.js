@@ -88,12 +88,15 @@ const credentialsError = document.querySelector('#credentials-error');
 const removeCredentialsButton = document.querySelector('#remove-credentials');
 let credentialModuleId;
 
-async function showWorkbenchDialog(target) {
+async function showWorkbenchDialog(target, initialFocus) {
   if (openingDialog || target.open) return false;
   openingDialog = true;
   await window.smsApi.setWorkbenchModalOpen(true);
   try {
     target.showModal();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    initialFocus?.focus();
+    initialFocus?.select();
     return true;
   } catch (error) {
     await window.smsApi.setWorkbenchModalOpen(false);
@@ -269,15 +272,14 @@ credentialsButton.addEventListener('click', async () => {
     ? '本地 Token：已加密保存'
     : '本地 Token：登录成功后自动保存';
   credentialsError.textContent = '';
-  await showWorkbenchDialog(credentialsDialog);
-  credentialUsername.focus();
+  await showWorkbenchDialog(credentialsDialog, credentialUsername);
 });
 document.querySelector('#add').addEventListener('click', async () => {
   if (openingDialog || dialog.open || credentialsDialog.open) return;
   dialogError.textContent = '';
   pageName.value = `后台账号 ${snapshot.pages.filter((page) => !page.monitored).length + 1}`;
   pageURL.value = snapshot.pages[0]?.url || '';
-  if (await showWorkbenchDialog(dialog)) pageName.select();
+  await showWorkbenchDialog(dialog, pageName);
 });
 closeButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);

@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.37**（macOS build 41、Android versionCode 41）。本版修复 Windows 客户端的平台删除和新增按钮交互：内置平台可从本机删除并在重启后保持删除状态，连续点击新增不会再触发弹窗竞态。删除平台不会删除本机保存的登录凭据。
+当前正式版本：**v0.3.38**（macOS build 42、Android versionCode 42）。本版修复 Windows 新增平台弹窗的键盘焦点：页面名称和后台网址输入框现在可以正常输入字母与网址，并保留上一版的平台新增、删除修复。

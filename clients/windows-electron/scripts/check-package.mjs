@@ -37,6 +37,10 @@ assert.match(mainSource, /function setWorkbenchModalOpen/, 'modal layer detaches
 assert.match(preloadSource, /setWorkbenchModalOpen/, 'preload exposes workbench modal visibility');
 assert.match(workbenchScript, /showWorkbenchDialog/, 'renderer hides the remote page before opening dialogs');
 assert.match(workbenchScript, /openingDialog/, 'renderer prevents overlapping dialog open requests');
+assert.match(mainSource, /workbenchWindow\.webContents\.focus\(\)/, 'main process returns keyboard focus from the remote page');
+assert.match(workbenchScript, /requestAnimationFrame/, 'dialog waits for rendering before focusing its input');
+assert.match(workbenchScript, /initialFocus\?\.focus\(\)/, 'dialog explicitly focuses its first input');
+assert.match(workbenchSource, /id="page-name" required autofocus/, 'add dialog provides a native autofocus fallback');
 assert.match(workbenchScript, /addEventListener\('close', restoreWorkbenchView\)/, 'renderer restores the page after dialogs close');
 assert.doesNotMatch(workbenchScript, /closeButton\.disabled = selected\.monitored/, 'built-in platforms can be removed locally');
 assert.match(workbenchScript, /window\.confirm/, 'platform removal requires confirmation');

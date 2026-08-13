@@ -1092,6 +1092,7 @@ function setWorkbenchModalOpen(open) {
       workbenchWindow.contentView.removeChildView(attachedView);
       attachedView = null;
     }
+    workbenchWindow.webContents.focus();
   } else {
     attachSelectedView();
   }
