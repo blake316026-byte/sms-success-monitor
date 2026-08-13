@@ -61,6 +61,21 @@
       </form>
     </dialog>
 
+    <dialog id="rename-dialog" class="page-dialog">
+      <form method="dialog" id="rename-form">
+        <div class="dialog-heading">
+          <h2>编辑平台名称</h2>
+          <button type="button" class="icon-button" id="cancel-rename" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <label>页面名称<input id="rename-name" required autofocus placeholder="平台名称"></label>
+        <p class="dialog-error" id="rename-error"></p>
+        <div class="dialog-actions">
+          <button type="button" class="secondary-button" id="cancel-rename-bottom">取消</button>
+          <button type="submit" class="primary-button">保存</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="credentials-dialog" class="page-dialog">
       <form method="dialog" id="credentials-form">
         <div class="dialog-heading">

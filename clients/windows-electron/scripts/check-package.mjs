@@ -43,6 +43,11 @@ assert.match(workbenchScript, /initialFocus\?\.focus\(\)/, 'dialog explicitly fo
 assert.match(workbenchSource, /id="page-name" required autofocus/, 'add dialog provides a native autofocus fallback');
 assert.match(workbenchScript, /addEventListener\('close', restoreWorkbenchView\)/, 'renderer restores the page after dialogs close');
 assert.doesNotMatch(workbenchScript, /closeButton\.disabled = selected\.monitored/, 'built-in platforms can be removed locally');
+assert.doesNotMatch(workbenchScript, /renameButton\.disabled = selected\.monitored/, 'built-in platforms can be renamed locally');
+assert.doesNotMatch(workbenchScript, /window\.prompt/, 'rename uses the focus-safe workbench dialog');
+assert.match(workbenchSource, /id="rename-dialog"/, 'workbench renders a rename dialog');
+assert.match(mainSource, /moduleDisplayNames\[id\] = name/, 'renamed built-in platforms persist locally');
+assert.match(mainSource, /moduleDisplayNames\[module\.id\] \|\| module\.name/, 'renamed built-in platforms restore after restart');
 assert.match(workbenchScript, /window\.confirm/, 'platform removal requires confirmation');
 assert.match(mainSource, /disabledModuleIds\.add\(id\)/, 'removed built-in platforms persist locally');
 assert.match(mainSource, /disabledModuleIds\.delete\(id\)/, 'failed persistence restores the built-in platform state');

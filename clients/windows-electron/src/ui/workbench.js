@@ -75,6 +75,9 @@ const dialog = document.querySelector('#add-dialog');
 const pageName = document.querySelector('#page-name');
 const pageURL = document.querySelector('#page-url');
 const dialogError = document.querySelector('#dialog-error');
+const renameDialog = document.querySelector('#rename-dialog');
+const renameName = document.querySelector('#rename-name');
+const renameError = document.querySelector('#rename-error');
 const credentialsDialog = document.querySelector('#credentials-dialog');
 const credentialsTitle = document.querySelector('#credentials-title');
 const credentialUsername = document.querySelector('#credential-username');
@@ -107,7 +110,7 @@ async function showWorkbenchDialog(target, initialFocus) {
 }
 
 function restoreWorkbenchView() {
-  if (!dialog.open && !credentialsDialog.open) {
+  if (!dialog.open && !renameDialog.open && !credentialsDialog.open) {
     window.smsApi.setWorkbenchModalOpen(false);
   }
 }
@@ -147,7 +150,7 @@ function render() {
     backButton.disabled = !selected.canGoBack;
     forwardButton.disabled = !selected.canGoForward;
     closeButton.disabled = false;
-    renameButton.disabled = selected.monitored;
+    renameButton.disabled = false;
     credentialsButton.disabled = false;
     reloadButton.classList.toggle('loading', selected.loading);
   } else {
@@ -275,7 +278,7 @@ credentialsButton.addEventListener('click', async () => {
   await showWorkbenchDialog(credentialsDialog, credentialUsername);
 });
 document.querySelector('#add').addEventListener('click', async () => {
-  if (openingDialog || dialog.open || credentialsDialog.open) return;
+  if (openingDialog || dialog.open || renameDialog.open || credentialsDialog.open) return;
   dialogError.textContent = '';
   pageName.value = `后台账号 ${snapshot.pages.filter((page) => !page.monitored).length + 1}`;
   pageURL.value = snapshot.pages[0]?.url || '';
@@ -283,7 +286,7 @@ document.querySelector('#add').addEventListener('click', async () => {
 });
 closeButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  if (!selected || openingDialog || dialog.open || credentialsDialog.open) return;
+  if (!selected || openingDialog || dialog.open || renameDialog.open || credentialsDialog.open) return;
   if (!window.confirm(`确定从本机客户端删除“${selected.name}”吗？`)) return;
   closeButton.disabled = true;
   const result = await window.smsApi.closePage(selected.id);
@@ -294,11 +297,10 @@ closeButton.addEventListener('click', async () => {
 });
 renameButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  if (!selected || selected.monitored) return;
-  const name = window.prompt('页面名称', selected.name);
-  if (name == null) return;
-  const result = await window.smsApi.renamePage(selected.id, name);
-  if (!result.ok) window.alert(result.message || '页面名称修改失败');
+  if (!selected || openingDialog || dialog.open || renameDialog.open || credentialsDialog.open) return;
+  renameError.textContent = '';
+  renameName.value = selected.name;
+  await showWorkbenchDialog(renameDialog, renameName);
 });
 findInput.addEventListener('input', () => {
   clearTimeout(findTimer);
@@ -330,7 +332,11 @@ for (const id of ['cancel-add', 'cancel-add-bottom']) {
 for (const id of ['cancel-credentials', 'cancel-credentials-bottom']) {
   document.querySelector(`#${id}`).addEventListener('click', () => credentialsDialog.close());
 }
+for (const id of ['cancel-rename', 'cancel-rename-bottom']) {
+  document.querySelector(`#${id}`).addEventListener('click', () => renameDialog.close());
+}
 dialog.addEventListener('close', restoreWorkbenchView);
+renameDialog.addEventListener('close', restoreWorkbenchView);
 credentialsDialog.addEventListener('close', restoreWorkbenchView);
 document.querySelector('#add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -340,6 +346,21 @@ document.querySelector('#add-form').addEventListener('submit', async (event) => 
     return;
   }
   dialog.close();
+});
+
+document.querySelector('#rename-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
+  if (!selected) {
+    renameError.textContent = '所选平台已经不存在';
+    return;
+  }
+  const result = await window.smsApi.renamePage(selected.id, renameName.value);
+  if (!result.ok) {
+    renameError.textContent = result.message || '页面名称修改失败';
+    return;
+  }
+  renameDialog.close();
 });
 
 document.querySelector('#credentials-form').addEventListener('submit', async (event) => {

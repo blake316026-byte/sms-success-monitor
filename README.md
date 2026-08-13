@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.38**（macOS build 42、Android versionCode 42）。本版修复 Windows 新增平台弹窗的键盘焦点：页面名称和后台网址输入框现在可以正常输入字母与网址，并保留上一版的平台新增、删除修复。
+当前正式版本：**v0.3.39**（macOS build 43、Android versionCode 43）。本版修复 Windows 编辑按钮：所有平台均可通过客户端内置弹窗修改本机显示名称，名称在重启后保持，并继续包含新增输入和删除修复。

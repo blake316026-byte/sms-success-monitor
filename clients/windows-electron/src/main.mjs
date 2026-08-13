@@ -66,6 +66,7 @@ let credentialProfiles = {};
 let sampleLimit = SAMPLE_LIMIT;
 let workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
 let disabledModuleIds = new Set();
+let moduleDisplayNames = {};
 let localAutomationServer;
 let localAutomationWindow;
 let localAutomationReady;
@@ -336,10 +337,16 @@ async function loadMonitorSettings() {
         ? stored.disabledModuleIds.filter((id) => modules.some((module) => module.id === id))
         : []
     );
+    moduleDisplayNames = Object.fromEntries(
+      Object.entries(stored?.moduleDisplayNames || {}).filter(([id, name]) =>
+        modules.some((module) => module.id === id) && String(name).trim()
+      )
+    );
   } catch (_) {
     sampleLimit = SAMPLE_LIMIT;
     workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
     disabledModuleIds = new Set();
+    moduleDisplayNames = {};
   }
 }
 
@@ -351,7 +358,8 @@ async function saveMonitorSettings() {
       version: 2,
       sampleLimit,
       workbenchZoomFactor,
-      disabledModuleIds: [...disabledModuleIds]
+      disabledModuleIds: [...disabledModuleIds],
+      moduleDisplayNames
     }, null, 2)}\n`,
     { mode: 0o600 }
   );
@@ -1395,11 +1403,28 @@ function registerIPC() {
   ipcMain.handle('page:rename', async (_event, id, value) => {
     const page = pages.get(id);
     const name = String(value || '').trim();
-    if (!page || page.monitored || !name) return { ok: false, message: '只能修改自定义页面名称' };
+    if (!page || !name) return { ok: false, message: '页面名称不能为空' };
+    const previousName = page.name;
+    const previousStoredName = moduleDisplayNames[id];
     page.name = name;
     const state = moduleStates.get(id);
     if (state) state.name = name;
-    await saveCustomPages();
+    try {
+      if (page.monitored) {
+        moduleDisplayNames[id] = name;
+        await saveMonitorSettings();
+      } else {
+        await saveCustomPages();
+      }
+    } catch (error) {
+      page.name = previousName;
+      if (state) state.name = previousName;
+      if (page.monitored) {
+        if (previousStoredName) moduleDisplayNames[id] = previousStoredName;
+        else delete moduleDisplayNames[id];
+      }
+      return { ok: false, message: `无法保存页面名称：${error.message}` };
+    }
     broadcastSnapshot();
     return { ok: true };
   });
@@ -1564,7 +1589,9 @@ app.whenReady().then(async () => {
   createApplicationMenu();
   registerIPC();
   for (const module of modules) {
-    if (!disabledModuleIds.has(module.id)) createRemotePage({ ...module, monitored: true });
+    if (!disabledModuleIds.has(module.id)) {
+      createRemotePage({ ...module, name: moduleDisplayNames[module.id] || module.name, monitored: true });
+    }
   }
   for (const page of await loadCustomPages()) createRemotePage(page);
   createWorkbenchWindow();
