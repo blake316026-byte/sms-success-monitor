@@ -25,6 +25,7 @@ const mainSource = fs.readFileSync(path.join(root, 'src/main.mjs'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'src/preload.cjs'), 'utf8');
 const workbenchSource = fs.readFileSync(path.join(root, 'src/ui/workbench.html'), 'utf8');
 const workbenchScript = fs.readFileSync(path.join(root, 'src/ui/workbench.js'), 'utf8');
+const workbenchStyles = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
 assert.match(mainSource, /settings:set-sample-limit/, 'main process exposes local sample settings');
 assert.match(mainSource, /monitor-settings\.json/, 'sample settings persist in the local user directory');
 assert.match(preloadSource, /setSampleLimit/, 'preload exposes the sample setting command');
@@ -79,6 +80,11 @@ assert.match(mainSource, /setTimeout\(\(\) => refreshFinancialModule\(page\.id\)
 assert.match(mainSource, /state\.smsPermissionBlocked = false/, 'manual refresh clears the SMS permission circuit breaker');
 assert.match(workbenchScript, /const result = await window\.smsApi\.reload\(\)/, 'refresh button awaits the main-process result');
 assert.match(workbenchScript, /reloadButton\.disabled = false/, 'refresh button is re-enabled after every result');
+assert.match(workbenchStyles, /flex-wrap:\s*wrap/, 'platform tabs wrap onto additional rows');
+assert.doesNotMatch(workbenchStyles, /\.tab-button span[^}]*text-overflow:\s*ellipsis/, 'platform names are not hidden with ellipsis');
+assert.match(preloadSource, /setWorkbenchShellHeight/, 'renderer reports the wrapped navigation height');
+assert.match(mainSource, /workbench:shell-height/, 'main process resizes the remote page below wrapped tabs');
+assert.match(mainSource, /minWidth:\s*620/, 'workbench can be narrowed after more platforms are added');
 assert.match(workbenchSource.replace('workbench', 'workbench'), /id="rename-dialog"/, 'workbench keeps rename support');
 assert.doesNotMatch(
   workbenchScript,

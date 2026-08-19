@@ -49,7 +49,7 @@ const loginAutomationSource = fs.readFileSync(
   path.join(sharedRoot, 'auto-login/login-page.js'),
   'utf8'
 );
-const shellHeight = 112;
+let shellHeight = 112;
 const autoLoginCooldownMs = 5 * 60_000;
 const financialRefreshIntervalMs = 20_000;
 
@@ -1195,7 +1195,7 @@ function createWorkbenchWindow() {
   workbenchWindow = new BrowserWindow({
     width: 1260,
     height: 800,
-    minWidth: 940,
+    minWidth: 620,
     minHeight: 620,
     title: '短信后台工作台',
     backgroundColor: '#ffffff',
@@ -1628,6 +1628,12 @@ function registerIPC() {
     return changeWorkbenchZoom(direction);
   });
   ipcMain.handle('workbench:modal', (_event, open) => setWorkbenchModalOpen(open));
+  ipcMain.on('workbench:shell-height', (_event, value) => {
+    const nextHeight = Math.max(112, Math.min(320, Math.round(Number(value) || 112)));
+    if (nextHeight === shellHeight) return;
+    shellHeight = nextHeight;
+    layoutSelectedView();
+  });
   ipcMain.handle('credentials:get', (_event, id) => {
     const page = pages.get(id);
     if (!page) return { ok: false, message: '当前页面不存在' };

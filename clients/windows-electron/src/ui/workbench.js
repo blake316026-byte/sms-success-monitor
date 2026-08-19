@@ -55,6 +55,7 @@ let lastFindQuery = '';
 let openingDialog = false;
 
 const tabs = document.querySelector('#tabs');
+const workbenchShell = document.querySelector('.workbench-shell');
 const address = document.querySelector('#address');
 const backButton = document.querySelector('#back');
 const forwardButton = document.querySelector('#forward');
@@ -90,6 +91,10 @@ const credentialStatus = document.querySelector('#credential-status');
 const credentialsError = document.querySelector('#credentials-error');
 const removeCredentialsButton = document.querySelector('#remove-credentials');
 let credentialModuleId;
+
+new ResizeObserver(() => {
+  window.smsApi.setWorkbenchShellHeight(workbenchShell.getBoundingClientRect().height);
+}).observe(workbenchShell);
 
 async function showWorkbenchDialog(target, initialFocus) {
   if (openingDialog || target.open) return false;

@@ -222,6 +222,124 @@ private final class WorkspaceTabViewController: NSTabViewController {
   }
 }
 
+private final class WrappingTabBarView: NSView {
+  var onSelect: ((Int) -> Void)?
+  var items: [NSTabViewItem] = [] { didSet { rebuildButtons() } }
+  var selectedIndex = 0 { didSet { updateSelection() } }
+  var onHeightChange: ((CGFloat) -> Void)?
+
+  private var buttons: [NSButton] = []
+  private var lastHeight: CGFloat = 0
+  private let horizontalPadding: CGFloat = 8
+  private let verticalPadding: CGFloat = 6
+  private let spacing: CGFloat = 4
+  private let buttonHeight: CGFloat = 28
+
+  override var isFlipped: Bool { true }
+
+  private func rebuildButtons() {
+    buttons.forEach { $0.removeFromSuperview() }
+    buttons = items.enumerated().map { index, item in
+      let button = NSButton(title: item.label, target: self, action: #selector(selectTab(_:)))
+      button.tag = index
+      button.image = item.image
+      button.imagePosition = .imageLeading
+      button.bezelStyle = .rounded
+      button.font = .systemFont(ofSize: 12)
+      button.toolTip = item.toolTip
+      button.lineBreakMode = .byClipping
+      addSubview(button)
+      return button
+    }
+    updateSelection()
+    needsLayout = true
+  }
+
+  func refresh() {
+    for (index, button) in buttons.enumerated() where items.indices.contains(index) {
+      button.title = items[index].label
+      button.image = items[index].image
+      button.toolTip = items[index].toolTip
+    }
+    updateSelection()
+    needsLayout = true
+  }
+
+  override func layout() {
+    super.layout()
+    let usableWidth = max(1, bounds.width - horizontalPadding * 2)
+    var x = horizontalPadding
+    var y = verticalPadding
+    for button in buttons {
+      let titleWidth = (button.title as NSString).size(
+        withAttributes: [.font: button.font ?? NSFont.systemFont(ofSize: 12)]
+      ).width
+      let imageWidth: CGFloat = button.image == nil ? 0 : 18
+      let width = min(usableWidth, max(72, ceil(titleWidth + imageWidth + 24)))
+      if x > horizontalPadding, x + width > bounds.width - horizontalPadding {
+        x = horizontalPadding
+        y += buttonHeight + spacing
+      }
+      button.frame = NSRect(x: x, y: y, width: width, height: buttonHeight)
+      x += width + spacing
+    }
+    let height = y + buttonHeight + verticalPadding
+    if abs(height - lastHeight) > 0.5 {
+      lastHeight = height
+      onHeightChange?(height)
+    }
+  }
+
+  @objc private func selectTab(_ sender: NSButton) {
+    onSelect?(sender.tag)
+  }
+
+  private func updateSelection() {
+    for (index, button) in buttons.enumerated() {
+      button.state = index == selectedIndex ? .on : .off
+      button.contentTintColor = index == selectedIndex ? .controlAccentColor : .labelColor
+    }
+  }
+}
+
+private final class WorkspaceContainerController: NSViewController {
+  let tabs: WorkspaceTabViewController
+  let tabBar = WrappingTabBarView()
+  private var tabBarHeight: NSLayoutConstraint?
+
+  init(tabs: WorkspaceTabViewController) {
+    self.tabs = tabs
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func loadView() {
+    let root = NSView()
+    tabBar.translatesAutoresizingMaskIntoConstraints = false
+    tabs.view.translatesAutoresizingMaskIntoConstraints = false
+    addChild(tabs)
+    root.addSubview(tabBar)
+    root.addSubview(tabs.view)
+    let height = tabBar.heightAnchor.constraint(equalToConstant: 40)
+    tabBarHeight = height
+    NSLayoutConstraint.activate([
+      tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      tabBar.topAnchor.constraint(equalTo: root.topAnchor),
+      height,
+      tabs.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      tabs.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      tabs.view.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+      tabs.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+    ])
+    tabBar.onHeightChange = { [weak self] value in
+      self?.tabBarHeight?.constant = value
+    }
+    view = root
+  }
+}
+
 final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelegate,
   NSSearchFieldDelegate
 {
@@ -254,6 +372,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   private let defaultInitialURL: URL
   private var sampleLimit: Int
   private let tabController = WorkspaceTabViewController()
+  private lazy var workspaceContainer = WorkspaceContainerController(tabs: tabController)
   private var pages: [PlatformPageViewController] = []
   private var knownBuiltInIDs: Set<String> = []
   private var addressField: NSTextField?
@@ -326,6 +445,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       systemSymbolName: Self.stateSymbol(state),
       accessibilityDescription: Self.stateDescription(state)
     )
+    syncWrappingTabBar()
   }
 
   func updateSampleLimit(_ value: Int) {
@@ -357,9 +477,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private func configureWindow() {
-    tabController.tabStyle = .segmentedControlOnTop
+    tabController.tabStyle = .unspecified
     tabController.canPropagateSelectedChildViewControllerTitle = false
     tabController.onSelectionChange = { [weak self] in
+      self?.syncWrappingTabBar()
       self?.updateToolbar()
       self?.findInSelectedPage(backwards: false)
       self?.applySelectedPagePerformanceMode()
@@ -368,10 +489,14 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       self?.movePage(from: source, to: target)
     }
 
-    window.contentViewController = tabController
+    workspaceContainer.tabBar.onSelect = { [weak self] index in
+      guard let self, self.pages.indices.contains(index) else { return }
+      self.tabController.selectedTabViewItemIndex = index
+    }
+    window.contentViewController = workspaceContainer
     window.title = "短信后台工作台"
     updateWindowSubtitle()
-    window.minSize = NSSize(width: 940, height: 620)
+    window.minSize = NSSize(width: 620, height: 520)
     window.isReleasedWhenClosed = false
     window.tabbingMode = .disallowed
     window.toolbarStyle = .unified
@@ -383,6 +508,12 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     toolbar.allowsUserCustomization = false
     toolbar.autosavesConfiguration = false
     window.toolbar = toolbar
+  }
+
+  private func syncWrappingTabBar() {
+    workspaceContainer.tabBar.items = tabController.tabViewItems
+    workspaceContainer.tabBar.selectedIndex = max(0, tabController.selectedTabViewItemIndex)
+    workspaceContainer.tabBar.refresh()
   }
 
   private func updateWindowSubtitle() {
@@ -467,6 +598,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     if select {
       tabController.selectedTabViewItemIndex = pages.count - 1
     }
+    syncWrappingTabBar()
   }
 
   private func rebuildTabs() {
@@ -479,6 +611,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     if !pages.isEmpty {
       tabController.selectedTabViewItemIndex = 0
     }
+    syncWrappingTabBar()
   }
 
   private func attachTab(for page: PlatformPageViewController) {
@@ -797,6 +930,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     onPageOrderChanged?(pages.map(\.credentialID))
     updateToolbar()
     updateWindowSubtitle()
+    syncWrappingTabBar()
   }
 
   @objc private func renameCurrentPage() {
@@ -820,6 +954,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       self.saveWorkspaceLayout()
       self.onPageUpdated?(Self.descriptor(page))
       self.updateToolbar()
+      self.syncWrappingTabBar()
     }
   }
 
@@ -1057,6 +1192,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     tabController.removeTabViewItem(item)
     tabController.insertTabViewItem(item, at: target)
     tabController.selectedTabViewItemIndex = target
+    syncWrappingTabBar()
     saveWorkspaceLayout()
     onPageOrderChanged?(pages.map(\.credentialID))
   }

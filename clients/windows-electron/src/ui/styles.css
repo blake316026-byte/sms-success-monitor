@@ -27,7 +27,7 @@ button { cursor: default; }
 
 .workbench-shell {
   position: relative;
-  height: 112px;
+  min-height: 112px;
   border-bottom: 1px solid var(--border);
   background: #f6f7f9;
   overflow: hidden;
@@ -80,15 +80,13 @@ button { cursor: default; }
 
 .tab-strip {
   display: flex;
-  align-items: end;
+  flex-wrap: wrap;
+  align-content: start;
+  align-items: center;
   gap: 2px;
-  height: 49px;
-  padding: 8px 10px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  min-height: 49px;
+  padding: 8px 10px 7px;
 }
-.tab-strip::-webkit-scrollbar { display: none; }
 
 .tab-button {
   display: inline-flex;
@@ -96,7 +94,6 @@ button { cursor: default; }
   gap: 6px;
   flex: 0 0 auto;
   min-width: 82px;
-  max-width: 150px;
   height: 34px;
   padding: 0 11px;
   border: 1px solid transparent;
@@ -105,7 +102,7 @@ button { cursor: default; }
   color: #4f5868;
   background: transparent;
 }
-.tab-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-button span { white-space: nowrap; }
 .tab-button svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .tab-button:hover { background: #eceff3; }
 .tab-button.selected { background: #fff; border-color: var(--border); color: var(--text); }

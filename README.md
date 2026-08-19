@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.44**（macOS build 48、Android versionCode 48）。本版降低 macOS 启动负载：16 个后台首次连接由 30 秒扩展为 180 秒错峰启动，避免同时加载完整报表页面造成 CPU 峰值；正常短信和财务刷新频率不变。
+当前正式版本：**v0.3.45**（macOS build 49、Android versionCode 49）。本版将 macOS 和 Windows 工作台的平台导航改为响应式多行布局；窗口变窄时后台名称自动换到第二、第三排，名称保持完整可见和可点击，窗口最小宽度降为 620。
