@@ -257,9 +257,23 @@ sampleLimitInput.addEventListener('change', async () => {
   sampleLimitInput.setCustomValidity('');
   sampleLimitInput.value = String(result.sampleLimit);
 });
-zoomOutButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('out'));
-zoomResetButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('reset'));
-zoomInButton.addEventListener('click', () => window.smsApi.changeWorkbenchZoom('in'));
+async function changeZoom(direction) {
+  for (const button of [zoomOutButton, zoomResetButton, zoomInButton]) button.disabled = true;
+  const result = await window.smsApi.changeWorkbenchZoom(direction).catch((error) => ({
+    ok: false,
+    message: error.message
+  }));
+  if (result?.ok) {
+    zoomResetButton.textContent = `${result.zoomPercent}%`;
+  } else {
+    window.alert(result?.message || '页面缩放失败，请重试');
+  }
+  render();
+}
+
+zoomOutButton.addEventListener('click', () => changeZoom('out'));
+zoomResetButton.addEventListener('click', () => changeZoom('reset'));
+zoomInButton.addEventListener('click', () => changeZoom('in'));
 document.querySelector('#scan').addEventListener('click', () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
   if (selected) window.smsApi.scan(selected.id);

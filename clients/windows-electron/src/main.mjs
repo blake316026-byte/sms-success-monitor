@@ -424,12 +424,26 @@ function isConfiguredOrigin(module, value) {
   }
 }
 
-function applyWorkbenchZoom() {
-  for (const page of pages.values()) {
-    if (!page.view.webContents.isDestroyed()) {
-      page.view.webContents.setZoomFactor(workbenchZoomFactor);
-    }
+function applyPageZoom(page, factor = workbenchZoomFactor) {
+  if (!page || page.view.webContents.isDestroyed()) return false;
+  try {
+    page.view.webContents.setZoomFactor(factor);
+    return Math.abs(page.view.webContents.getZoomFactor() - factor) <= 0.001;
+  } catch (error) {
+    console.warn(`[SMSMonitor] ${page.id} zoom failed: ${error.message}`);
+    return false;
   }
+}
+
+function applyWorkbenchZoom() {
+  let appliedCount = 0;
+  const selected = pages.get(selectedPageId);
+  if (applyPageZoom(selected)) appliedCount += 1;
+  for (const page of pages.values()) {
+    if (page === selected) continue;
+    if (applyPageZoom(page)) appliedCount += 1;
+  }
+  return appliedCount;
 }
 
 async function changeWorkbenchZoom(direction) {
@@ -440,7 +454,14 @@ async function changeWorkbenchZoom(direction) {
 
   const previousFactor = workbenchZoomFactor;
   workbenchZoomFactor = nextFactor;
-  applyWorkbenchZoom();
+  const appliedCount = applyWorkbenchZoom();
+  const selected = pages.get(selectedPageId);
+  if (selected && !selected.view.webContents.isDestroyed()
+    && Math.abs(selected.view.webContents.getZoomFactor() - nextFactor) > 0.001) {
+    workbenchZoomFactor = previousFactor;
+    applyWorkbenchZoom();
+    return { ok: false, message: '当前后台页面暂时无法缩放，请刷新页面后重试。' };
+  }
   broadcastSnapshot();
   try {
     await saveMonitorSettings();
@@ -450,7 +471,11 @@ async function changeWorkbenchZoom(direction) {
     broadcastSnapshot();
     return { ok: false, message: `无法保存缩放设置：${error.message}` };
   }
-  return { ok: true, zoomPercent: Math.round(workbenchZoomFactor * 100) };
+  return {
+    ok: true,
+    zoomPercent: Math.round(workbenchZoomFactor * 100),
+    appliedCount
+  };
 }
 
 function ensurePageState(page) {
@@ -501,7 +526,7 @@ function createRemotePage(page) {
     return { action: 'deny' };
   });
   view.webContents.on('did-finish-load', () => {
-    view.webContents.setZoomFactor(workbenchZoomFactor);
+    applyPageZoom({ id: page.id, view });
     handlePageFinished(page.id);
     setTimeout(() => refreshFinancialModule(page.id), 900);
   });

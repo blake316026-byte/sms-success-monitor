@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.45**（macOS build 49、Android versionCode 49）。本版将 macOS 和 Windows 工作台的平台导航改为响应式多行布局；窗口变窄时后台名称自动换到第二、第三排，名称保持完整可见和可点击，窗口最小宽度降为 620。
+当前正式版本：**v0.3.46**（macOS build 50、Android versionCode 50）。本版修复 Windows 网页缩放无响应：优先缩放当前平台并校验真实缩放值，隐藏页面逐个容错同步，单个平台异常不再中断缩放；按钮等待执行结果并立即更新百分比。
