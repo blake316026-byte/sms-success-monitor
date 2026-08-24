@@ -68,6 +68,7 @@ let credentialProfiles = {};
 let sampleLimit = SAMPLE_LIMIT;
 let workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
 let disabledModuleIds = new Set();
+let pausedMonitorIds = new Set();
 let moduleDisplayNames = {};
 let localAutomationServer;
 let localAutomationWindow;
@@ -345,6 +346,9 @@ async function loadMonitorSettings() {
         ? stored.disabledModuleIds.filter((id) => modules.some((module) => module.id === id))
         : []
     );
+    pausedMonitorIds = new Set(
+      Array.isArray(stored?.pausedMonitorIds) ? stored.pausedMonitorIds : []
+    );
     moduleDisplayNames = Object.fromEntries(
       Object.entries(stored?.moduleDisplayNames || {}).filter(([id, name]) =>
         modules.some((module) => module.id === id) && String(name).trim()
@@ -354,6 +358,7 @@ async function loadMonitorSettings() {
     sampleLimit = SAMPLE_LIMIT;
     workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
     disabledModuleIds = new Set();
+    pausedMonitorIds = new Set();
     moduleDisplayNames = {};
   }
 }
@@ -367,6 +372,7 @@ async function saveMonitorSettings() {
       sampleLimit,
       workbenchZoomFactor,
       disabledModuleIds: [...disabledModuleIds],
+      pausedMonitorIds: [...pausedMonitorIds],
       moduleDisplayNames
     }, null, 2)}\n`,
     { mode: 0o600 }
@@ -480,10 +486,12 @@ async function changeWorkbenchZoom(direction) {
 
 function ensurePageState(page) {
   if (moduleStates.has(page.id)) return moduleStates.get(page.id);
+  const monitoringEnabled = !pausedMonitorIds.has(page.id);
   const state = {
     ...page,
-    status: 'starting',
-    message: '等待连接',
+    monitoringEnabled,
+    status: monitoringEnabled ? 'starting' : 'disabled',
+    message: monitoringEnabled ? '等待连接' : '已停止短信和财务查询',
     metrics: null,
     dailyFinancial: null,
     financeMessage: '等待首次财务查询',
@@ -528,7 +536,9 @@ function createRemotePage(page) {
   view.webContents.on('did-finish-load', () => {
     applyPageZoom({ id: page.id, view });
     handlePageFinished(page.id);
-    setTimeout(() => refreshFinancialModule(page.id), 900);
+    if (moduleStates.get(page.id)?.monitoringEnabled) {
+      setTimeout(() => refreshFinancialModule(page.id), 900);
+    }
   });
   view.webContents.on('did-start-loading', () => broadcastSnapshot());
   view.webContents.on('did-stop-loading', () => broadcastSnapshot());
@@ -572,6 +582,7 @@ async function handlePageFinished(id) {
   const page = pages.get(id);
   if (!page) return;
   const state = moduleStates.get(id);
+  if (!state?.monitoringEnabled) return;
   const currentURL = page.view.webContents.getURL();
   if (requiresInteractiveAuthentication(currentURL)) {
     handleAuthenticationRequired(id, '平台需要重新登录。');
@@ -915,7 +926,7 @@ async function attemptAutoLogin(id, currentURL) {
 function handleAuthenticationRequired(id, message) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page) return;
+  if (!state || !page || !state.monitoringEnabled) return;
   state.scanning = false;
   state.consecutiveScanFailures = 0;
   state.needsImmediateScan = true;
@@ -942,7 +953,7 @@ function handleAuthenticationRequired(id, message) {
 function handleScanFailure(id, message) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page) return false;
+  if (!state || !page || !state.monitoringEnabled) return false;
 
   state.scanning = false;
   state.consecutiveScanFailures += 1;
@@ -969,7 +980,7 @@ function handleScanFailure(id, message) {
 async function scanModule(id) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page || state.scanning || state.smsPermissionBlocked) return;
+  if (!state || !page || !state.monitoringEnabled || state.scanning || state.smsPermissionBlocked) return;
   const currentURL = page.view.webContents.getURL();
   if (!currentURL) return;
   if (requiresInteractiveAuthentication(currentURL)) {
@@ -999,6 +1010,7 @@ async function scanModule(id) {
       `(async () => { ${scanSource}\nreturn await globalThis.smsMonitorScan(${activeSampleLimit}, ${JSON.stringify(fallbackToken)}); })()`,
       true
     );
+    if (!state.monitoringEnabled) return;
     state.scanning = false;
     if (activeSampleLimit !== sampleLimit) {
       state.needsImmediateScan = false;
@@ -1020,10 +1032,11 @@ async function scanModule(id) {
       return;
     } else if (result.kind === 'ok') {
       const metrics = calculateMetrics(result.statuses, activeSampleLimit);
-      if (metrics.sampleCount === 0) throw new Error('短信记录接口未返回可统计记录');
       Object.assign(state, {
         status: isAlert(metrics, ALERT_THRESHOLD) ? 'alert' : 'healthy',
-        message: isAlert(metrics, ALERT_THRESHOLD) ? '成功率低于 50%' : '成功率正常',
+        message: metrics.sampleCount === 0
+          ? '短信接口正常，当前暂无记录'
+          : (isAlert(metrics, ALERT_THRESHOLD) ? '成功率低于 50%' : '成功率正常'),
         metrics,
         consecutiveScanFailures: 0,
         scannedAt: Date.now(),
@@ -1034,6 +1047,7 @@ async function scanModule(id) {
       return;
     }
   } catch (error) {
+    if (!state.monitoringEnabled) return;
     if (activeSampleLimit !== sampleLimit) {
       state.scanning = false;
       state.needsImmediateScan = false;
@@ -1050,7 +1064,7 @@ async function scanModule(id) {
 async function refreshFinancialModule(id) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page || state.financeRefreshing || state.financePermissionBlocked) return;
+  if (!state || !page || !state.monitoringEnabled || state.financeRefreshing || state.financePermissionBlocked) return;
   const currentURL = page.view.webContents.getURL();
   if (!currentURL || !isConfiguredOrigin(state, currentURL) || requiresInteractiveAuthentication(currentURL)) return;
   state.financeRefreshing = true;
@@ -1060,6 +1074,7 @@ async function refreshFinancialModule(id) {
       `(async () => { ${financeSource}\nreturn await globalThis.smsMonitorFinance(${JSON.stringify(id)}, ${JSON.stringify(state.name)}, ${JSON.stringify(fallbackToken)}); })()`,
       true
     );
+    if (!state.monitoringEnabled) return;
     if (result?.kind === 'ok') {
       state.dailyFinancial = result.dailyFinancial;
       state.financeMessage = '';
@@ -1072,6 +1087,7 @@ async function refreshFinancialModule(id) {
     state.dailyFinancial = null;
     state.financeMessage = `今日财务查询失败：${error.message}`;
   } finally {
+    if (!state.monitoringEnabled) return;
     state.financeRefreshing = false;
     broadcastSnapshot(id);
   }
@@ -1122,6 +1138,7 @@ function buildSnapshot() {
       ,financeMessage: state.financeMessage
       ,smsPermissionBlocked: state.smsPermissionBlocked
       ,financePermissionBlocked: state.financePermissionBlocked
+      ,monitoringEnabled: state.monitoringEnabled
     };
   });
   const summary = summarize(moduleList);
@@ -1145,6 +1162,8 @@ function buildSnapshot() {
       healthyCount: summary.healthyCount,
       authenticationCount: summary.authenticationCount,
       errorCount: summary.errorCount,
+      disabledCount: moduleList.filter((module) => !module.monitoringEnabled).length,
+      enabledCount: moduleList.filter((module) => module.monitoringEnabled).length,
       financialCount: financialRows.length,
       dailyFinancialTotals,
       focusId: summary.focus?.id || null
@@ -1615,11 +1634,45 @@ function registerIPC() {
   ipcMain.handle('monitor:scan', (_event, id) => {
     const targets = id ? [moduleStates.get(id)].filter(Boolean) : [...moduleStates.values()];
     for (const state of targets) {
+      if (!state.monitoringEnabled) continue;
       state.smsPermissionBlocked = false;
       state.financePermissionBlocked = false;
       scanModule(state.id);
       refreshFinancialModule(state.id);
     }
+  });
+  ipcMain.handle('monitor:set-enabled', async (_event, id, enabled) => {
+    const state = moduleStates.get(id);
+    if (!state) return { ok: false, message: '所选平台不存在' };
+    const nextEnabled = Boolean(enabled);
+    if (state.monitoringEnabled === nextEnabled) return { ok: true };
+
+    state.monitoringEnabled = nextEnabled;
+    if (nextEnabled) pausedMonitorIds.delete(id);
+    else pausedMonitorIds.add(id);
+    try {
+      await saveMonitorSettings();
+    } catch (error) {
+      state.monitoringEnabled = !nextEnabled;
+      if (nextEnabled) pausedMonitorIds.add(id);
+      else pausedMonitorIds.delete(id);
+      return { ok: false, message: `无法保存监控开关：${error.message}` };
+    }
+
+    Object.assign(state, nextEnabled ? {
+      status: 'starting', message: '监控已开启，正在连接平台', metrics: null,
+      dailyFinancial: null, scannedAt: null, nextScanAt: null, needsImmediateScan: true
+    } : {
+      status: 'disabled', message: '已停止短信和财务查询，不参与报警及汇总统计',
+      metrics: null, dailyFinancial: null, scannedAt: null, nextScanAt: null,
+      scanning: false, financeRefreshing: false, needsImmediateScan: false
+    });
+    broadcastSnapshot(id);
+    if (nextEnabled) {
+      scanModule(id);
+      refreshFinancialModule(id);
+    }
+    return { ok: true };
   });
   ipcMain.handle('settings:set-sample-limit', async (_event, value) => {
     const parsed = Math.round(Number(value));

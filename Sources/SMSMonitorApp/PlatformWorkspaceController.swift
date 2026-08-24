@@ -735,6 +735,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private static func stateDescription(_ state: AppMonitorState) -> String {
     switch state {
+    case .disabled:
+      return "监控已停用"
     case .starting:
       return "等待连接"
     case .scanning:
@@ -752,6 +754,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private static func stateSymbol(_ state: AppMonitorState) -> String {
     switch state {
+    case .disabled:
+      return "pause.circle"
     case .starting:
       return "clock"
     case .scanning:

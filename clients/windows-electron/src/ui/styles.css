@@ -316,6 +316,13 @@ button { cursor: default; }
 .detail-footer strong[data-status="auth"] { color: var(--amber); }
 .detail-footer p { margin: 7px 0 0; color: #6d7582; font-size: 12.5px; }
 .detail-actions { display: flex; gap: 7px; }
+.monitor-toggle { display: inline-flex; align-items: center; gap: 7px; margin-right: 8px; font-size: 12.5px; color: #454c57; cursor: pointer; }
+.monitor-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.monitor-toggle i { position: relative; width: 38px; height: 22px; border-radius: 11px; background: #c8cdd5; transition: background .15s ease; }
+.monitor-toggle i::after { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0003; transition: transform .15s ease; }
+.monitor-toggle input:checked + i { background: #1677ff; }
+.monitor-toggle input:checked + i::after { transform: translateX(16px); }
+.detail-table tr[data-status="disabled"] { color: #8a919d; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes alarm-pulse { from { transform: scale(0.985); filter: drop-shadow(0 0 2px #ff395366); } to { transform: scale(1.025); filter: drop-shadow(0 0 10px #ff3953bb); } }

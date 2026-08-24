@@ -2,6 +2,7 @@ import Foundation
 import SMSMonitorCore
 
 enum AppMonitorState {
+  case disabled
   case starting(String)
   case scanning(ScanMetrics?, Date?)
   case healthy(ScanMetrics, Date)
@@ -50,6 +51,11 @@ enum AppMonitorState {
 
   var isHealthy: Bool {
     if case .healthy = self { return true }
+    return false
+  }
+
+  var isDisabled: Bool {
+    if case .disabled = self { return true }
     return false
   }
 }
@@ -110,7 +116,7 @@ struct FleetMonitorSnapshot {
     if let error = modules.first(where: { $0.state.isError }) {
       return error
     }
-    return modules.first
+    return modules.first(where: { !$0.state.isDisabled }) ?? modules.first
   }
 
   var alertCount: Int {
@@ -130,6 +136,14 @@ struct FleetMonitorSnapshot {
 
   var errorCount: Int {
     modules.count(where: { $0.state.isError })
+  }
+
+  var disabledCount: Int {
+    modules.count(where: { $0.state.isDisabled })
+  }
+
+  var enabledCount: Int {
+    modules.count - disabledCount
   }
 
   var financialCoverageCount: Int {

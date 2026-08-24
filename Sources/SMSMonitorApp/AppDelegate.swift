@@ -62,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
     monitorController.showPlatformWindow(moduleID: moduleID)
   }
 
+  func statusWidgetRequestedMonitoringChange(moduleID: String, enabled: Bool) {
+    monitorController.setMonitoringEnabled(enabled, moduleID: moduleID)
+  }
+
   func statusWidgetRequestedMute() {
     alertNotifier.muteForTenMinutes()
     refreshWidget()

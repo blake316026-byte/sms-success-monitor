@@ -52,15 +52,17 @@ export function percentageText(metrics) {
 }
 
 export function selectFocus(modules) {
-  const withMetrics = modules.filter((module) => module.metrics && module.metrics.sampleCount > 0);
+  const enabledModules = modules.filter((module) => module.status !== 'disabled');
+  const withMetrics = enabledModules.filter((module) => module.metrics && module.metrics.sampleCount > 0);
   const alerting = withMetrics.filter((module) => isAlert(module.metrics, module.alertThreshold));
   const byRate = (left, right) => (
     left.metrics.successRate - right.metrics.successRate || left.id.localeCompare(right.id)
   );
   if (alerting.length > 0) return [...alerting].sort(byRate)[0];
   if (withMetrics.length > 0) return [...withMetrics].sort(byRate)[0];
-  return modules.find((module) => module.status === 'auth')
-    || modules.find((module) => module.status === 'error')
+  return enabledModules.find((module) => module.status === 'auth')
+    || enabledModules.find((module) => module.status === 'error')
+    || enabledModules[0]
     || modules[0]
     || null;
 }

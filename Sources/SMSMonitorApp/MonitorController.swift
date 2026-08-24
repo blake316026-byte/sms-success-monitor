@@ -237,6 +237,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     activeScanID = nil
     scanStartedAt = nil
     isScanning = false
+    lastMetrics = nil
+    lastMetricsScannedAt = nil
+    latestDailyFinancialMetrics = nil
     webView.stopLoading()
   }
 
@@ -300,11 +303,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           statuses: statuses,
           sampleLimit: activeSampleLimit
         )
-        guard metrics.sampleCount > 0 else {
-          handleScanFailure("短信记录接口未返回可统计的记录。")
-          return
-        }
-
         consecutiveScanFailures = 0
         lastMetrics = metrics
         let scannedAt = Date()
@@ -446,6 +444,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       DispatchQueue.main.async {
         guard let self else { return }
         self.isRefreshingFinancial = false
+        guard self.isStarted else { return }
         self.finishFinancialRefresh(result)
         self.scheduleFinancialRefresh(after: Self.financialRefreshInterval)
       }
@@ -1062,6 +1061,7 @@ final class MonitorController {
   private(set) var sampleLimit: Int
 
   private static let sampleLimitDefaultsKey = "SMSMonitorSampleLimit.v1"
+  private static let disabledModuleIDsDefaultsKey = "SMSMonitorDisabledModuleIDs.v1"
   private let credentialStore: LocalCredentialStore
   private let automationRuntime: LocalAutomationRuntime
   private let loginAutomation: LoginPageAutomation
@@ -1072,6 +1072,7 @@ final class MonitorController {
   private var activityToken: NSObjectProtocol?
   private var hasStarted = false
   private var healthCheckWorkItem: DispatchWorkItem?
+  private var disabledModuleIDs: Set<String>
 
   init(configurations: [MonitorConfiguration]) {
     self.configurations = configurations
@@ -1080,6 +1081,10 @@ final class MonitorController {
       storedLimit == 0 ? SampleLimitPolicy.defaultValue : storedLimit
     )
     self.sampleLimit = initialSampleLimit
+    let storedDisabledModuleIDs = Set(
+      UserDefaults.standard.stringArray(forKey: Self.disabledModuleIDsDefaultsKey) ?? []
+    )
+    self.disabledModuleIDs = storedDisabledModuleIDs
 
     let credentialStore = LocalCredentialStore()
     let automationRuntime = LocalAutomationRuntime()
@@ -1116,7 +1121,7 @@ final class MonitorController {
           $0.id,
           ModuleMonitorSnapshot(
             configuration: $0,
-            state: .starting("等待连接"),
+            state: storedDisabledModuleIDs.contains($0.id) ? .disabled : .starting("等待连接"),
             nextScanAt: nil
           )
         )
@@ -1177,6 +1182,7 @@ final class MonitorController {
     workspaceController.show(moduleID: orderedMonitorIDs.first)
     publish(changedModuleID: nil)
     for (index, monitorID) in orderedMonitorIDs.enumerated() {
+      guard !disabledModuleIDs.contains(monitorID) else { continue }
       let delay = MonitorRefreshPolicy.staggeredDelay(
         index: index,
         count: orderedMonitorIDs.count
@@ -1187,10 +1193,12 @@ final class MonitorController {
 
   func scanNow(moduleID: String? = nil) {
     if let moduleID {
+      guard !disabledModuleIDs.contains(moduleID) else { return }
       monitorsByID[moduleID]?.scanNow()
       return
     }
     for (index, monitorID) in orderedMonitorIDs.enumerated() {
+      guard !disabledModuleIDs.contains(monitorID) else { continue }
       let delay = MonitorRefreshPolicy.staggeredDelay(
         index: index,
         count: orderedMonitorIDs.count
@@ -1204,6 +1212,42 @@ final class MonitorController {
 
   func showPlatformWindow(moduleID: String? = nil) {
     workspaceController.show(moduleID: moduleID)
+  }
+
+  func setMonitoringEnabled(_ enabled: Bool, moduleID: String) {
+    guard let monitor = monitorsByID[moduleID], let current = snapshotsByID[moduleID] else { return }
+    if enabled {
+      guard disabledModuleIDs.remove(moduleID) != nil else { return }
+      persistDisabledModuleIDs()
+      let state = AppMonitorState.starting("监控已开启，正在连接平台")
+      snapshotsByID[moduleID] = ModuleMonitorSnapshot(
+        configuration: current.configuration,
+        state: state,
+        nextScanAt: nil
+      )
+      workspaceController.updateMonitorState(moduleID: moduleID, state: state)
+      publish(changedModuleID: moduleID)
+      if hasStarted { monitor.start() }
+      return
+    }
+
+    guard disabledModuleIDs.insert(moduleID).inserted else { return }
+    persistDisabledModuleIDs()
+    monitor.stop()
+    snapshotsByID[moduleID] = ModuleMonitorSnapshot(
+      configuration: current.configuration,
+      state: .disabled,
+      nextScanAt: nil
+    )
+    workspaceController.updateMonitorState(moduleID: moduleID, state: .disabled)
+    publish(changedModuleID: moduleID)
+  }
+
+  private func persistDisabledModuleIDs() {
+    UserDefaults.standard.set(
+      disabledModuleIDs.sorted(),
+      forKey: Self.disabledModuleIDsDefaultsKey
+    )
   }
 
   func focusFind() {
@@ -1374,6 +1418,7 @@ final class MonitorController {
     state: AppMonitorState,
     nextScanAt: Date?
   ) {
+    guard !disabledModuleIDs.contains(configuration.id) else { return }
     snapshotsByID[configuration.id] = ModuleMonitorSnapshot(
       configuration: configuration,
       state: state,
@@ -1486,16 +1531,16 @@ final class MonitorController {
     orderedMonitorIDs.append(page.credentialID)
     snapshotsByID[page.credentialID] = ModuleMonitorSnapshot(
       configuration: pageConfiguration,
-      state: .starting("等待连接"),
+      state: disabledModuleIDs.contains(page.credentialID) ? .disabled : .starting("等待连接"),
       nextScanAt: nil
     )
     workspaceController.updateMonitorState(
       moduleID: page.credentialID,
-      state: .starting("等待连接")
+      state: disabledModuleIDs.contains(page.credentialID) ? .disabled : .starting("等待连接")
     )
     workspaceController.refreshMonitorCount()
     publish(changedModuleID: nil)
-    if hasStarted {
+    if hasStarted, !disabledModuleIDs.contains(page.credentialID) {
       let index = orderedMonitorIDs.firstIndex(of: page.credentialID) ?? 0
       monitor.start(
         after: MonitorRefreshPolicy.staggeredDelay(
@@ -1540,6 +1585,7 @@ final class MonitorController {
     monitorsByID.removeValue(forKey: credentialID)?.stop()
     orderedMonitorIDs.removeAll { $0 == credentialID }
     snapshotsByID.removeValue(forKey: credentialID)
+    if disabledModuleIDs.remove(credentialID) != nil { persistDisabledModuleIDs() }
     workspaceController.refreshMonitorCount()
     publish(changedModuleID: nil)
   }

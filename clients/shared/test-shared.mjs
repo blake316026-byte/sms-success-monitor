@@ -39,6 +39,12 @@ const focus = selectFocus([
 ]);
 assert.equal(focus.id, 'logged');
 
+const enabledFocus = selectFocus([
+  { id: 'paused', status: 'disabled', metrics: null, alertThreshold: 0.5 },
+  { id: 'active', status: 'starting', metrics: null, alertThreshold: 0.5 }
+]);
+assert.equal(enabledFocus.id, 'active');
+
 const lowestAlert = selectFocus([
   { id: 'a', status: 'alert', metrics: low, alertThreshold: 0.5 },
   { id: 'b', status: 'alert', metrics: calculateMetrics(Array(82).fill('SUCCESS').concat(Array(118).fill('SENT'))), alertThreshold: 0.5 }

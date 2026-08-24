@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   renamePage: (id, name) => ipcRenderer.invoke('page:rename', id, name),
   closePage: (id) => ipcRenderer.invoke('page:close', id),
   scan: (id) => ipcRenderer.invoke('monitor:scan', id || null),
+  setMonitoringEnabled: (id, enabled) => ipcRenderer.invoke('monitor:set-enabled', id, Boolean(enabled)),
   setSampleLimit: (value) => ipcRenderer.invoke('settings:set-sample-limit', value),
   changeWorkbenchZoom: (direction) => ipcRenderer.invoke('workbench:zoom', direction),
   setWorkbenchModalOpen: (open) => ipcRenderer.invoke('workbench:modal', Boolean(open)),

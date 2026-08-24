@@ -5,7 +5,7 @@ let snapshot;
 let selectedId;
 
 function statusLabel(status) {
-  return { starting: '等待连接', scanning: '扫描中', healthy: '正常', alert: '报警', auth: '需登录', error: '异常' }[status] || status;
+  return { disabled: '已停用', starting: '等待连接', scanning: '扫描中', healthy: '正常', alert: '报警', auth: '需登录', error: '异常' }[status] || status;
 }
 
 function formatTime(value) {
@@ -32,11 +32,13 @@ function render(next) {
   snapshot = next;
   if (!selectedId || !snapshot.modules.some((module) => module.id === selectedId)) selectedId = snapshot.summary.focusId;
   const scanned = snapshot.summary.alertCount + snapshot.summary.healthyCount;
-  document.querySelector('#coverage').textContent = `已扫描 ${scanned}/${snapshot.modules.length} · 样本 ${snapshot.sampleLimit} 条 · 阈值低于 50%`;
+  document.querySelector('#coverage').textContent = `已扫描 ${scanned}/${snapshot.summary.enabledCount} · 样本 ${snapshot.sampleLimit} 条 · 阈值低于 50%`;
   document.querySelector('#alert-count').textContent = `报警 ${snapshot.summary.alertCount}`;
   document.querySelector('#healthy-count').textContent = `正常 ${snapshot.summary.healthyCount}`;
   document.querySelector('#auth-count').textContent = `需登录 ${snapshot.summary.authenticationCount}`;
-  document.querySelector('#error-count').textContent = `异常 ${snapshot.summary.errorCount}`;
+  document.querySelector('#error-count').textContent = snapshot.summary.disabledCount
+    ? `异常 ${snapshot.summary.errorCount} · 停用 ${snapshot.summary.disabledCount}`
+    : `异常 ${snapshot.summary.errorCount}`;
 
   const body = document.querySelector('#module-rows');
   body.replaceChildren(...snapshot.modules.map((module) => {
@@ -69,6 +71,7 @@ function renderSelected() {
   document.querySelector('#selected-detail').textContent = module.metrics
     ? `成功 ${module.metrics.successCount}/${module.metrics.sampleCount} · 未成功 ${module.metrics.nonSuccessCount} · ${module.financePermissionBlocked ? module.financeMessage : '财务独立每 20 秒刷新'} · 下次 ${formatTime(module.nextScanAt)}`
     : module.message;
+  document.querySelector('#monitor-enabled').checked = module.monitoringEnabled;
 }
 
 function escapeHTML(value) {
@@ -80,6 +83,11 @@ function escapeHTML(value) {
 document.querySelector('#scan-all').addEventListener('click', () => window.smsApi.scan(null));
 document.querySelector('#scan-selected').addEventListener('click', () => window.smsApi.scan(selectedId));
 document.querySelector('#open-selected').addEventListener('click', () => window.smsApi.showWorkbench(selectedId));
+document.querySelector('#monitor-enabled').addEventListener('change', async (event) => {
+  if (!selectedId) return;
+  const result = await window.smsApi.setMonitoringEnabled(selectedId, event.target.checked);
+  if (!result?.ok) event.target.checked = !event.target.checked;
+});
 async function initialize() {
   window.smsApi.onSnapshot(render);
   render(await window.smsApi.getSnapshot());

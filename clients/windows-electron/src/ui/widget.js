@@ -77,6 +77,12 @@ function presentation(focus, summary, sampleLimit) {
       footer: '等待下一次自动重试', icon: 'wifi-off'
     };
   }
+  if (focus.status === 'disabled') {
+    return {
+      kind: 'error', color: '#7d8999', badge: '已停用', value: '已停用', sample: '未请求平台数据',
+      footer: '可在监控总览中重新开启', icon: 'wifi-off'
+    };
+  }
   return {
     kind: 'starting', color: '#7d8999', badge: '启动中', value: '启动中', sample: '等待首次扫描',
     footer: '正在建立连接', icon: 'clock'

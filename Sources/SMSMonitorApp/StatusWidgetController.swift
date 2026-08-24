@@ -5,6 +5,7 @@ import SMSMonitorCore
 protocol StatusWidgetActions: AnyObject {
   func statusWidgetRequestedScan(moduleID: String?)
   func statusWidgetRequestedPlatformWindow(moduleID: String?)
+  func statusWidgetRequestedMonitoringChange(moduleID: String, enabled: Bool)
   func statusWidgetRequestedMute()
   func statusWidgetRequestedQuit()
 }
@@ -493,6 +494,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
   private let coverageLabel = NSTextField(labelWithString: "")
   private let selectedNameLabel = NSTextField(labelWithString: "")
   private let selectedDetailLabel = NSTextField(labelWithString: "")
+  private let monitoringSwitch = NSSwitch()
   private var snapshot = FleetMonitorSnapshot(modules: [])
   private var selectedModuleID: String?
   private var sampleLimit: Int
@@ -537,10 +539,12 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     alertSummary.stringValue = "报警 \(snapshot.alertCount)"
     healthySummary.stringValue = "正常 \(snapshot.healthyCount)"
     authenticationSummary.stringValue = "需登录 \(snapshot.authenticationCount)"
-    errorSummary.stringValue = "异常 \(snapshot.errorCount)"
+    errorSummary.stringValue = snapshot.disabledCount > 0
+      ? "异常 \(snapshot.errorCount) · 停用 \(snapshot.disabledCount)"
+      : "异常 \(snapshot.errorCount)"
     let scannedCount = snapshot.alertCount + snapshot.healthyCount
     coverageLabel.stringValue =
-      muteDescription ?? "已扫描 \(scannedCount)/\(snapshot.modules.count) · 阈值低于 50%"
+      muteDescription ?? "已扫描 \(scannedCount)/\(snapshot.enabledCount) · 阈值低于 50%"
 
     tableView.reloadData()
     if let selectedModuleID,
@@ -635,6 +639,14 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     actions?.statusWidgetRequestedPlatformWindow(moduleID: selectedModuleID)
   }
 
+  @objc private func monitoringSwitchChanged() {
+    guard let selectedModuleID else { return }
+    actions?.statusWidgetRequestedMonitoringChange(
+      moduleID: selectedModuleID,
+      enabled: monitoringSwitch.state == .on
+    )
+  }
+
   private func buildContent() {
     guard let contentView = window?.contentView else { return }
 
@@ -720,6 +732,19 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     selectedDetailLabel.autoresizingMask = [.width, .maxYMargin]
     contentView.addSubview(selectedDetailLabel)
 
+    let monitoringLabel = NSTextField(labelWithString: "监控")
+    monitoringLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+    monitoringLabel.frame = NSRect(x: 820, y: 35, width: 40, height: 20)
+    monitoringLabel.autoresizingMask = [.minXMargin, .maxYMargin]
+    contentView.addSubview(monitoringLabel)
+
+    monitoringSwitch.target = self
+    monitoringSwitch.action = #selector(monitoringSwitchChanged)
+    monitoringSwitch.frame = NSRect(x: 862, y: 31, width: 42, height: 26)
+    monitoringSwitch.autoresizingMask = [.minXMargin, .maxYMargin]
+    monitoringSwitch.toolTip = "开启或停止选中平台的短信和财务监控"
+    contentView.addSubview(monitoringSwitch)
+
     let scanAllButton = makeSymbolButton(
       symbol: "arrow.triangle.2.circlepath",
       toolTip: "立即扫描全部后台",
@@ -793,6 +818,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
       "\(module.configuration.displayName) · \(Self.stateText(module.state))"
     selectedNameLabel.textColor = StatusWidgetController.presentation(for: module.state).color
     selectedDetailLabel.stringValue = Self.detailText(module)
+    monitoringSwitch.state = module.state.isDisabled ? .off : .on
   }
 
   private static func cellText(
@@ -844,6 +870,8 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
 
   private static func stateText(_ state: AppMonitorState) -> String {
     switch state {
+    case .disabled:
+      return "已停用"
     case .starting:
       return "等待连接"
     case .scanning:
@@ -865,6 +893,8 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
         "成功 \(metrics.successCount)/\(metrics.sampleCount) · 未成功 \(metrics.nonSuccessCount) · 下次 \(dateText(module.nextScanAt))"
     }
     switch module.state {
+    case .disabled:
+      return "已停止短信和财务查询，不参与报警及汇总统计"
     case .starting(let message), .authenticationRequired(let message), .error(let message, _):
       return message
     case .scanning:
@@ -1004,6 +1034,18 @@ final class StatusWidgetController: NSWindowController {
 
   fileprivate static func presentation(for state: AppMonitorState) -> WidgetPresentation {
     switch state {
+    case .disabled:
+      return WidgetPresentation(
+        color: MonitorColors.unavailable,
+        primaryText: "已停用",
+        sampleText: "未请求平台数据",
+        statusText: "监控关闭",
+        footerText: "可在全部后台中重新开启",
+        footerSymbol: "pause.circle.fill",
+        progress: 0,
+        isAlert: false,
+        isScanning: false
+      )
     case .starting:
       return WidgetPresentation(
         color: MonitorColors.unavailable,
