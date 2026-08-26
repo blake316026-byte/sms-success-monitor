@@ -167,8 +167,10 @@ check(
   'uses the encrypted saved token before starting automatic login'
 );
 check(
-  fallbackTokenResult.tokenSource === 'fallback' && fallbackTokenResult.restoredPageSession === false,
-  'reports when the saved token worked but no page session existed to restore'
+  fallbackTokenResult.tokenSource === 'fallback'
+    && fallbackTokenResult.restoredPageSession === true
+    && JSON.parse(globalThis.window.localStorage.getItem('lt-user')).token === 'saved-token',
+  'creates a page session when the encrypted saved token is still valid'
 );
 
 let staleTokenCalls = 0;

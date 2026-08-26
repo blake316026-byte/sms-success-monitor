@@ -52,6 +52,40 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
   }
 
+  const restorePageSession = (token) => {
+    let restored = false;
+    for (const store of [window.localStorage, window.sessionStorage]) {
+      for (let index = 0; index < store.length; index += 1) {
+        const key = store.key(index);
+        if (!key || (key !== 'lt-user' && !key.endsWith('-lt-user'))) continue;
+        try {
+          const storedUser = JSON.parse(store.getItem(key));
+          if (!storedUser || typeof storedUser !== 'object') continue;
+          storedUser.token = token;
+          store.setItem(key, JSON.stringify(storedUser));
+          restored = true;
+        } catch (_) {}
+      }
+    }
+    if (restored) return true;
+    try {
+      let prefix = '';
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index) || '';
+        const match = key.match(/^(.*)-(?:locale|Tkk|COUNTRY)$/);
+        if (match) {
+          prefix = match[1];
+          break;
+        }
+      }
+      const userKey = prefix ? `${prefix}-lt-user` : 'lt-user';
+      window.localStorage.setItem(userKey, JSON.stringify({ token }));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
   const urlCache = readUrlCache();
   const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
   const language = String(readStoredValue('locale') || 'zh-cn');
@@ -223,11 +257,15 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     }
 
     if (candidateRejected) continue;
+    const restoredPageSession = candidate.source === 'fallback'
+      ? restorePageSession(candidate.token)
+      : false;
     return {
       kind: 'ok',
       statuses: collected,
       reportedTotal: reportedTotal == null ? collected.length : reportedTotal,
-      tokenSource: candidate.source
+      tokenSource: candidate.source,
+      restoredPageSession
     };
   }
 

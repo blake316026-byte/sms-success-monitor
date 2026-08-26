@@ -102,6 +102,7 @@ for (const module of modules) {
     autoLoginStage: '',
     autoLoginCooldownUntil: 0,
     autoLoginTimer: null,
+    pageSessionRecoveryAttempted: false,
     needsImmediateScan: true
   });
 }
@@ -510,6 +511,7 @@ function ensurePageState(page) {
     autoLoginStage: '',
     autoLoginCooldownUntil: 0,
     autoLoginTimer: null,
+    pageSessionRecoveryAttempted: false,
     needsImmediateScan: true
   };
   moduleStates.set(page.id, state);
@@ -698,6 +700,7 @@ function resetAutoLoginState(state) {
   state.autoLoginInProgress = false;
   state.autoLoginStage = '';
   state.autoLoginCooldownUntil = 0;
+  state.pageSessionRecoveryAttempted = false;
   if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
   state.autoLoginTimer = null;
 }
@@ -1065,6 +1068,25 @@ async function scanModule(id) {
       handleAuthenticationRequired(id, result.message || '平台登录已失效。');
       return;
     } else if (result.kind === 'ok') {
+      const currentPath = (() => {
+        try { return new URL(page.view.webContents.getURL()).pathname; } catch (_) { return ''; }
+      })();
+      const canRestorePage = result.tokenSource === 'page' || result.restoredPageSession === true;
+      if (currentPath === '/login') {
+        if (!state.pageSessionRecoveryAttempted && canRestorePage) {
+          state.pageSessionRecoveryAttempted = true;
+          Object.assign(state, {
+            status: 'starting',
+            message: '已恢复本机 Token，正在打开短信记录页',
+            nextScanAt: null
+          });
+          broadcastSnapshot(id);
+          await page.view.webContents.loadURL(state.url);
+        } else {
+          handleAuthenticationRequired(id, '页面登录态无法通过有效 Token 恢复。');
+        }
+        return;
+      }
       const metrics = calculateMetrics(result.statuses, activeSampleLimit);
       Object.assign(state, {
         status: isAlert(metrics, ALERT_THRESHOLD) ? 'alert' : 'healthy',

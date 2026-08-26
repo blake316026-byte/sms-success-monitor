@@ -316,7 +316,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         lastMetricsScannedAt = scannedAt
 
         if webView.url?.path == "/login" {
-          if !pageSessionRecoveryAttempted && usedFallbackToken && restoredPageSession {
+          if !pageSessionRecoveryAttempted && (!usedFallbackToken || restoredPageSession) {
             pageSessionRecoveryAttempted = true
             needsImmediateScan = true
             emit(.starting("已恢复本机 Token，正在打开短信记录页"), nextScanAt: nil)

@@ -17,7 +17,7 @@ expected_probe = '''if url.path == "/login" {
     }'''
 forbidden_direct = '''"平台登录页已打开。",
           progressMessage: "正在自动登录"'''
-expected_session_recovery = '''if !pageSessionRecoveryAttempted && usedFallbackToken && restoredPageSession {'''
+expected_session_recovery = '''if !pageSessionRecoveryAttempted && (!usedFallbackToken || restoredPageSession) {'''
 expected_login_fallback = '''handleAuthenticationRequired(
               "页面登录态无法通过有效 Token 恢复。",
               progressMessage: "页面会话已失效，正在自动登录"

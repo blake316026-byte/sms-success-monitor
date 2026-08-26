@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.50**（macOS build 54、Windows v0.3.50、Android versionCode 50）。本版恢复 macOS 可换行平台导航的拖动排序，支持跨第二、第三排移动，并在重启后保留用户排序。
+当前开发版本：**v0.3.51**（macOS build 55、Windows v0.3.51）。本版在客户端重启后优先验证本机加密 Token；Token 仍有效时自动恢复网页会话，不再重复执行账号、图片验证码和 Google 验证码登录。
