@@ -102,6 +102,8 @@ jobs:
 
           **v0.3.42 Windows 刷新状态机修复**：刷新按钮在成功和失败后都会恢复可用；主进程等待 `did-start-loading` 与 `did-stop-loading` 真实事件才判定成功，未触发或超时时强制重新加载当前网址。刷新后立即重查短信和财务，并保留权限熔断的人工重试语义。公开客户端不包含真实后台链接、账号、密码、Token、Cookie 或 Google 密钥。
 
+          **v0.3.50 macOS 平台排序修复**：恢复可换行平台导航的拖动排序，支持跨第二、第三排移动；调整后的顺序保存在用户本机，重启客户端后继续保留。
+
           这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
           NOTES
       - name: Publish GitHub Release
