@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   goBack: () => ipcRenderer.invoke('page:back'),
   goForward: () => ipcRenderer.invoke('page:forward'),
   reload: () => ipcRenderer.invoke('page:reload'),
+  clearBrowserCache: () => ipcRenderer.invoke('browser:clear-cache'),
   findInPage: (query, options) => ipcRenderer.invoke('page:find', query, options),
   stopFindInPage: (action) => ipcRenderer.invoke('page:stop-find', action),
   addPage: (page) => ipcRenderer.invoke('page:add', page),

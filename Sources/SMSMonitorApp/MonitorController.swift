@@ -1039,6 +1039,50 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     handleScanFailure("平台页面加载失败：\(error.localizedDescription)")
   }
 
+  func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+  ) {
+    if #available(macOS 11.3, *), navigationAction.shouldPerformDownload {
+      decisionHandler(.download)
+    } else {
+      decisionHandler(.allow)
+    }
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationResponse: WKNavigationResponse,
+    decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+  ) {
+    if #available(macOS 11.3, *),
+      (!navigationResponse.canShowMIMEType || isAttachmentResponse(navigationResponse))
+    {
+      decisionHandler(.download)
+    } else {
+      decisionHandler(.allow)
+    }
+  }
+
+  @available(macOS 11.3, *)
+  func webView(
+    _ webView: WKWebView,
+    navigationAction: WKNavigationAction,
+    didBecome download: WKDownload
+  ) {
+    PlatformDownloadCoordinator.shared.attach(download)
+  }
+
+  @available(macOS 11.3, *)
+  func webView(
+    _ webView: WKWebView,
+    navigationResponse: WKNavigationResponse,
+    didBecome download: WKDownload
+  ) {
+    PlatformDownloadCoordinator.shared.attach(download)
+  }
+
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil

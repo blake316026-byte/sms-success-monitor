@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.48**（macOS build 52、Windows v0.3.48、Android versionCode 50）。本版修复 macOS 登录页卡住时持续加载的问题：页面导航超时后继续接口检测，只有真正恢复页面会话才重开短信页；Token 有效但页面会话无法恢复时，转入图片验证码自动登录，不再循环扫描登录页。
+当前正式版本：**v0.3.49**（macOS build 53、Windows v0.3.49、Android versionCode 50）。本版为 macOS 和 Windows 工作台新增网页缓存清理功能，保留登录状态与本机配置并从源站重新加载；同时接管后台文件下载，自动保存到系统“下载”目录，重名文件自动编号，完成后在 Finder 或资源管理器中定位。

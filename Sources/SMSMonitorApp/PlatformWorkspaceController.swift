@@ -3,6 +3,12 @@ import Foundation
 import SMSMonitorCore
 import WebKit
 
+func isAttachmentResponse(_ navigationResponse: WKNavigationResponse) -> Bool {
+  guard let response = navigationResponse.response as? HTTPURLResponse else { return false }
+  return response.value(forHTTPHeaderField: "Content-Disposition")?
+    .localizedCaseInsensitiveContains("attachment") == true
+}
+
 struct MonitoredPlatformPage {
   let configuration: MonitorConfiguration
   let webView: WKWebView
@@ -22,6 +28,78 @@ struct PlatformAutoLoginTarget {
   let monitorID: String?
 }
 
+@available(macOS 11.3, *)
+final class PlatformDownloadCoordinator: NSObject, WKDownloadDelegate {
+  static let shared = PlatformDownloadCoordinator()
+
+  private var destinations: [ObjectIdentifier: URL] = [:]
+
+  func attach(_ download: WKDownload) {
+    download.delegate = self
+  }
+
+  func download(
+    _ download: WKDownload,
+    decideDestinationUsing response: URLResponse,
+    suggestedFilename: String,
+    completionHandler: @escaping (URL?) -> Void
+  ) {
+    let downloadsDirectory = FileManager.default.urls(
+      for: .downloadsDirectory,
+      in: .userDomainMask
+    ).first
+    guard let downloadsDirectory else {
+      completionHandler(nil)
+      return
+    }
+    let destination = Self.availableDestination(
+      directory: downloadsDirectory,
+      suggestedFilename: suggestedFilename
+    )
+    destinations[ObjectIdentifier(download)] = destination
+    completionHandler(destination)
+  }
+
+  func downloadDidFinish(_ download: WKDownload) {
+    guard let destination = destinations.removeValue(forKey: ObjectIdentifier(download)) else {
+      return
+    }
+    NSWorkspace.shared.activateFileViewerSelecting([destination])
+  }
+
+  func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+    destinations.removeValue(forKey: ObjectIdentifier(download))
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "文件下载失败"
+    alert.informativeText = error.localizedDescription
+    alert.addButton(withTitle: "知道了")
+    if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+      alert.beginSheetModal(for: window)
+    } else {
+      alert.runModal()
+    }
+  }
+
+  private static func availableDestination(directory: URL, suggestedFilename: String) -> URL {
+    let rawName = (suggestedFilename as NSString).lastPathComponent
+    let filename = rawName.isEmpty ? "download" : rawName
+    let candidate = directory.appendingPathComponent(filename, isDirectory: false)
+    guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
+
+    let extensionName = candidate.pathExtension
+    let baseName = candidate.deletingPathExtension().lastPathComponent
+    for index in 2...9_999 {
+      let numberedName = extensionName.isEmpty
+        ? "\(baseName) (\(index))"
+        : "\(baseName) (\(index)).\(extensionName)"
+      let numberedURL = directory.appendingPathComponent(numberedName, isDirectory: false)
+      if !FileManager.default.fileExists(atPath: numberedURL.path) { return numberedURL }
+    }
+    return directory.appendingPathComponent("\(UUID().uuidString)-\(filename)", isDirectory: false)
+  }
+}
+
 private struct SavedPlatformPage: Codable {
   let id: UUID
   let monitorID: String?
@@ -34,7 +112,7 @@ private struct SavedWorkspaceLayout: Codable {
   let knownBuiltInIDs: [String]
 }
 
-private final class PlatformPageViewController: NSViewController {
+private final class PlatformPageViewController: NSViewController, WKNavigationDelegate {
   let id: UUID
   let monitorID: String?
   let webView: WKWebView
@@ -64,6 +142,9 @@ private final class PlatformPageViewController: NSViewController {
     self.webView = webView
     super.init(nibName: nil, bundle: nil)
     title = name
+    if webView.navigationDelegate == nil {
+      webView.navigationDelegate = self
+    }
 
     observations = [
       webView.observe(\.url, options: [.new]) { [weak self] _, _ in
@@ -146,6 +227,50 @@ private final class PlatformPageViewController: NSViewController {
       in: nil,
       in: .page
     ) { _ in }
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+  ) {
+    if #available(macOS 11.3, *), navigationAction.shouldPerformDownload {
+      decisionHandler(.download)
+    } else {
+      decisionHandler(.allow)
+    }
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationResponse: WKNavigationResponse,
+    decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+  ) {
+    if #available(macOS 11.3, *),
+      (!navigationResponse.canShowMIMEType || isAttachmentResponse(navigationResponse))
+    {
+      decisionHandler(.download)
+    } else {
+      decisionHandler(.allow)
+    }
+  }
+
+  @available(macOS 11.3, *)
+  func webView(
+    _ webView: WKWebView,
+    navigationAction: WKNavigationAction,
+    didBecome download: WKDownload
+  ) {
+    PlatformDownloadCoordinator.shared.attach(download)
+  }
+
+  @available(macOS 11.3, *)
+  func webView(
+    _ webView: WKWebView,
+    navigationResponse: WKNavigationResponse,
+    didBecome download: WKDownload
+  ) {
+    PlatformDownloadCoordinator.shared.attach(download)
   }
 }
 
@@ -357,6 +482,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     static let back = NSToolbarItem.Identifier("SMSMonitorPlatformBack")
     static let forward = NSToolbarItem.Identifier("SMSMonitorPlatformForward")
     static let reload = NSToolbarItem.Identifier("SMSMonitorPlatformReload")
+    static let clearCache = NSToolbarItem.Identifier("SMSMonitorPlatformClearCache")
     static let address = NSToolbarItem.Identifier("SMSMonitorPlatformAddress")
     static let find = NSToolbarItem.Identifier("SMSMonitorPlatformFind")
     static let autoLogin = NSToolbarItem.Identifier("SMSMonitorPlatformAutoLogin")
@@ -789,6 +915,38 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     updateToolbar()
   }
 
+  @objc private func clearBrowserCache() {
+    let cacheTypes: Set<String> = [
+      WKWebsiteDataTypeDiskCache,
+      WKWebsiteDataTypeMemoryCache,
+      WKWebsiteDataTypeOfflineWebApplicationCache,
+      WKWebsiteDataTypeServiceWorkerRegistrations,
+    ]
+    var storesByIdentifier: [ObjectIdentifier: WKWebsiteDataStore] = [:]
+    for page in pages {
+      let store = page.webView.configuration.websiteDataStore
+      storesByIdentifier[ObjectIdentifier(store)] = store
+    }
+    let group = DispatchGroup()
+    for store in storesByIdentifier.values {
+      group.enter()
+      store.removeData(ofTypes: cacheTypes, modifiedSince: .distantPast) {
+        group.leave()
+      }
+    }
+    window.subtitle = "正在清除网页缓存..."
+    group.notify(queue: .main) { [weak self] in
+      guard let self else { return }
+      for page in self.pages {
+        page.webView.reloadFromOrigin()
+      }
+      self.window.subtitle = "网页缓存已清除，正在从源站重新加载"
+      DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+        self?.updateWindowSubtitle()
+      }
+    }
+  }
+
   @objc private func configureAutoLogin() {
     guard let page = selectedPage else { return }
     onAutoLoginSettings?(
@@ -993,6 +1151,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       ToolbarIdentifier.back,
       ToolbarIdentifier.forward,
       ToolbarIdentifier.reload,
+      ToolbarIdentifier.clearCache,
       .flexibleSpace,
       ToolbarIdentifier.address,
       ToolbarIdentifier.find,
@@ -1009,6 +1168,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       ToolbarIdentifier.back,
       ToolbarIdentifier.forward,
       ToolbarIdentifier.reload,
+      ToolbarIdentifier.clearCache,
       ToolbarIdentifier.address,
       .flexibleSpace,
       ToolbarIdentifier.find,
@@ -1058,6 +1218,15 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       )
       reloadItem = item
       return item
+
+    case ToolbarIdentifier.clearCache:
+      return toolbarButton(
+        identifier: itemIdentifier,
+        label: "清除缓存",
+        symbol: "eraser",
+        toolTip: "清除全部后台网页缓存并从源站重新加载（保留登录状态）",
+        action: #selector(clearBrowserCache)
+      )
 
     case ToolbarIdentifier.address:
       let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 470, height: 28))

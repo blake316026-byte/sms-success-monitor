@@ -5,6 +5,7 @@ import {
   Menu,
   Notification,
   safeStorage,
+  shell,
   WebContentsView
 } from 'electron';
 import crypto from 'node:crypto';
@@ -55,6 +56,7 @@ const financialRefreshIntervalMs = 20_000;
 
 const pages = new Map();
 const moduleStates = new Map();
+const downloadSessions = new WeakSet();
 let workbenchWindow;
 let widgetWindow;
 let detailWindow;
@@ -529,6 +531,7 @@ function createRemotePage(page) {
   view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false);
   });
+  configureDownloads(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url }) => {
     view.webContents.loadURL(url);
     return { action: 'deny' };
@@ -576,6 +579,37 @@ function createRemotePage(page) {
   pages.set(page.id, { ...page, view });
   view.webContents.loadURL(page.url);
   return view;
+}
+
+function availableDownloadPath(filename) {
+  const downloadsDirectory = app.getPath('downloads');
+  const safeName = path.basename(String(filename || '').trim()) || 'download';
+  const extension = path.extname(safeName);
+  const baseName = path.basename(safeName, extension);
+  let candidate = path.join(downloadsDirectory, safeName);
+  for (let index = 2; fs.existsSync(candidate) && index < 10_000; index += 1) {
+    candidate = path.join(downloadsDirectory, `${baseName} (${index})${extension}`);
+  }
+  return candidate;
+}
+
+function configureDownloads(targetSession) {
+  if (downloadSessions.has(targetSession)) return;
+  downloadSessions.add(targetSession);
+  targetSession.on('will-download', (_event, item) => {
+    const destination = availableDownloadPath(item.getFilename());
+    item.setSavePath(destination);
+    item.once('done', (_doneEvent, state) => {
+      if (state === 'completed') {
+        shell.showItemInFolder(destination);
+        return;
+      }
+      new Notification({
+        title: '文件下载失败',
+        body: `${path.basename(destination)}：${state}`
+      }).show();
+    });
+  });
 }
 
 async function handlePageFinished(id) {
@@ -1531,6 +1565,25 @@ function registerIPC() {
       state.message = `刷新失败：${error.message}`;
       broadcastSnapshot(page.id);
       return { ok: false, message: state.message };
+    }
+  });
+  ipcMain.handle('browser:clear-cache', async () => {
+    const activePages = [...pages.values()].filter((page) => !page.view.webContents.isDestroyed());
+    const sessions = [...new Set(activePages.map((page) => page.view.webContents.session))];
+    try {
+      await Promise.all(sessions.map(async (targetSession) => {
+        await targetSession.clearCache();
+        await targetSession.clearCodeCaches({});
+        await targetSession.clearStorageData({
+          storages: ['shadercache', 'serviceworkers', 'cachestorage']
+        });
+      }));
+      for (const page of activePages) {
+        page.view.webContents.reloadIgnoringCache();
+      }
+      return { ok: true, message: '网页缓存已清除，正在从源站重新加载' };
+    } catch (error) {
+      return { ok: false, message: `清除缓存失败：${error.message}` };
     }
   });
   ipcMain.handle('page:find', (_event, query, options) => {

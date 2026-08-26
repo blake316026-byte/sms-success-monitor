@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  Eraser,
   Hash,
   KeyRound,
   Lock,
@@ -31,6 +32,7 @@ const iconSet = {
   ChevronDown,
   ChevronUp,
   FileText,
+  Eraser,
   Hash,
   KeyRound,
   Lock,
@@ -60,6 +62,7 @@ const address = document.querySelector('#address');
 const backButton = document.querySelector('#back');
 const forwardButton = document.querySelector('#forward');
 const reloadButton = document.querySelector('#reload');
+const clearCacheButton = document.querySelector('#clear-cache');
 const closeButton = document.querySelector('#close-page');
 const renameButton = document.querySelector('#rename-page');
 const credentialsButton = document.querySelector('#credentials');
@@ -245,6 +248,17 @@ reloadButton.addEventListener('click', async () => {
   reloadButton.disabled = false;
   reloadButton.classList.remove('loading');
   if (!result?.ok) window.alert(result?.message || '刷新失败，请重试');
+});
+clearCacheButton.addEventListener('click', async () => {
+  const confirmed = window.confirm('清除全部后台的网页缓存并从源站重新加载？登录状态和本机配置会保留。');
+  if (!confirmed) return;
+  clearCacheButton.disabled = true;
+  const result = await window.smsApi.clearBrowserCache().catch((error) => ({
+    ok: false,
+    message: error.message
+  }));
+  clearCacheButton.disabled = false;
+  window.alert(result?.message || (result?.ok ? '网页缓存已清除' : '清除缓存失败'));
 });
 sampleLimitInput.addEventListener('change', async () => {
   const result = await window.smsApi.setSampleLimit(sampleLimitInput.value);
