@@ -17,14 +17,21 @@ expected_probe = '''if url.path == "/login" {
     }'''
 forbidden_direct = '''"平台登录页已打开。",
           progressMessage: "正在自动登录"'''
-expected_valid_token = '''} else {
-            scheduleNextScanAfterCurrentRun()
-            if metrics.shouldAlert(threshold: configuration.alertThreshold)'''
+expected_session_recovery = '''if !pageSessionRecoveryAttempted && usedFallbackToken && restoredPageSession {'''
+expected_login_fallback = '''handleAuthenticationRequired(
+              "页面登录态无法通过有效 Token 恢复。",
+              progressMessage: "页面会话已失效，正在自动登录"
+            )'''
 
-if expected_probe not in source or expected_valid_token not in source or forbidden_direct in source:
+if (
+    expected_probe not in source
+    or expected_session_recovery not in source
+    or expected_login_fallback not in source
+    or forbidden_direct in source
+):
     raise SystemExit(
-        "FAIL: /login must validate the saved token before starting captcha auto login"
+        "FAIL: /login must validate the token, recover a real page session, or start captcha auto login"
     )
 
-print("PASS: /login validates the saved token before captcha auto login")
+print("PASS: /login validates the token and falls back to captcha when page-session recovery fails")
 PY

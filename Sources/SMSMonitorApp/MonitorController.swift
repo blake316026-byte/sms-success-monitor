@@ -257,6 +257,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         self.scheduleConnectionKickoff()
         return
       }
+      if self.webView.isLoading {
+        NSLog(
+          "[SMSMonitor] %@ stopping a stalled page load before API scan",
+          self.configuration.id
+        )
+        self.webView.stopLoading()
+      }
       self.connectionKickoffWorkItem = nil
       self.connectionKickoffDeadline = nil
       self.needsImmediateScan = false
@@ -309,21 +316,16 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         lastMetricsScannedAt = scannedAt
 
         if webView.url?.path == "/login" {
-          if !pageSessionRecoveryAttempted {
+          if !pageSessionRecoveryAttempted && usedFallbackToken && restoredPageSession {
             pageSessionRecoveryAttempted = true
             needsImmediateScan = true
-            let recoveryDetail = usedFallbackToken && restoredPageSession
-              ? "已恢复本机 Token"
-              : "Token 仍有效"
-            emit(.starting("\(recoveryDetail)，正在打开短信记录页"), nextScanAt: nil)
+            emit(.starting("已恢复本机 Token，正在打开短信记录页"), nextScanAt: nil)
             webView.load(URLRequest(url: monitoringPageURL))
           } else {
-            scheduleNextScanAfterCurrentRun()
-            if metrics.shouldAlert(threshold: configuration.alertThreshold) {
-              emit(.alert(metrics, scannedAt), nextScanAt: nextScanAt)
-            } else {
-              emit(.healthy(metrics, scannedAt), nextScanAt: nextScanAt)
-            }
+            handleAuthenticationRequired(
+              "页面登录态无法通过有效 Token 恢复。",
+              progressMessage: "页面会话已失效，正在自动登录"
+            )
           }
           return
         }
