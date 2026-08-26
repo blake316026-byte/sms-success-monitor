@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前正式版本：**v0.3.49**（macOS build 53、Windows v0.3.49、Android versionCode 50）。本版为 macOS 和 Windows 工作台新增网页缓存清理功能，保留登录状态与本机配置并从源站重新加载；同时接管后台文件下载，自动保存到系统“下载”目录，重名文件自动编号，完成后在 Finder 或资源管理器中定位。
+当前开发版本：**v0.3.50**（macOS build 54）。本版恢复 macOS 可换行平台导航的拖动排序，支持跨第二、第三排移动，并在重启后保留用户排序。

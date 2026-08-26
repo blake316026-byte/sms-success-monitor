@@ -349,11 +349,13 @@ private final class WorkspaceTabViewController: NSTabViewController {
 
 private final class WrappingTabBarView: NSView {
   var onSelect: ((Int) -> Void)?
+  var onMove: ((Int, Int) -> Void)?
   var items: [NSTabViewItem] = [] { didSet { rebuildButtons() } }
   var selectedIndex = 0 { didSet { updateSelection() } }
   var onHeightChange: ((CGFloat) -> Void)?
 
   private var buttons: [NSButton] = []
+  private var draggedIndex: Int?
   private var lastHeight: CGFloat = 0
   private let horizontalPadding: CGFloat = 8
   private let verticalPadding: CGFloat = 6
@@ -361,6 +363,16 @@ private final class WrappingTabBarView: NSView {
   private let buttonHeight: CGFloat = 28
 
   override var isFlipped: Bool { true }
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(handleTabDrag(_:))))
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(handleTabDrag(_:))))
+  }
 
   private func rebuildButtons() {
     buttons.forEach { $0.removeFromSuperview() }
@@ -417,6 +429,36 @@ private final class WrappingTabBarView: NSView {
 
   @objc private func selectTab(_ sender: NSButton) {
     onSelect?(sender.tag)
+  }
+
+  @objc private func handleTabDrag(_ recognizer: NSPanGestureRecognizer) {
+    guard buttons.count > 1 else { return }
+    switch recognizer.state {
+    case .began:
+      draggedIndex = buttonIndex(at: recognizer.location(in: self), nearest: false)
+    case .changed:
+      guard let source = draggedIndex,
+        let target = buttonIndex(at: recognizer.location(in: self), nearest: true),
+        source != target
+      else { return }
+      onMove?(source, target)
+      draggedIndex = target
+    default:
+      draggedIndex = nil
+    }
+  }
+
+  private func buttonIndex(at point: NSPoint, nearest: Bool) -> Int? {
+    if let index = buttons.firstIndex(where: { $0.frame.contains(point) }) {
+      return index
+    }
+    guard nearest, bounds.insetBy(dx: -24, dy: -24).contains(point) else { return nil }
+    return buttons.indices.min { lhs, rhs in
+      let left = buttons[lhs].frame
+      let right = buttons[rhs].frame
+      return hypot(point.x - left.midX, point.y - left.midY)
+        < hypot(point.x - right.midX, point.y - right.midY)
+    }
   }
 
   private func updateSelection() {
@@ -618,6 +660,9 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     workspaceContainer.tabBar.onSelect = { [weak self] index in
       guard let self, self.pages.indices.contains(index) else { return }
       self.tabController.selectedTabViewItemIndex = index
+    }
+    workspaceContainer.tabBar.onMove = { [weak self] source, target in
+      self?.movePage(from: source, to: target)
     }
     window.contentViewController = workspaceContainer
     window.title = "短信后台工作台"
