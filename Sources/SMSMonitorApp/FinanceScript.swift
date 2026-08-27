@@ -76,6 +76,9 @@ enum FinanceScript {
     };
 
     const user = readStoredValue('lt-user');
+    const signedOut = () => window.__smsMonitorSignedOut === true
+      || window.localStorage.getItem('__smsMonitorSignedOut') === '1';
+    if (signedOut()) return { kind: 'auth', manualOnly: true, message: '已退出账号，不再使用旧 Token。' };
     const pageToken = String(user && typeof user === 'object' ? user.token || '' : '').trim();
     const savedToken = String(fallbackToken || '').trim();
     const tokenCandidates = [];
@@ -85,7 +88,7 @@ enum FinanceScript {
       return { kind: 'auth', manualOnly: Boolean(user), message: '客户端登录态已失效，请重新登录。' };
     }
     const initialSession = JSON.stringify(user);
-    const sessionChanged = () => JSON.stringify(readStoredValue('lt-user')) !== initialSession;
+    const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
 
     const urlCache = readUrlCache();
     const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
@@ -98,6 +101,17 @@ enum FinanceScript {
     const isOKBET = normalizedPlatformID === 'ok01'
       || normalizedPlatformName === 'okbet'
       || normalizedPlatformName === 'ok01';
+
+    // NPG's report menu requires REPORT and CK_DASHBOARD, not payment summaries.
+    if (!isOKBET && user && (Array.isArray(user.resources) || typeof user.root === 'boolean')) {
+      const allowed = (resource) => user.root === true || (Array.isArray(user.resources) && user.resources.some((grant) => (
+        typeof grant === 'string' && (grant === resource
+          || (grant.endsWith('_') && resource.startsWith(grant)))
+      )));
+      if (!allowed('REPORT') || !allowed('CK_DASHBOARD')) {
+        return { kind: 'permission', message: '当前账号未授权报表看板（REPORT / CK_DASHBOARD），已停止财务查询。' };
+      }
+    }
     const isAuthenticationFailure = (response, payload) => {
       if (response.status === 401) return true;
       const status = Number(payload && (payload.status ?? payload.code));

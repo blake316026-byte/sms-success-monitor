@@ -75,6 +75,16 @@ final class LocalCredentialStore {
     }
   }
 
+  func clearToken(for moduleID: String) {
+    Self.lock.lock()
+    defer { Self.lock.unlock() }
+    var profiles = loadProfiles()
+    guard var profile = profiles[moduleID] else { return }
+    profile.token = ""
+    profiles[moduleID] = profile
+    _ = persist(profiles)
+  }
+
   private func loadProfiles() -> [String: LocalLoginProfile] {
     guard
       let key = encryptionKey(),

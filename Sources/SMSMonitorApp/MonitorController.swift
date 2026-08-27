@@ -3,6 +3,13 @@ import Foundation
 import SMSMonitorCore
 import WebKit
 
+private final class SessionLifecycleHandler: NSObject, WKScriptMessageHandler {
+  weak var owner: ModuleMonitorController?
+  func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+    owner?.handleSessionLifecycle(message)
+  }
+}
+
 private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private(set) var configuration: MonitorConfiguration
   let webView: WKWebView
@@ -43,6 +50,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var autoLoginOutcomeWorkItem: DispatchWorkItem?
   private var pageSessionRecoveryAttempted = false
   private var manualAuthenticationRequired = false
+  private var credentialLoginPending = false
+  private var authenticationEpoch = UUID()
+  private let sessionLifecycleHandler = SessionLifecycleHandler()
   private var mockScenario: String?
   private var isStarted = false
   private var isPageActive = false
@@ -88,6 +98,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
     super.init()
     webView.navigationDelegate = self
+    sessionLifecycleHandler.owner = self
+    let content = webView.configuration.userContentController
+    content.add(sessionLifecycleHandler, name: "smsSessionLifecycle")
+    content.addUserScript(WKUserScript(source: SessionLifecycleScript.body, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    webView.evaluateJavaScript(SessionLifecycleScript.body, completionHandler: nil)
   }
 
   deinit {
@@ -148,7 +163,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       emitMockState()
       return
     }
-    guard !isScanning, !smsPermissionBlocked else { return }
+    guard isStarted, !isScanning, !smsPermissionBlocked, !autoLoginInProgress else { return }
+    guard !manualAuthenticationRequired else { return }
+    if credentialLoginPending {
+      handleAuthenticationRequired("旧 Token 已清除，正在重新认证。")
+      return
+    }
     guard let currentURL = webView.url else {
       emit(.starting("平台页面尚未加载"), nextScanAt: nextScanAt)
       scheduleNextScan(after: 5)
@@ -349,7 +369,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
       case "permission":
         smsPermissionBlocked = true
-        manualAuthenticationRequired = true
         lastMetrics = nil
         lastMetricsScannedAt = nil
         cancelNextScan()
@@ -436,7 +455,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func refreshFinancialMetricsNow() {
-    guard !financePermissionBlocked else { return }
+    guard isStarted, !financePermissionBlocked, !manualAuthenticationRequired, !autoLoginInProgress, !credentialLoginPending else {
+      if isStarted { scheduleFinancialRefresh(after: Self.financialRefreshInterval) }
+      return
+    }
     guard !isRefreshingFinancial else {
       scheduleFinancialRefresh(after: Self.financialRefreshInterval)
       return
@@ -449,6 +471,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     isRefreshingFinancial = true
+    let epoch = authenticationEpoch
     webView.callAsyncJavaScript(
       FinanceScript.body,
       arguments: [
@@ -461,8 +484,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     ) { [weak self] result in
       DispatchQueue.main.async {
         guard let self else { return }
+        guard self.isStarted, self.authenticationEpoch == epoch else { return }
         self.isRefreshingFinancial = false
-        guard self.isStarted else { return }
         self.finishFinancialRefresh(result)
         self.scheduleFinancialRefresh(after: Self.financialRefreshInterval)
       }
@@ -492,7 +515,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       } else if kind == "permission" {
         latestDailyFinancialMetrics = nil
         financePermissionBlocked = true
-        manualAuthenticationRequired = true
         let message = payload["message"] as? String ?? "当前账号无财务数据查看权限，已停止财务查询。"
         NSLog("[SMSMonitor] %@ financial refresh permission blocked: %@", configuration.id, message)
       } else {
@@ -534,6 +556,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func credentialsDidChange() {
+    authenticationEpoch = UUID()
+    activeScanID = nil
+    isScanning = false
+    isRefreshingFinancial = false
+    scanTimeoutWorkItem?.cancel()
+    lastMetrics = nil
+    lastMetricsScannedAt = nil
+    latestDailyFinancialMetrics = nil
     manualAuthenticationRequired = false
     smsPermissionBlocked = false
     financePermissionBlocked = false
@@ -545,7 +575,81 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
     guard let currentURL = webView.url, requiresAuthentication(currentURL) else { return }
+    credentialLoginPending = true
+    credentialStore.clearToken(for: configuration.id)
     handleAuthenticationRequired("自动登录配置已更新。")
+  }
+
+  fileprivate func handleSessionLifecycle(_ message: WKScriptMessage) {
+    guard message.frameInfo.isMainFrame,
+      message.frameInfo.securityOrigin.host == configuration.targetURL.host
+    else { return }
+    let payload = message.body as? [String: Any]
+    let event = payload?["event"] as? String ?? message.body as? String ?? ""
+    let signedOutUsername = payload?["username"] as? String ?? ""
+    if event == "ended" {
+      authenticationEpoch = UUID()
+      let epoch = authenticationEpoch
+      credentialStore.clearToken(for: configuration.id)
+      manualAuthenticationRequired = true
+      credentialLoginPending = false
+      autoLoginInProgress = false
+      autoLoginStage = ""
+      autoLoginOutcomeWorkItem?.cancel()
+      connectionKickoffWorkItem?.cancel()
+      scanTimeoutWorkItem?.cancel()
+      cancelNextScan()
+      financialRefreshWorkItem?.cancel()
+      activeScanID = nil
+      isScanning = false
+      isRefreshingFinancial = false
+      lastMetrics = nil
+      lastMetricsScannedAt = nil
+      latestDailyFinancialMetrics = nil
+      let host = message.frameInfo.securityOrigin.host
+      let store = webView.configuration.websiteDataStore.httpCookieStore
+      store.getAllCookies { [weak self] cookies in
+        guard let self, self.authenticationEpoch == epoch, self.manualAuthenticationRequired else { return }
+        let deletion = DispatchGroup()
+        for cookie in cookies {
+          let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+          if cookie.name.lowercased() == "token", host == domain || host.hasSuffix(".\(domain)") {
+            deletion.enter()
+            store.delete(cookie) { deletion.leave() }
+          }
+        }
+        deletion.notify(queue: .main) { [weak self] in
+          guard let self, self.authenticationEpoch == epoch, self.manualAuthenticationRequired,
+            let profile = self.credentialStore.profile(for: self.configuration.id),
+            PostLogoutLoginPolicy.shouldResume(
+              signedOutUsername: signedOutUsername,
+              configuredUsername: profile.username,
+              canAutoLogin: profile.canAutoLogin
+            )
+          else { return }
+          self.manualAuthenticationRequired = false
+          self.credentialLoginPending = true
+          self.captchaAutoLoginAttempts = 0
+          self.totpAutoLoginAttempts = 0
+          self.autoLoginCooldownUntil = nil
+          self.handleAuthenticationRequired("旧 Token 已清除。", progressMessage: "正在使用已保存的同一账号重新登录")
+        }
+      }
+      emit(.authenticationRequired("已退出账号，旧 Token 已作废；如需自动登录，请重新保存自动登录配置。"), nextScanAt: nil)
+    } else if event == "authenticated" {
+      manualAuthenticationRequired = false
+      credentialLoginPending = false
+      smsPermissionBlocked = false
+      financePermissionBlocked = false
+      lastMetrics = nil
+      lastMetricsScannedAt = nil
+      latestDailyFinancialMetrics = nil
+      persistCurrentToken()
+      if isStarted && !autoLoginInProgress {
+        scheduleNextScan(after: 0)
+        scheduleFinancialRefresh(after: 1)
+      }
+    }
   }
 
   private func handleAuthenticationRequired(
@@ -627,8 +731,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       ),
       nextScanAt: nextScanAt
     )
+    let epoch = authenticationEpoch
     loginAutomation.snapshot(in: webView) { [weak self] result in
-      guard let self else { return }
+      guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
       switch result {
       case .failure(let error):
         self.retryAutoLogin("无法读取登录页面：\(error.localizedDescription)")
@@ -663,8 +768,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       retryAutoLogin("验证码图片尚未加载")
       return
     }
+    let epoch = authenticationEpoch
     automationRuntime.recognize(dataURL: dataURL) { [weak self] result in
-      guard let self else { return }
+      guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
       switch result {
       case .failure(let error):
         self.retryAutoLogin("本地验证码识别失败：\(error.localizedDescription)")
@@ -679,7 +785,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           profile: profile,
           captcha: captcha
         ) { [weak self] submitResult in
-          guard let self else { return }
+          guard let self, self.authenticationEpoch == epoch else { return }
           switch submitResult {
           case .failure(let error):
             self.retryAutoLogin("登录表单提交失败：\(error.localizedDescription)")
@@ -706,6 +812,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     profile: LocalLoginProfile,
     clockOffsetMilliseconds: Double
   ) {
+    let epoch = authenticationEpoch
     let secret = profile.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !secret.isEmpty else {
       autoLoginInProgress = false
@@ -726,17 +833,17 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let cyclePosition = adjustedNow.timeIntervalSince1970.truncatingRemainder(dividingBy: 30)
     let delay = cyclePosition > 24 ? 6.5 : 0
     DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-      guard let self else { return }
+      guard let self, self.authenticationEpoch == epoch else { return }
       guard self.autoLoginInProgress else { return }
       let timestamp = Date().addingTimeInterval(TimeInterval(offset))
       self.automationRuntime.generateTOTP(secret: secret, timestamp: timestamp) { [weak self] result in
-        guard let self else { return }
+        guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
         switch result {
         case .failure(let error):
           self.retryAutoLogin("Google 动态码生成失败：\(error.localizedDescription)")
         case .success(let code):
           self.loginAutomation.submitTOTP(in: self.webView, code: code) { [weak self] submitResult in
-            guard let self else { return }
+            guard let self, self.authenticationEpoch == epoch else { return }
             guard (try? submitResult.get()) == true else {
               self.retryAutoLogin("Google 验证页面尚未准备完成")
               return
@@ -751,8 +858,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private func scheduleAutoLoginOutcomeCheck() {
     autoLoginOutcomeWorkItem?.cancel()
+    let epoch = authenticationEpoch
     let item = DispatchWorkItem { [weak self] in
-      guard let self else { return }
+      guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
       self.autoLoginInProgress = false
       guard let currentURL = self.webView.url else {
         self.retryAutoLogin("登录后页面没有返回有效地址")
@@ -779,6 +887,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func retryAutoLogin(_ message: String) {
+    guard !manualAuthenticationRequired else { return }
+    let epoch = authenticationEpoch
     autoLoginInProgress = false
     autoLoginStage = ""
     let isTOTP = webView.url?.path == "/ga-auth"
@@ -806,6 +916,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     )
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
       guard let self, let currentURL = self.webView.url,
+        self.authenticationEpoch == epoch,
         let profile = self.credentialStore.profile(for: self.configuration.id)
       else { return }
       self.attemptAutoLogin(profile: profile, url: currentURL)
@@ -841,6 +952,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func completeAutoLogin(token: String) {
+    credentialLoginPending = false
     autoLoginInProgress = false
     autoLoginStage = ""
     captchaAutoLoginAttempts = 0
@@ -863,9 +975,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func persistCurrentToken() {
+    guard !manualAuthenticationRequired else { return }
+    let epoch = authenticationEpoch
     guard let profile = credentialStore.profile(for: configuration.id) else { return }
     loginAutomation.extractToken(in: webView, expectedUsername: profile.username) { [weak self] token in
-      guard let self else { return }
+      guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
       guard self.credentialStore.profile(for: self.configuration.id)?.username == profile.username else { return }
       if !token.isEmpty {
         self.credentialStore.updateToken(token, for: self.configuration.id)

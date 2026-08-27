@@ -20,6 +20,7 @@ class Storage {
 }
 const success = {
   status: 0, page: { content: [{ id: 1, status: 'SUCCESS' }], totalElements: 1 },
+  model: { today: { rechargeSuccAmount: 100, withdrawSuccAmount: 10 } },
   list: [{ countryId: 'PH', type: 'COUNTRY_DAY', timeType: 'DAY', columns: { rechargeAmount: 100, withdrawAmount: 10 } }],
 };
 const response = (status, payload = success) => ({ ok: status === 200, status, async json() { return payload; } });
@@ -73,4 +74,32 @@ for (const [name, run, args] of adapters) {
   }, null);
   assert.equal((await run(...args)).kind, 'ok', `${name}: empty startup session can recover`);
   console.log(`PASS: ${name} account isolation, permission handling and stale-result rejection`);
+}
+
+// Permission names and prefix matching are taken from NPG's shipped menu/checkAuth.
+for (const [name, run, originalArgs] of adapters) {
+  const args = originalArgs.map((arg) => arg === 'ok01' ? 'test' : arg === 'okbet' ? 'test' : arg);
+  for (const resources of [[], ['PAY', 'RECHARGE_RECORD_SUMMARY', 'WITHDRAW_RECORD_SUMMARY'], ['_SYSTEM_'], ['SMS_RECORD', 'CK_DASHBOARD_EXTRA'], null]) {
+    let calls = 0;
+    setup(async () => { calls++; return response(200); }, { username: 'restricted', token: 'current', root: false, resources });
+    assert.equal((await run(...args)).kind, 'permission', `${name}: reject missing grants`);
+    assert.equal(calls, 0, `${name}: preflight must not send any request`);
+  }
+  for (const user of [
+    { root: true },
+    { root: false, resources: ['SMS_RECORD_LIST', 'REPORT', 'CK_DASHBOARD'] },
+    { root: false, resources: ['SMS_', 'REPORT', 'CK_'] },
+  ]) {
+    let calls = 0;
+    setup(async () => { calls++; return response(200); }, { username: 'permitted', token: 'current', ...user });
+    assert.equal((await run(...args)).kind, 'ok', `${name}: respect explicit grants`);
+    assert.equal(calls, 1);
+  }
+  if (name.includes('finance')) {
+    for (const resources of [['REPORT'], ['CK_DASHBOARD']]) {
+      setup(() => { throw new Error('partial report permission must not fetch'); }, { username: 'restricted', token: 'current', root: false, resources });
+      assert.equal((await run(...args)).kind, 'permission');
+    }
+  }
+  console.log(`PASS: ${name} NPG preflight denies restricted accounts without querying`);
 }

@@ -29,17 +29,31 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
     } catch (_) { return {}; }
   };
   const pageUser = readStoredValue('lt-user');
+  const signedOut = () => window.__smsMonitorSignedOut === true
+    || window.localStorage.getItem('__smsMonitorSignedOut') === '1';
+  if (signedOut()) return { kind: 'auth', manualOnly: true, message: '已退出账号，不再使用旧 Token。' };
   const pageToken = String(pageUser && typeof pageUser === 'object' ? pageUser.token || '' : '').trim();
   const savedToken = String(fallbackToken || '').trim();
   const tokens = [pageToken || (!pageUser ? savedToken : '')].filter(Boolean);
   if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), message: '客户端登录态已失效，请重新登录。' };
   const initialSession = JSON.stringify(pageUser);
-  const sessionChanged = () => JSON.stringify(readStoredValue('lt-user')) !== initialSession;
+  const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
   const cache = readUrlCache();
   const country = String(cache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
   const normalizedID = String(platformID || '').trim().toLowerCase();
   const normalizedName = String(platformName || '').trim().toLowerCase();
   const isOKBET = normalizedID === 'ok01' || normalizedName === 'okbet' || normalizedName === 'ok01';
+
+  // NPG's report menu requires REPORT and CK_DASHBOARD, not payment summaries.
+  if (!isOKBET && pageUser && (Array.isArray(pageUser.resources) || typeof pageUser.root === 'boolean')) {
+    const allowed = (resource) => pageUser.root === true || (Array.isArray(pageUser.resources) && pageUser.resources.some((grant) => (
+      typeof grant === 'string' && (grant === resource
+        || (grant.endsWith('_') && resource.startsWith(grant)))
+    )));
+    if (!allowed('REPORT') || !allowed('CK_DASHBOARD')) {
+      return { kind: 'permission', message: '当前账号未授权报表看板（REPORT / CK_DASHBOARD），已停止财务查询。' };
+    }
+  }
   const endpoint = new URL(
     isOKBET ? '/api/realtime_record/with_country' : '/api/dashboard4bix/realtime',
     window.location.origin

@@ -12,6 +12,11 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
   }
 }
 
+check(PostLogoutLoginPolicy.shouldResume(signedOutUsername: "same-user", configuredUsername: "same-user", canAutoLogin: true), "logout resumes password login only for the configured account")
+check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "restricted", configuredUsername: "other-user", canAutoLogin: true), "logout never switches to another saved account")
+check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "", configuredUsername: "same-user", canAutoLogin: true), "unknown logout identity requires explicit confirmation")
+check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "same-user", configuredUsername: "same-user", canAutoLogin: false), "logout respects disabled automatic login")
+
 let belowThreshold = MetricsCalculator.calculate(
   statuses: Array(repeating: "SUCCESS", count: 99) + Array(repeating: "SENT", count: 101),
   sampleLimit: 200

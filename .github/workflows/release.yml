@@ -67,6 +67,10 @@ jobs:
         run: sha256sum SMS-Success-Monitor-* > SHA256SUMS.txt
       - name: Write release notes
         run: |
+          if [ -f "releases/${GITHUB_REF_NAME}.md" ]; then
+            cp "releases/${GITHUB_REF_NAME}.md" release-notes.md
+            exit 0
+          fi
           cat > release-notes.md <<'NOTES'
           ## 三端客户端下载
 
