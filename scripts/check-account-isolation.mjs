@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const extract = (file) => read(file).match(/static let body = #"""([\s\S]*?)"""#/)[1];
+const adapters = [
+  ['macOS SMS', new AsyncFunction('sampleLimit', 'fallbackToken', extract('Sources/SMSMonitorApp/ScanScript.swift')), [20, 'old-admin-token']],
+  ['macOS finance', new AsyncFunction('fallbackToken', 'platformID', 'platformName', extract('Sources/SMSMonitorApp/FinanceScript.swift')), ['old-admin-token', 'ok01', 'okbet']],
+  ['shared SMS', new AsyncFunction('sampleLimit', 'fallbackToken', `${read('clients/shared/scan.js')}\nreturn globalThis.smsMonitorScan(sampleLimit, fallbackToken);`), [20, 'old-admin-token']],
+  ['shared finance', new AsyncFunction('platformID', 'platformName', 'fallbackToken', `${read('clients/shared/finance.js')}\nreturn globalThis.smsMonitorFinance(platformID, platformName, fallbackToken);`), ['ok01', 'okbet', 'old-admin-token']],
+];
+
+class Storage {
+  values = new Map();
+  get length() { return this.values.size; }
+  key(index) { return [...this.values.keys()][index]; }
+  getItem(key) { return this.values.get(key) ?? null; }
+  setItem(key, value) { this.values.set(key, value); }
+}
+const success = {
+  status: 0, page: { content: [{ id: 1, status: 'SUCCESS' }], totalElements: 1 },
+  list: [{ countryId: 'PH', type: 'COUNTRY_DAY', timeType: 'DAY', columns: { rechargeAmount: 100, withdrawAmount: 10 } }],
+};
+const response = (status, payload = success) => ({ ok: status === 200, status, async json() { return payload; } });
+function setup(fetch, user = { username: 'payrobot', token: 'restricted-token' }) {
+  globalThis.window = {
+    localStorage: new Storage(), sessionStorage: new Storage(),
+    location: { origin: 'https://test.invalid', hash: '' },
+    atob, setTimeout, clearTimeout, fetch,
+  };
+  if (user) window.localStorage.setItem('gamebox-admin-lt-user', JSON.stringify(user));
+}
+
+for (const [name, run, args] of adapters) {
+  for (const [http, payload, expected] of [
+    [403, {}, 'permission'], [401, {}, 'auth'],
+    [200, { status: 1012, message: 'expired' }, 'auth'],
+    [200, { status: 1012, message: 'permission denied' }, 'permission'],
+    [200, { status: 403 }, 'permission'],
+    [200, { status: 0, message: 'access denied' }, 'permission'],
+    [200, success, 'ok'],
+  ]) {
+    const calls = [];
+    setup(async (_url, options) => { calls.push(options.headers.Auth); return response(http, payload); });
+    const result = await run(...args);
+    assert.equal(result.kind, expected, name);
+    assert.deepEqual(calls, ['restricted-token'], `${name}: no old account retry`);
+    if (expected === 'auth') assert.equal(result.manualOnly, true, name);
+    assert.equal(JSON.parse(window.localStorage.getItem('gamebox-admin-lt-user')).token, 'restricted-token');
+  }
+
+  for (const conflict of [false, true]) {
+    setup(() => { throw new Error('must not query ambiguous or incomplete sessions'); }, { username: 'payrobot' });
+    if (conflict) window.sessionStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'admin', token: 'other-token' }));
+    const result = await run(...args);
+    assert.equal(result.kind, 'auth', name);
+    assert.equal(result.manualOnly, true, name);
+  }
+
+  for (const stage of ['fetch', 'json']) {
+    setup(async () => {
+      const switchAccount = () => window.localStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'new-user', token: 'new-token' }));
+      if (stage === 'fetch') switchAccount();
+      return { ok: true, status: 200, async json() { switchAccount(); return success; } };
+    });
+    assert.equal((await run(...args)).kind, 'sessionChanged', `${name}: reject stale ${stage} result`);
+  }
+
+  setup(async (_url, options) => {
+    assert.equal(options.headers.Auth, 'old-admin-token');
+    return response(200);
+  }, null);
+  assert.equal((await run(...args)).kind, 'ok', `${name}: empty startup session can recover`);
+  console.log(`PASS: ${name} account isolation, permission handling and stale-result rejection`);
+}

@@ -112,6 +112,11 @@ context.globalThis = context;
 vm.runInContext(source, context);
 
 assert.equal(context.smsLoginAutomation.extractToken(), 'local-token-123');
+assert.equal(context.smsLoginAutomation.extractToken('payrobot'), '', 'unidentified token must not be saved to a named account');
+context.localStorage.values['site-lt-user'] = JSON.stringify({ username: 'payrobot', token: 'restricted-token' });
+assert.equal(context.smsLoginAutomation.extractToken('admin'), '', 'do not save payrobot token under admin credentials');
+assert.equal(context.smsLoginAutomation.extractToken('payrobot'), 'restricted-token');
+context.localStorage.values['site-lt-user'] = JSON.stringify({ token: 'local-token-123' });
 assert.equal((await context.smsLoginAutomation.snapshot()).kind, 'authenticated');
 
 const loginResult = await context.smsLoginAutomation.submitLogin({

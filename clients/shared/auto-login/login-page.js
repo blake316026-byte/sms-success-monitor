@@ -178,8 +178,9 @@
     }
   };
 
-  const extractToken = () => {
+  const extractToken = (expectedUsername = '') => {
     const user = findStoredValue('lt-user');
+    if (expectedUsername && String(user?.username || user?.account || user?.loginName || '').trim() !== expectedUsername) return '';
     return user && typeof user === 'object' ? String(user.token || '') : '';
   };
 

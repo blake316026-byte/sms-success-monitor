@@ -10,6 +10,7 @@ ROOT_DIR="${SCRIPT_DIR:h}"
 swift run --package-path "${ROOT_DIR}" SMSMonitorCoreChecks
 node "${ROOT_DIR}/scripts/check-scan-script.mjs"
 node "${ROOT_DIR}/scripts/check-finance-script.mjs"
+node "${ROOT_DIR}/scripts/check-account-isolation.mjs"
 node "${ROOT_DIR}/scripts/check-shared-finance.mjs"
 node "${ROOT_DIR}/scripts/check-login-page.mjs"
 node "${ROOT_DIR}/clients/shared/test-shared.mjs"

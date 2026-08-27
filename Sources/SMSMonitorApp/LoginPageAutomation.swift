@@ -88,11 +88,11 @@ final class LoginPageAutomation {
     }
   }
 
-  func extractToken(in webView: WKWebView, completion: @escaping (String) -> Void) {
+  func extractToken(in webView: WKWebView, expectedUsername: String = "", completion: @escaping (String) -> Void) {
     call(
       in: webView,
-      body: "return globalThis.smsLoginAutomation.extractToken();",
-      arguments: [:]
+      body: "return globalThis.smsLoginAutomation.extractToken(expectedUsername);",
+      arguments: ["expectedUsername": expectedUsername]
     ) { result in
       completion((try? result.get()) as? String ?? "")
     }

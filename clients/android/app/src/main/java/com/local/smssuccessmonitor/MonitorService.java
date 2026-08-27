@@ -150,6 +150,8 @@ public final class MonitorService extends Service {
         String pageAutomationToken;
         int pageAutomationPollCount;
         String autoLoginStage = "";
+        boolean smsPermissionBlocked;
+        boolean manualAuthenticationRequired;
         Runnable autoLoginOutcome;
 
         ManagedPage(ModuleState state, MutableContextWrapper context, WebView webView) {
@@ -419,7 +421,7 @@ public final class MonitorService extends Service {
                 : totpInput == null || totpInput.trim().isEmpty()
                         ? existing == null ? "" : existing.totpSecret
                         : totpInput.trim();
-        String token = existing == null ? "" : existing.token;
+        String token = existing != null && normalizedUsername.equals(existing.username) ? existing.token : "";
         boolean saved = credentialStore.save(id, new LocalCredentialStore.Profile(
                 normalizedUsername,
                 password,
@@ -429,7 +431,8 @@ public final class MonitorService extends Service {
         ));
         if (!saved) return "无法写入 Android 本地安全存储";
         resetAutoLogin(page);
-        persistCurrentToken(page);
+        page.smsPermissionBlocked = false;
+        page.manualAuthenticationRequired = false;
         if (isAuthenticationUrl(page.webView.getUrl())) {
             handleAuthenticationRequired(page, "自动登录配置已更新。");
         }
@@ -452,7 +455,7 @@ public final class MonitorService extends Service {
 
     public void scan(String id) {
         ManagedPage page = pages.get(id);
-        if (page == null || page.state.scanning) return;
+        if (page == null || page.state.scanning || page.smsPermissionBlocked) return;
         String currentUrl = page.webView.getUrl();
         if (currentUrl == null || currentUrl.isEmpty()) return;
         if (requiresInteractiveAuthentication(currentUrl)) {
@@ -533,8 +536,27 @@ public final class MonitorService extends Service {
         String kind = result.optString("kind", "error");
 
         if ("auth".equals(kind)) {
+            if (result.optBoolean("manualOnly")) page.manualAuthenticationRequired = true;
             page.state.consecutiveScanFailures = 0;
             handleAuthenticationRequired(page, result.optString("message", "平台登录已失效。"));
+            return;
+        }
+        if ("permission".equals(kind)) {
+            page.smsPermissionBlocked = true;
+            page.manualAuthenticationRequired = true;
+            page.state.clearMetrics();
+            page.state.status = "error";
+            page.state.message = result.optString("message", "当前账号无短信权限，已停止查询。");
+            page.state.nextScanAt = 0;
+            refreshOutputs();
+            return;
+        }
+        if ("sessionChanged".equals(kind)) {
+            page.state.clearMetrics();
+            page.state.status = "starting";
+            page.state.message = "账号会话已变化，已丢弃旧数据";
+            page.state.nextScanAt = now + SCAN_INTERVAL_MS;
+            refreshOutputs();
             return;
         }
         if (page.scanSampleLimit != sampleLimit) {
@@ -616,7 +638,7 @@ public final class MonitorService extends Service {
         alertSignatures.remove(page.state.module.id);
 
         LocalCredentialStore.Profile profile = credentialStore.get(page.state.module.id);
-        if (profile == null || !profile.canAutoLogin()) {
+        if (page.manualAuthenticationRequired || profile == null || !profile.canAutoLogin()) {
             page.state.status = "auth";
             page.state.message = message + " 请打开对应后台标签完成登录。";
             refreshOutputs();
@@ -645,6 +667,7 @@ public final class MonitorService extends Service {
     }
 
     private void attemptAutoLogin(ManagedPage page, String currentUrl) {
+        if (page.manualAuthenticationRequired) return;
         LocalCredentialStore.Profile profile = credentialStore.get(page.state.module.id);
         if (profile == null || !profile.canAutoLogin() || page.state.autoLoginInProgress) return;
         long now = System.currentTimeMillis();
@@ -684,7 +707,6 @@ public final class MonitorService extends Service {
             }
             JSONObject snapshot = (JSONObject) value;
             String token = snapshot.optString("token");
-            if (!token.isEmpty()) credentialStore.updateToken(page.state.module.id, token);
             String kind = snapshot.optString("kind");
             if ("login".equals(kind)) {
                 solveCaptchaAndSubmit(page, profile, snapshot.optString("captchaDataUrl"));
@@ -902,16 +924,17 @@ public final class MonitorService extends Service {
     }
 
     private void persistCurrentToken(ManagedPage page) {
-        if (credentialStore.get(page.state.module.id) == null) return;
+        LocalCredentialStore.Profile profile = credentialStore.get(page.state.module.id);
+        if (profile == null) return;
         runPageAutomation(
                 page,
-                "globalThis.smsLoginAutomation.extractToken()",
+                "globalThis.smsLoginAutomation.extractToken(" + JSONObject.quote(profile.username) + ")",
                 (value, error) -> {
+                    LocalCredentialStore.Profile current = credentialStore.get(page.state.module.id);
+                    if (current == null || !profile.username.equals(current.username)) return;
                     String token = error.isEmpty() && value instanceof String ? (String) value : "";
                     if (!token.isEmpty()) {
                         credentialStore.updateToken(page.state.module.id, token);
-                    } else {
-                        persistCookieToken(page);
                     }
                 }
         );

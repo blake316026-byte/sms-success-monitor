@@ -13,20 +13,25 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
   };
 
   const readStoredValue = (suffix) => {
+    let found = null;
+    const identities = new Set();
     for (const store of [window.localStorage, window.sessionStorage]) {
       for (let index = 0; index < store.length; index += 1) {
         const key = store.key(index);
         if (!key || (key !== suffix && !key.endsWith(`-${suffix}`))) continue;
         const raw = store.getItem(key);
         if (raw == null) continue;
-        try {
-          return JSON.parse(raw);
-        } catch (_) {
-          return raw;
+        let value;
+        try { value = JSON.parse(raw); } catch (_) { value = raw; }
+        if (suffix !== 'lt-user') return value;
+        if (value && typeof value === 'object') {
+          identities.add(JSON.stringify([value.token || '', value.username || value.account || value.id || '']));
         }
+        if (found == null) found = value;
       }
     }
-    return null;
+    if (identities.size > 1) return { accountConflict: true };
+    return found;
   };
 
   const readUrlCache = () => {
@@ -47,10 +52,12 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
   const savedToken = String(fallbackToken || '').trim();
   const tokenCandidates = [];
   if (pageToken) tokenCandidates.push({ token: pageToken, source: 'page' });
-  if (savedToken && savedToken !== pageToken) tokenCandidates.push({ token: savedToken, source: 'fallback' });
+  if (!user && savedToken) tokenCandidates.push({ token: savedToken, source: 'fallback' });
   if (tokenCandidates.length === 0) {
-    return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
+    return { kind: 'auth', manualOnly: Boolean(user), message: '客户端登录态已失效，请重新登录。' };
   }
+  const initialSession = JSON.stringify(user);
+  const sessionChanged = () => JSON.stringify(readStoredValue('lt-user')) !== initialSession;
 
   const restorePageSession = (token) => {
     let restored = false;
@@ -156,7 +163,6 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     return null;
   };
   let lastAuthenticationMessage = '客户端登录态已失效，请重新登录。';
-  let forbiddenCount = 0;
   for (const candidate of tokenCandidates) {
     const headers = {
       Accept: 'application/json',
@@ -173,6 +179,7 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     let candidateRejected = false;
 
     for (let pageNo = 1; pageNo <= maximumPages && collected.length < requestedLimit; pageNo += 1) {
+      if (sessionChanged()) return { kind: 'sessionChanged' };
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 20000);
       let response;
@@ -199,10 +206,9 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
       }
       window.clearTimeout(timeout);
 
+      if (sessionChanged()) return { kind: 'sessionChanged' };
       if (response.status === 403) {
-        forbiddenCount += 1;
-        candidateRejected = true;
-        break;
+        return { kind: 'permission', message: '当前账号无短信记录查看权限，已停止短信查询。' };
       }
       if (response.status === 401) {
         lastAuthenticationMessage = `平台返回 HTTP ${response.status}，请重新登录。`;
@@ -220,6 +226,11 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
         return { kind: 'error', message: '短信记录接口没有返回有效 JSON。' };
       }
 
+      if (sessionChanged()) return { kind: 'sessionChanged' };
+      if (/无权限|没有权限|权限不足|拒绝访问|forbidden|permission|access denied|unauthorized/i.test(String(payload?.message || ''))
+        || Number(payload?.status ?? payload?.code) === 403) {
+        return { kind: 'permission', message: '当前账号无短信记录查看权限，已停止短信查询。' };
+      }
       const apiStatus = Number(payload && payload.status);
       if (apiStatus !== 0) {
         if ([1010, 1011, 1012, 1013, 1014].includes(apiStatus)) {
@@ -269,7 +280,5 @@ globalThis.smsMonitorScan = async function smsMonitorScan(sampleLimit, fallbackT
     };
   }
 
-  return forbiddenCount === tokenCandidates.length
-    ? { kind: 'permission', message: '当前账号无短信记录查看权限，已停止短信查询。' }
-    : { kind: 'auth', message: lastAuthenticationMessage };
+  return { kind: 'auth', manualOnly: Boolean(user), message: lastAuthenticationMessage };
 };

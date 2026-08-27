@@ -191,14 +191,13 @@ const recoveredUser = JSON.parse(
   globalThis.window.localStorage.getItem('gamebox-admin-lt-user')
 );
 check(
-  recoveredTokenResult.kind === 'ok' && staleTokenCalls === 2,
-  'retries the encrypted saved token when the page token is stale'
+  recoveredTokenResult.kind === 'auth' && recoveredTokenResult.manualOnly && staleTokenCalls === 1,
+  'does not substitute a saved account when the page token expires'
 );
 check(
-  recoveredTokenResult.restoredPageSession === true
-    && recoveredUser.token === 'fresh-saved-token'
+  recoveredUser.token === 'stale-page-token'
     && recoveredUser.username === 'blake',
-  'restores the valid token into the existing page session without losing other fields'
+  'does not overwrite the current page account with a different saved token'
 );
 
 console.log('All scan-script checks passed');

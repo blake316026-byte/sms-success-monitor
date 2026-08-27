@@ -1,14 +1,24 @@
 globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, platformName, fallbackToken = '') {
   const readStoredValue = (suffix) => {
+    let found = null;
+    const identities = new Set();
     for (const store of [window.localStorage, window.sessionStorage]) {
       for (let index = 0; index < store.length; index += 1) {
         const key = store.key(index);
         if (!key || (key !== suffix && !key.endsWith(`-${suffix}`))) continue;
         const raw = store.getItem(key);
-        try { return JSON.parse(raw); } catch (_) { return raw; }
+        if (raw == null) continue;
+        let value;
+        try { value = JSON.parse(raw); } catch (_) { value = raw; }
+        if (suffix !== 'lt-user') return value;
+        if (value && typeof value === 'object') {
+          identities.add(JSON.stringify([value.token || '', value.username || value.account || value.id || '']));
+        }
+        if (found == null) found = value;
       }
     }
-    return null;
+    if (identities.size > 1) return { accountConflict: true };
+    return found;
   };
   const readUrlCache = () => {
     try {
@@ -21,8 +31,10 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
   const pageUser = readStoredValue('lt-user');
   const pageToken = String(pageUser && typeof pageUser === 'object' ? pageUser.token || '' : '').trim();
   const savedToken = String(fallbackToken || '').trim();
-  const tokens = [...new Set([pageToken, savedToken].filter(Boolean))];
-  if (tokens.length === 0) return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
+  const tokens = [pageToken || (!pageUser ? savedToken : '')].filter(Boolean);
+  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), message: '客户端登录态已失效，请重新登录。' };
+  const initialSession = JSON.stringify(pageUser);
+  const sessionChanged = () => JSON.stringify(readStoredValue('lt-user')) !== initialSession;
   const cache = readUrlCache();
   const country = String(cache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
   const normalizedID = String(platformID || '').trim().toLowerCase();
@@ -32,7 +44,6 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
     isOKBET ? '/api/realtime_record/with_country' : '/api/dashboard4bix/realtime',
     window.location.origin
   ).href;
-  let forbiddenCount = 0;
   for (const token of tokens) {
     const headers = {
       Accept: 'application/json',
@@ -52,9 +63,14 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
         signal: controller.signal
       });
       window.clearTimeout(timeout);
+      if (sessionChanged()) return { kind: 'sessionChanged' };
       let payload = null;
       try { payload = await response.json(); } catch (_) {}
-      if (response.status === 403) { forbiddenCount += 1; continue; }
+      if (sessionChanged()) return { kind: 'sessionChanged' };
+      if (response.status === 403 || Number(payload?.status ?? payload?.code) === 403
+        || /无权限|没有权限|权限不足|拒绝访问|forbidden|permission|access denied|unauthorized/i.test(String(payload?.message || ''))) {
+        return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
+      }
       if (response.status === 401) continue;
       if (!response.ok) return { kind: 'error', message: `今日统计接口返回 HTTP ${response.status}。` };
       const status = Number(payload && (payload.status ?? payload.code));
@@ -88,8 +104,5 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
       return { kind: 'error', message: error?.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。' };
     }
   }
-  if (forbiddenCount === tokens.length) {
-    return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
-  }
-  return { kind: 'auth', message: '今日统计登录态已失效，请重新登录。' };
+  return { kind: 'auth', manualOnly: Boolean(pageUser), message: '今日统计登录态已失效，请重新登录。' };
 };

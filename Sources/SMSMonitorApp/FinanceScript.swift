@@ -1,20 +1,25 @@
 enum FinanceScript {
   static let body = #"""
     const readStoredValue = (suffix) => {
+      let found = null;
+      const identities = new Set();
       for (const store of [window.localStorage, window.sessionStorage]) {
         for (let index = 0; index < store.length; index += 1) {
           const key = store.key(index);
           if (!key || (key !== suffix && !key.endsWith(`-${suffix}`))) continue;
           const raw = store.getItem(key);
           if (raw == null) continue;
-          try {
-            return JSON.parse(raw);
-          } catch (_) {
-            return raw;
+          let value;
+          try { value = JSON.parse(raw); } catch (_) { value = raw; }
+          if (suffix !== 'lt-user') return value;
+          if (value && typeof value === 'object') {
+            identities.add(JSON.stringify([value.token || '', value.username || value.account || value.id || '']));
           }
+          if (found == null) found = value;
         }
       }
-      return null;
+      if (identities.size > 1) return { accountConflict: true };
+      return found;
     };
 
     const readUrlCache = () => {
@@ -75,10 +80,12 @@ enum FinanceScript {
     const savedToken = String(fallbackToken || '').trim();
     const tokenCandidates = [];
     if (pageToken) tokenCandidates.push(pageToken);
-    if (savedToken && savedToken !== pageToken) tokenCandidates.push(savedToken);
+    if (!user && savedToken) tokenCandidates.push(savedToken);
     if (tokenCandidates.length === 0) {
-      return { kind: 'auth', message: '客户端登录态已失效，请重新登录。' };
+      return { kind: 'auth', manualOnly: Boolean(user), message: '客户端登录态已失效，请重新登录。' };
     }
+    const initialSession = JSON.stringify(user);
+    const sessionChanged = () => JSON.stringify(readStoredValue('lt-user')) !== initialSession;
 
     const urlCache = readUrlCache();
     const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
@@ -117,11 +124,14 @@ enum FinanceScript {
           signal: controller.signal
         });
         window.clearTimeout(timeout);
+        if (sessionChanged()) return { kind: 'sessionChanged' };
         let payload = null;
         try {
           payload = await response.json();
         } catch (_) {}
-        if (response.status === 403) {
+        if (sessionChanged()) return { kind: 'sessionChanged' };
+        if (response.status === 403 || Number(payload?.status ?? payload?.code) === 403
+          || /无权限|没有权限|权限不足|拒绝访问|forbidden|permission|access denied|unauthorized/i.test(String(payload?.message || ''))) {
           return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
         }
         if (isAuthenticationFailure(response, payload)) continue;
@@ -149,6 +159,6 @@ enum FinanceScript {
         };
       }
     }
-    return { kind: 'auth', message: '今日统计登录态已失效，请重新登录。' };
+    return { kind: 'auth', manualOnly: Boolean(user), message: '今日统计登录态已失效，请重新登录。' };
     """#
 }

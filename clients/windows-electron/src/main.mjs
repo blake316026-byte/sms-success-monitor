@@ -672,25 +672,17 @@ async function persistCurrentToken(id) {
   const page = pages.get(id);
   const state = moduleStates.get(id);
   if (!page || !state || !profileFor(id)) return;
+  const expectedUsername = profileFor(id).username;
   let token = '';
   try {
     token = await runLoginPageAction(
       page,
-      'globalThis.smsLoginAutomation.extractToken()'
+      `globalThis.smsLoginAutomation.extractToken(${JSON.stringify(expectedUsername)})`
     );
   } catch (_) {
     // The site WebView remains the primary local token store.
   }
-  if (!token) {
-    try {
-      const cookies = await page.view.webContents.session.cookies.get({ url: state.url });
-      token = cookies.find((cookie) => (
-        cookie.name.toLowerCase() === 'token' && String(cookie.value || '').length > 12
-      ))?.value || '';
-    } catch (_) {
-      // Token persistence is best effort and never interrupts monitoring.
-    }
-  }
+  if (profileFor(id)?.username !== expectedUsername) return;
   await updateStoredToken(id, token);
 }
 
@@ -817,6 +809,7 @@ function scheduleAutoLoginOutcomeCheck(id) {
 }
 
 async function attemptAutoLogin(id, currentURL) {
+  if (moduleStates.get(id)?.manualAuthenticationRequired) return;
   const state = moduleStates.get(id);
   const page = pages.get(id);
   const profile = profileFor(id);
@@ -872,7 +865,6 @@ async function attemptAutoLogin(id, currentURL) {
       page,
       'globalThis.smsLoginAutomation.snapshot()'
     );
-    if (snapshot?.token) await updateStoredToken(id, snapshot.token);
     if (snapshot?.kind === 'manual') {
       pauseForManualLogin(id);
       return;
@@ -968,6 +960,14 @@ function handleAuthenticationRequired(id, message) {
   state.consecutiveScanFailures = 0;
   state.needsImmediateScan = true;
   state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
+  state.metrics = null;
+  state.dailyFinancial = null;
+  if (state.manualAuthenticationRequired) {
+    state.autoLoginInProgress = false;
+    if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
+    updateModule(id, { status: 'auth', message: '当前账号会话失效，请人工确认登录账号；不会改用旧账号。' });
+    return;
+  }
   const profile = profileFor(id);
   if (!canAutoLogin(profile)) {
     updateModule(id, {
@@ -1058,6 +1058,7 @@ async function scanModule(id) {
       throw new Error('扫描结果无法识别');
     }
     if (result.kind === 'permission') {
+      state.manualAuthenticationRequired = true;
       Object.assign(state, {
         status: 'error', message: result.message, metrics: null,
         smsPermissionBlocked: true, scannedAt: Date.now(), nextScanAt: null
@@ -1065,7 +1066,14 @@ async function scanModule(id) {
       broadcastSnapshot(id);
       return;
     } else if (result.kind === 'auth') {
+      if (result.manualOnly) state.manualAuthenticationRequired = true;
       handleAuthenticationRequired(id, result.message || '平台登录已失效。');
+      return;
+    } else if (result.kind === 'sessionChanged') {
+      updateModule(id, {
+        status: 'starting', metrics: null, dailyFinancial: null,
+        message: '账号会话已变化，已丢弃旧数据', nextScanAt: Date.now() + SCAN_INTERVAL_MS
+      });
       return;
     } else if (result.kind === 'ok') {
       const currentPath = (() => {
@@ -1083,6 +1091,7 @@ async function scanModule(id) {
           broadcastSnapshot(id);
           await page.view.webContents.loadURL(state.url);
         } else {
+          if (result.tokenSource === 'page') state.manualAuthenticationRequired = true;
           handleAuthenticationRequired(id, '页面登录态无法通过有效 Token 恢复。');
         }
         return;
@@ -1138,6 +1147,8 @@ async function refreshFinancialModule(id) {
       state.dailyFinancial = null;
       state.financeMessage = result?.message || '今日财务查询失败';
       if (result?.kind === 'permission') state.financePermissionBlocked = true;
+      if (result?.kind === 'permission' || result?.manualOnly) state.manualAuthenticationRequired = true;
+      if (result?.kind === 'sessionChanged') state.metrics = null;
     }
   } catch (error) {
     state.dailyFinancial = null;
@@ -1489,7 +1500,9 @@ function restartAutoLoginFor(id) {
   const page = pages.get(id);
   if (!state || !page) return;
   resetAutoLoginState(state);
-  persistCurrentToken(id);
+  state.manualAuthenticationRequired = false;
+  state.smsPermissionBlocked = false;
+  state.financePermissionBlocked = false;
   const currentURL = page.view.webContents.getURL();
   if (isAuthenticationURL(currentURL)) {
     handleAuthenticationRequired(id, '自动登录配置已更新。');
@@ -1807,7 +1820,7 @@ function registerIPC() {
       username,
       password,
       totpSecret,
-      token: String(existing.token || ''),
+      token: existing.username === username ? String(existing.token || '') : '',
       autoLoginEnabled: Boolean(input?.autoLoginEnabled)
     };
     try {

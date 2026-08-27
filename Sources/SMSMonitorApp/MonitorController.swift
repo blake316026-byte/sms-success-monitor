@@ -42,6 +42,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var autoLoginCooldownUntil: Date?
   private var autoLoginOutcomeWorkItem: DispatchWorkItem?
   private var pageSessionRecoveryAttempted = false
+  private var manualAuthenticationRequired = false
   private var mockScenario: String?
   private var isStarted = false
   private var isPageActive = false
@@ -322,6 +323,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
             emit(.starting("已恢复本机 Token，正在打开短信记录页"), nextScanAt: nil)
             webView.load(URLRequest(url: monitoringPageURL))
           } else {
+            if !usedFallbackToken { manualAuthenticationRequired = true }
             handleAuthenticationRequired(
               "页面登录态无法通过有效 Token 恢复。",
               progressMessage: "页面会话已失效，正在自动登录"
@@ -340,12 +342,26 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
       case "auth":
         let message = payload["message"] as? String ?? "平台登录已失效。"
+        if payload["manualOnly"] as? Bool == true {
+          manualAuthenticationRequired = true
+        }
         handleAuthenticationRequired(message)
 
       case "permission":
         smsPermissionBlocked = true
+        manualAuthenticationRequired = true
+        lastMetrics = nil
+        lastMetricsScannedAt = nil
+        cancelNextScan()
         let message = payload["message"] as? String ?? "当前账号无短信记录查看权限，已停止短信查询。"
         emit(.error(message, Date()), nextScanAt: nil)
+
+      case "sessionChanged":
+        lastMetrics = nil
+        lastMetricsScannedAt = nil
+        latestDailyFinancialMetrics = nil
+        emit(.starting("账号会话已变化，已丢弃旧数据"), nextScanAt: nil)
+        scheduleNextScan(after: 5)
 
       default:
         let message = payload["message"] as? String ?? "短信记录接口扫描失败。"
@@ -476,10 +492,20 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       } else if kind == "permission" {
         latestDailyFinancialMetrics = nil
         financePermissionBlocked = true
+        manualAuthenticationRequired = true
         let message = payload["message"] as? String ?? "当前账号无财务数据查看权限，已停止财务查询。"
         NSLog("[SMSMonitor] %@ financial refresh permission blocked: %@", configuration.id, message)
       } else {
         latestDailyFinancialMetrics = nil
+        if kind == "sessionChanged" {
+          lastMetrics = nil
+          lastMetricsScannedAt = nil
+          emit(.starting("账号会话已变化，已丢弃旧数据"), nextScanAt: nil)
+          scheduleNextScan(after: 5)
+        }
+        if kind == "auth", payload["manualOnly"] as? Bool == true {
+          manualAuthenticationRequired = true
+        }
         let message = payload["message"] as? String ?? "今日统计接口读取失败。"
         NSLog("[SMSMonitor] %@ financial refresh failed: %@", configuration.id, message)
       }
@@ -508,6 +534,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func credentialsDidChange() {
+    manualAuthenticationRequired = false
+    smsPermissionBlocked = false
+    financePermissionBlocked = false
     captchaAutoLoginAttempts = 0
     totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
@@ -515,7 +544,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     autoLoginStage = ""
     pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
-    persistCurrentToken()
     guard let currentURL = webView.url, requiresAuthentication(currentURL) else { return }
     handleAuthenticationRequired("自动登录配置已更新。")
   }
@@ -524,6 +552,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     _ message: String,
     progressMessage: String = "Token 已失效，正在自动登录"
   ) {
+    lastMetrics = nil
+    lastMetricsScannedAt = nil
     latestDailyFinancialMetrics = nil
     scanTimeoutWorkItem?.cancel()
     scanTimeoutWorkItem = nil
@@ -534,6 +564,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     needsImmediateScan = true
     scheduleNextScan(after: configuration.scanInterval)
 
+    guard !manualAuthenticationRequired else {
+      autoLoginInProgress = false
+      autoLoginStage = ""
+      autoLoginOutcomeWorkItem?.cancel()
+      emit(.authenticationRequired("当前账号会话失效，请人工确认登录账号；不会改用旧账号。"), nextScanAt: nextScanAt)
+      return
+    }
     guard let profile = credentialStore.profile(for: configuration.id), profile.canAutoLogin else {
       emit(.authenticationRequired("\(message) 请打开对应后台标签完成登录。"), nextScanAt: nextScanAt)
       return
@@ -560,6 +597,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func attemptAutoLogin(profile: LocalLoginProfile, url: URL) {
+    guard !manualAuthenticationRequired else { return }
     guard !autoLoginInProgress else { return }
     guard profile.canAutoLogin else {
       emit(.authenticationRequired("请先配置本后台的自动登录账号。"), nextScanAt: nextScanAt)
@@ -595,9 +633,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       case .failure(let error):
         self.retryAutoLogin("无法读取登录页面：\(error.localizedDescription)")
       case .success(let snapshot):
-        if !snapshot.token.isEmpty {
-          self.credentialStore.updateToken(snapshot.token, for: self.configuration.id)
-        }
         switch snapshot.kind {
         case "login":
           self.solveCaptchaAndSubmit(profile: profile, dataURL: snapshot.captchaDataURL)
@@ -828,14 +863,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func persistCurrentToken() {
-    guard credentialStore.profile(for: configuration.id) != nil else { return }
-    loginAutomation.extractToken(in: webView) { [weak self] token in
+    guard let profile = credentialStore.profile(for: configuration.id) else { return }
+    loginAutomation.extractToken(in: webView, expectedUsername: profile.username) { [weak self] token in
       guard let self else { return }
+      guard self.credentialStore.profile(for: self.configuration.id)?.username == profile.username else { return }
       if !token.isEmpty {
         self.credentialStore.updateToken(token, for: self.configuration.id)
         return
       }
-      self.persistCookieToken()
     }
   }
 
@@ -1432,7 +1467,7 @@ final class MonitorController {
         username: username,
         password: password,
         totpSecret: totpField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
-        token: existing?.token ?? "",
+        token: existing?.username == username ? (existing?.token ?? "") : "",
         autoLoginEnabled: enabledButton.state == .on
       )
       guard
