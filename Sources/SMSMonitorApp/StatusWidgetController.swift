@@ -527,9 +527,10 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
   }
 
   func update(snapshot: FleetMonitorSnapshot, muteDescription: String?) {
+    let structureChanged = self.snapshot.modules.map(\.configuration.id)
+      != snapshot.modules.map(\.configuration.id)
     self.snapshot = snapshot
     updateSubtitle()
-    let visibleOrigin = tableView.enclosingScrollView?.contentView.bounds.origin
     if selectedModuleID == nil
       || !snapshot.modules.contains(where: { $0.configuration.id == selectedModuleID })
     {
@@ -546,32 +547,15 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     coverageLabel.stringValue =
       muteDescription ?? "已扫描 \(scannedCount)/\(snapshot.enabledCount) · 阈值低于 50%"
 
-    tableView.reloadData()
-    if let selectedModuleID,
-      let row = snapshot.modules.firstIndex(where: {
-        $0.configuration.id == selectedModuleID
-      })
-    {
-      tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    let selectedRow = snapshot.modules.firstIndex {
+      $0.configuration.id == selectedModuleID
     }
-    restoreTableScrollPosition(visibleOrigin)
+    MonitorTableRefresh.apply(
+      to: tableView, structureChanged: structureChanged, selectedRow: selectedRow
+    ) { [self] cell, column, row in
+      configureCell(cell, column: column, module: snapshot.modules[row])
+    }
     updateSelectedModule()
-  }
-
-  private func restoreTableScrollPosition(_ origin: NSPoint?) {
-    guard
-      let origin,
-      let scrollView = tableView.enclosingScrollView
-    else { return }
-    let clipView = scrollView.contentView
-    let maxX = max(0, tableView.bounds.width - clipView.bounds.width)
-    let maxY = max(0, tableView.bounds.height - clipView.bounds.height)
-    let restoredOrigin = NSPoint(
-      x: min(max(origin.x, 0), maxX),
-      y: min(max(origin.y, 0), maxY)
-    )
-    clipView.setBoundsOrigin(restoredOrigin)
-    scrollView.reflectScrolledClipView(clipView)
   }
 
   private func updateSubtitle() {
@@ -604,7 +588,15 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     let cell =
       tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
       ?? makeCell(identifier: identifier)
-    guard let label = cell.textField else { return cell }
+    configureCell(cell, column: tableColumn, module: module)
+    return cell
+  }
+
+  private func configureCell(
+    _ cell: NSTableCellView, column: NSTableColumn, module: ModuleMonitorSnapshot
+  ) {
+    guard let label = cell.textField else { return }
+    let identifier = column.identifier
 
     label.stringValue = Self.cellText(identifier: identifier, module: module)
     label.textColor = Self.cellColor(identifier: identifier, state: module.state)
@@ -618,7 +610,6 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     cell.setAccessibilityLabel(
       "\(module.configuration.displayName)，\(Self.stateText(module.state))"
     )
-    return cell
   }
 
   func tableViewSelectionDidChange(_ notification: Notification) {

@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前版本：**v0.3.52**（macOS build 59、Windows v0.3.52、Android versionCode 52）。三端修复账号 Token 混用，并在已加载的 NPG 权限清单明确缺少短信或报表授权时停止对应查询；支付汇总权限不等于报表看板权限。macOS 修复退出后的旧 Token 复用，以及同名已保存账号重新登录时验证码流程被暂停的问题。详见[本版更新说明](releases/v0.3.52.md)。
+当前版本：**v0.3.53**（macOS build 60、Windows v0.3.53、Android versionCode 53）。macOS 修复统计表刷新时的滚动偏移，以及退出后重新登录遗漏恢复财务定时查询的问题。Windows、Android 同步版本并重新打包，保留 v0.3.52 的账号隔离与权限检查。详见[本版更新说明](releases/v0.3.53.md)。

@@ -353,6 +353,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         }
 
         scheduleNextScanAfterCurrentRun()
+        ensureFinancialRefreshScheduled()
         if metrics.shouldAlert(threshold: configuration.alertThreshold) {
           emit(.alert(metrics, scannedAt), nextScanAt: nextScanAt)
         } else {
@@ -452,6 +453,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
     financialRefreshWorkItem = item
     DispatchQueue.main.asyncAfter(deadline: .now() + safeDelay, execute: item)
+  }
+
+  private func ensureFinancialRefreshScheduled() {
+    guard isStarted, !financePermissionBlocked, !isRefreshingFinancial,
+      financialRefreshWorkItem == nil || financialRefreshWorkItem?.isCancelled == true
+    else { return }
+    scheduleFinancialRefresh(after: 1)
   }
 
   private func refreshFinancialMetricsNow() {
@@ -600,6 +608,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       scanTimeoutWorkItem?.cancel()
       cancelNextScan()
       financialRefreshWorkItem?.cancel()
+      financialRefreshWorkItem = nil
       activeScanID = nil
       isScanning = false
       isRefreshingFinancial = false
@@ -645,9 +654,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       lastMetricsScannedAt = nil
       latestDailyFinancialMetrics = nil
       persistCurrentToken()
-      if isStarted && !autoLoginInProgress {
-        scheduleNextScan(after: 0)
-        scheduleFinancialRefresh(after: 1)
+      if isStarted {
+        ensureFinancialRefreshScheduled()
+        if !autoLoginInProgress { scheduleNextScan(after: 0) }
       }
     }
   }
@@ -964,6 +973,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       credentialStore.updateToken(token, for: configuration.id)
     }
     persistCurrentToken()
+    ensureFinancialRefreshScheduled()
     emit(.starting("自动登录成功，正在恢复监控"), nextScanAt: nextScanAt)
     guard let currentURL = webView.url, isMonitorOrigin(currentURL) else {
       webView.load(URLRequest(url: configuration.targetURL))
@@ -1175,6 +1185,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     if completedAuthentication {
       needsImmediateScan = true
     }
+    ensureFinancialRefreshScheduled()
     guard needsImmediateScan else { return }
     scheduleConnectionKickoff()
   }
