@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前版本：**v0.3.53**（macOS build 60、Windows v0.3.53、Android versionCode 53）。macOS 修复统计表刷新时的滚动偏移，以及退出后重新登录遗漏恢复财务定时查询的问题。Windows、Android 同步版本并重新打包，保留 v0.3.52 的账号隔离与权限检查。详见[本版更新说明](releases/v0.3.53.md)。
+当前版本：**macOS v0.3.56 build 63**；Windows、Android 继续使用 v0.3.53。macOS 修复 HTTP 后台白屏、自定义平台误用 NPG 监控路由、工作区大型页面并发加载，以及 NPG 会话失效后遗漏恢复自动登录的问题，并新增天成密码及 Google 二次验证自动登录。详见[本版更新说明](releases/v0.3.56.md)。

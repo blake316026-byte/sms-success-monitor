@@ -184,6 +184,14 @@
     return user && typeof user === 'object' ? String(user.token || '') : '';
   };
 
+  const loginIdentity = () => {
+    const usernameField = document.querySelector('#username, input[name="username"]');
+    return {
+      username: visible(usernameField) ? String(usernameField.value || '').trim() : '',
+      manual: manualLoginActive
+    };
+  };
+
   const snapshot = async () => {
     const path = window.location.pathname;
     if (path === '/login') {
@@ -264,6 +272,7 @@
   };
 
   globalThis.smsLoginAutomation = {
+    loginIdentity,
     snapshot,
     submitLogin,
     submitTotp,

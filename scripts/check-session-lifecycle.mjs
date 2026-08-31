@@ -62,5 +62,6 @@ for (const [file, args, values] of [
   const result = await new AsyncFunction(...args, code)(...values);
   assert.equal(result.kind, 'auth');
   assert.equal(result.manualOnly, true);
+  assert.equal(result.sessionUsername, 'test');
 }
 console.log('PASS: logout revokes fallback before fetch, survives reload, and accepts only a new stored session');

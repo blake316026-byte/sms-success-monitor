@@ -15,6 +15,8 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 check(PostLogoutLoginPolicy.shouldResume(signedOutUsername: "same-user", configuredUsername: "same-user", canAutoLogin: true), "logout resumes password login only for the configured account")
 check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "restricted", configuredUsername: "other-user", canAutoLogin: true), "logout never switches to another saved account")
 check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "", configuredUsername: "same-user", canAutoLogin: true), "unknown logout identity requires explicit confirmation")
+check(PostLogoutLoginPolicy.shouldResume(signedOutUsername: "", loginPageUsername: "same-user", configuredUsername: "same-user", canAutoLogin: true), "login page can confirm a legacy logout with no stored identity")
+check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "", loginPageUsername: "other-user", configuredUsername: "same-user", canAutoLogin: true), "login page never switches to a different saved account")
 check(!PostLogoutLoginPolicy.shouldResume(signedOutUsername: "same-user", configuredUsername: "same-user", canAutoLogin: false), "logout respects disabled automatic login")
 
 let belowThreshold = MetricsCalculator.calculate(
@@ -187,6 +189,34 @@ check(
 check(
   Set(configuredModules.compactMap { $0.targetURL.host }).count == configuredModules.count,
   "uses one independent origin per monitored platform"
+)
+check(
+  PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "cg01",
+    targetURL: URL(string: "https://example.invalid/login")!
+  ),
+  "keeps built-in platforms on their configured monitor route"
+)
+check(
+  PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "custom-npg",
+    targetURL: URL(string: "https://test.npgaaa.com/login")!
+  ),
+  "monitors custom NPG platform domains"
+)
+check(
+  PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "custom-okbet",
+    targetURL: URL(string: "https://test.sixsass.com/login")!
+  ),
+  "monitors the custom OKBET platform domain"
+)
+check(
+  !PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "custom-tcg",
+    targetURL: URL(string: "http://unmonitored.example/login")!
+  ),
+  "keeps unknown custom domains in browser-only mode"
 )
 check(
   configuredModules.compactMap(\.profileIdentifier).count == 9,

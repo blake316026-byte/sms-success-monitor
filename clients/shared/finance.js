@@ -28,14 +28,22 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
       return JSON.parse(window.atob(normalized + '='.repeat((4 - normalized.length % 4) % 4)));
     } catch (_) { return {}; }
   };
+  const usernameOf = (value) => String(
+    value && typeof value === 'object'
+      ? value.username || value.account || value.loginName || ''
+      : ''
+  ).trim();
   const pageUser = readStoredValue('lt-user');
   const signedOut = () => window.__smsMonitorSignedOut === true
     || window.localStorage.getItem('__smsMonitorSignedOut') === '1';
-  if (signedOut()) return { kind: 'auth', manualOnly: true, message: '已退出账号，不再使用旧 Token。' };
+  const sessionUsername = signedOut()
+    ? String(window.localStorage.getItem('__smsMonitorSignedOutUsername') || '').trim()
+    : usernameOf(pageUser);
+  if (signedOut()) return { kind: 'auth', manualOnly: true, sessionUsername, message: '已退出账号，不再使用旧 Token。' };
   const pageToken = String(pageUser && typeof pageUser === 'object' ? pageUser.token || '' : '').trim();
   const savedToken = String(fallbackToken || '').trim();
   const tokens = [pageToken || (!pageUser ? savedToken : '')].filter(Boolean);
-  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), message: '客户端登录态已失效，请重新登录。' };
+  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), sessionUsername, message: '客户端登录态已失效，请重新登录。' };
   const initialSession = JSON.stringify(pageUser);
   const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
   const cache = readUrlCache();
@@ -118,5 +126,5 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
       return { kind: 'error', message: error?.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。' };
     }
   }
-  return { kind: 'auth', manualOnly: Boolean(pageUser), message: '今日统计登录态已失效，请重新登录。' };
+  return { kind: 'auth', manualOnly: Boolean(pageUser), sessionUsername, message: '今日统计登录态已失效，请重新登录。' };
 };

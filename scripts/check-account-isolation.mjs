@@ -47,7 +47,10 @@ for (const [name, run, args] of adapters) {
     const result = await run(...args);
     assert.equal(result.kind, expected, name);
     assert.deepEqual(calls, ['restricted-token'], `${name}: no old account retry`);
-    if (expected === 'auth') assert.equal(result.manualOnly, true, name);
+    if (expected === 'auth') {
+      assert.equal(result.manualOnly, true, name);
+      assert.equal(result.sessionUsername, 'payrobot', `${name}: carries only the current account identity`);
+    }
     assert.equal(JSON.parse(window.localStorage.getItem('gamebox-admin-lt-user')).token, 'restricted-token');
   }
 
@@ -57,6 +60,7 @@ for (const [name, run, args] of adapters) {
     const result = await run(...args);
     assert.equal(result.kind, 'auth', name);
     assert.equal(result.manualOnly, true, name);
+    assert.equal(result.sessionUsername, conflict ? '' : 'payrobot', name);
   }
 
   for (const stage of ['fetch', 'json']) {

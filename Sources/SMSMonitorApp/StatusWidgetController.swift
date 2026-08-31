@@ -861,6 +861,8 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
 
   private static func stateText(_ state: AppMonitorState) -> String {
     switch state {
+    case .browserOnly:
+      return "仅浏览"
     case .disabled:
       return "已停用"
     case .starting:
@@ -886,7 +888,7 @@ private final class DetailPanelController: NSWindowController, NSTableViewDataSo
     switch module.state {
     case .disabled:
       return "已停止短信和财务查询，不参与报警及汇总统计"
-    case .starting(let message), .authenticationRequired(let message), .error(let message, _):
+    case .starting(let message), .authenticationRequired(let message), .error(let message, _), .browserOnly(let message):
       return message
     case .scanning:
       return "正在读取设置的短信样本"
@@ -1025,6 +1027,12 @@ final class StatusWidgetController: NSWindowController {
 
   fileprivate static func presentation(for state: AppMonitorState) -> WidgetPresentation {
     switch state {
+    case .browserOnly(let message):
+      return WidgetPresentation(
+        color: MonitorColors.unavailable, primaryText: "已登录", sampleText: "未接入监控接口",
+        statusText: "仅浏览", footerText: message, footerSymbol: "globe", progress: 0,
+        isAlert: false, isScanning: false
+      )
     case .disabled:
       return WidgetPresentation(
         color: MonitorColors.unavailable,

@@ -14,6 +14,11 @@ struct LoginPageSubmission {
   let message: String
 }
 
+struct LoginPageIdentity {
+  let username: String
+  let manual: Bool
+}
+
 final class LoginPageAutomation {
   private let source: String
 
@@ -22,6 +27,29 @@ final class LoginPageAutomation {
       .appendingPathComponent("auto-login")
       .appendingPathComponent("login-page.js")
     source = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+  }
+
+  func identity(
+    in webView: WKWebView,
+    completion: @escaping (Result<LoginPageIdentity, Error>) -> Void
+  ) {
+    call(
+      in: webView,
+      body: "return globalThis.smsLoginAutomation.loginIdentity();",
+      arguments: [:]
+    ) { result in
+      completion(result.flatMap { value in
+        guard let payload = value as? [String: Any] else {
+          return .failure(LocalAutomationRuntimeError.invalidResult)
+        }
+        return .success(
+          LoginPageIdentity(
+            username: payload["username"] as? String ?? "",
+            manual: payload["manual"] as? Bool ?? false
+          )
+        )
+      })
+    }
   }
 
   func snapshot(

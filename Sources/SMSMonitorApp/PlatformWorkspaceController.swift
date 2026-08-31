@@ -714,7 +714,6 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
             startURL: savedPage.startURL
           )
           orderedPages.append(page)
-          page.webView.load(URLRequest(url: savedPage.startURL))
         }
       }
       let known = Set(layout.knownBuiltInIDs)
@@ -821,7 +820,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   ) {
     let page = makeAdditionalPage(id: id, name: name, startURL: startURL)
     addPage(page, select: select)
-    page.webView.load(URLRequest(url: startURL))
+    if select { ensureSelectedPageLoaded() }
     onPageAdded?(Self.descriptor(page))
 
     if persist {
@@ -841,11 +840,19 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private func applySelectedPagePerformanceMode() {
+    ensureSelectedPageLoaded()
     let activeID = selectedPage?.credentialID
     for page in pages {
       page.setPerformanceActive(page.credentialID == activeID)
     }
     onSelectedPageChanged?(activeID)
+  }
+
+  private func ensureSelectedPageLoaded() {
+    guard let page = selectedPage, page.webView.url == nil, !page.webView.isLoading else {
+      return
+    }
+    page.webView.load(URLRequest(url: page.startURL))
   }
 
   private func updateToolbar() {
@@ -906,6 +913,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private static func stateDescription(_ state: AppMonitorState) -> String {
     switch state {
+    case .browserOnly:
+      return "已登录，仅浏览"
     case .disabled:
       return "监控已停用"
     case .starting:
@@ -925,6 +934,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private static func stateSymbol(_ state: AppMonitorState) -> String {
     switch state {
+    case .browserOnly:
+      return "globe"
     case .disabled:
       return "pause.circle"
     case .starting:

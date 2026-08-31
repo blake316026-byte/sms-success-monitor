@@ -3,6 +3,7 @@ import SMSMonitorCore
 
 enum AppMonitorState {
   case disabled
+  case browserOnly(String)
   case starting(String)
   case scanning(ScanMetrics?, Date?)
   case healthy(ScanMetrics, Date)

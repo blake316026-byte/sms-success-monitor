@@ -111,6 +111,12 @@ context.window = context;
 context.globalThis = context;
 vm.runInContext(source, context);
 
+username.value = 'payrobot';
+assert.deepEqual(
+  JSON.parse(JSON.stringify(context.smsLoginAutomation.loginIdentity())),
+  { username: 'payrobot', manual: false }
+);
+
 assert.equal(context.smsLoginAutomation.extractToken(), 'local-token-123');
 assert.equal(context.smsLoginAutomation.extractToken('payrobot'), '', 'unidentified token must not be saved to a named account');
 context.localStorage.values['site-lt-user'] = JSON.stringify({ username: 'payrobot', token: 'restricted-token' });

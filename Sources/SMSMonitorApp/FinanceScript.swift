@@ -75,17 +75,25 @@ enum FinanceScript {
       return null;
     };
 
+    const usernameOf = (value) => String(
+      value && typeof value === 'object'
+        ? value.username || value.account || value.loginName || ''
+        : ''
+    ).trim();
     const user = readStoredValue('lt-user');
     const signedOut = () => window.__smsMonitorSignedOut === true
       || window.localStorage.getItem('__smsMonitorSignedOut') === '1';
-    if (signedOut()) return { kind: 'auth', manualOnly: true, message: '已退出账号，不再使用旧 Token。' };
+    const sessionUsername = signedOut()
+      ? String(window.localStorage.getItem('__smsMonitorSignedOutUsername') || '').trim()
+      : usernameOf(user);
+    if (signedOut()) return { kind: 'auth', manualOnly: true, sessionUsername, message: '已退出账号，不再使用旧 Token。' };
     const pageToken = String(user && typeof user === 'object' ? user.token || '' : '').trim();
     const savedToken = String(fallbackToken || '').trim();
     const tokenCandidates = [];
     if (pageToken) tokenCandidates.push(pageToken);
     if (!user && savedToken) tokenCandidates.push(savedToken);
     if (tokenCandidates.length === 0) {
-      return { kind: 'auth', manualOnly: Boolean(user), message: '客户端登录态已失效，请重新登录。' };
+      return { kind: 'auth', manualOnly: Boolean(user), sessionUsername, message: '客户端登录态已失效，请重新登录。' };
     }
     const initialSession = JSON.stringify(user);
     const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
@@ -173,6 +181,6 @@ enum FinanceScript {
         };
       }
     }
-    return { kind: 'auth', manualOnly: Boolean(user), message: '今日统计登录态已失效，请重新登录。' };
+    return { kind: 'auth', manualOnly: Boolean(user), sessionUsername, message: '今日统计登录态已失效，请重新登录。' };
     """#
 }

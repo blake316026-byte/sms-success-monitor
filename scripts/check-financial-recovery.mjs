@@ -9,7 +9,7 @@ const section = (from, to) => {
   return source.slice(start, end);
 };
 const ensure = section('private func ensureFinancialRefreshScheduled()', 'private func refreshFinancialMetricsNow()');
-assert.match(ensure, /guard isStarted, !financePermissionBlocked, !isRefreshingFinancial/);
+assert.match(ensure, /guard isStarted, !browserOnlyPage, !financePermissionBlocked, !isRefreshingFinancial/);
 assert.match(ensure, /financialRefreshWorkItem == nil \|\| financialRefreshWorkItem\?\.isCancelled == true/);
 assert.match(ensure, /scheduleFinancialRefresh\(after: 1\)/);
 assert.match(section('private func completeAutoLogin(token:', 'private func persistCurrentToken()'), /ensureFinancialRefreshScheduled\(\)/);
@@ -20,4 +20,4 @@ const authenticated = section('} else if event == "authenticated"', 'private fun
 assert.match(authenticated, /if isStarted \{\s+ensureFinancialRefreshScheduled\(\)/);
 assert.doesNotMatch(authenticated, /if isStarted && !autoLoginInProgress/);
 assert.match(source, /private static let financialRefreshInterval: TimeInterval = 20/);
-console.log('PASS: financial scheduler recovery is wired to login, navigation and successful SMS without resetting permission blocks or duplicating pending work');
+console.log('PASS: financial scheduler recovery is wired to monitored logins and never schedules browser-only pages or duplicate pending work');
