@@ -26,6 +26,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var platformDetectionInProgress = false
   private var browserOnlyPage = false
   private var tianchengLogin: TianchengLoginController?
+  private var authenticationDetectionWorkItem: DispatchWorkItem?
   private var nextScanWorkItem: DispatchWorkItem?
   private var startupWorkItem: DispatchWorkItem?
   private var connectionKickoffWorkItem: DispatchWorkItem?
@@ -63,6 +64,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private let sessionLifecycleHandler = SessionLifecycleHandler()
   private var mockScenario: String?
   private var isStarted = false
+  private var monitoringEnabled = false
   private var isPageActive = false
   private var inactiveSince: Date?
   private var lastPageRecycleAt: Date?
@@ -124,6 +126,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func start(after delay: TimeInterval = 0) {
+    monitoringEnabled = true
     isStarted = true
     mockScenario = ProcessInfo.processInfo.environment["SMS_MONITOR_TEST_SCENARIO"]
     if mockScenario != nil {
@@ -157,12 +160,33 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     scheduleConnectionKickoff(after: 0)
   }
 
+  func startAuthenticationOnly() {
+    guard !monitoringEnabled else { return }
+    isStarted = true
+    mockScenario = nil
+    if webView.url == nil {
+      webView.load(URLRequest(url: configuration.targetURL))
+      return
+    }
+    identifyPlatform {}
+  }
+
+  func stopAuthenticationOnly() {
+    guard isStarted, !monitoringEnabled else { return }
+    isStarted = false
+    authenticationDetectionWorkItem?.cancel()
+    authenticationDetectionWorkItem = nil
+    platformDetectionInProgress = false
+    tianchengLogin?.stop()
+  }
+
   func setPageActive(_ active: Bool) {
     guard isPageActive != active else { return }
     isPageActive = active
     if active {
       inactiveSince = nil
-      guard isStarted, platformIdentified, !browserOnlyPage, tianchengLogin == nil,
+      guard isStarted, monitoringEnabled, platformIdentified, !browserOnlyPage,
+        tianchengLogin == nil,
         let currentURL = webView.url, requiresAuthentication(currentURL)
       else { return }
       if manualAuthenticationRequired && !accountIdentityConflict {
@@ -180,7 +204,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       emitMockState()
       return
     }
-    guard isStarted, !browserOnlyPage, !isScanning, !smsPermissionBlocked,
+    guard isStarted, monitoringEnabled, !browserOnlyPage, !isScanning,
+      !smsPermissionBlocked,
       !autoLoginInProgress
     else { return }
     if !platformIdentified || tianchengLogin != nil {
@@ -275,7 +300,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   func stop() {
     isStarted = false
+    monitoringEnabled = false
     tianchengLogin?.stop()
+    authenticationDetectionWorkItem?.cancel()
+    authenticationDetectionWorkItem = nil
     startupWorkItem?.cancel()
     startupWorkItem = nil
     nextScanWorkItem?.cancel()
@@ -485,7 +513,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func scheduleFinancialRefresh(after delay: TimeInterval) {
-    guard isStarted, !browserOnlyPage, mockScenario == nil else { return }
+    guard isStarted, monitoringEnabled, !browserOnlyPage, mockScenario == nil else { return }
     financialRefreshWorkItem?.cancel()
     let safeDelay = max(0, delay)
     let item = DispatchWorkItem { [weak self] in
@@ -498,14 +526,15 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func ensureFinancialRefreshScheduled() {
-    guard isStarted, !browserOnlyPage, !financePermissionBlocked, !isRefreshingFinancial,
+    guard isStarted, monitoringEnabled, !browserOnlyPage, !financePermissionBlocked,
+      !isRefreshingFinancial,
       financialRefreshWorkItem == nil || financialRefreshWorkItem?.isCancelled == true
     else { return }
     scheduleFinancialRefresh(after: 1)
   }
 
   private func refreshFinancialMetricsNow() {
-    guard !browserOnlyPage else { return }
+    guard monitoringEnabled, !browserOnlyPage else { return }
     if !platformIdentified || tianchengLogin != nil {
       identifyPlatform { [weak self] in self?.refreshFinancialMetricsNow() }
       return
@@ -619,6 +648,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       if isStarted { tianchengLogin.credentialsDidChange() }
       return
     }
+    guard monitoringEnabled else {
+      if isStarted {
+        platformIdentified = false
+        platformDetectionInProgress = false
+        identifyPlatform {}
+      }
+      return
+    }
     guard !browserOnlyPage else {
       emitBrowserOnlyState()
       return
@@ -649,7 +686,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   fileprivate func handleSessionLifecycle(_ message: WKScriptMessage) {
-    guard !browserOnlyPage, message.frameInfo.isMainFrame,
+    guard monitoringEnabled, !browserOnlyPage, message.frameInfo.isMainFrame,
       message.frameInfo.securityOrigin.host == configuration.targetURL.host
     else { return }
     let payload = message.body as? [String: Any]
@@ -1340,7 +1377,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       self.platformDetectionInProgress = false
       guard self.isStarted, self.webView.url == url, self.isMonitorOrigin(url) else { return }
       guard let detected else {
-        self.scheduleNextScan(after: 5)
+        if self.monitoringEnabled {
+          self.scheduleNextScan(after: 5)
+        } else {
+          self.scheduleAuthenticationOnlyDetection()
+        }
         return
       }
       self.platformIdentified = true
@@ -1357,7 +1398,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           runtime: self.automationRuntime
         ) { [weak self] state in self?.emit(state, nextScanAt: nil) }
         self.tianchengLogin?.start()
-      } else {
+      } else if self.monitoringEnabled {
         if PlatformRoutingPolicy.shouldUseNPGMonitoring(
           configurationID: self.configuration.id,
           targetURL: self.configuration.targetURL
@@ -1369,6 +1410,17 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         }
       }
     }
+  }
+
+  private func scheduleAuthenticationOnlyDetection(after delay: TimeInterval = 2) {
+    authenticationDetectionWorkItem?.cancel()
+    let item = DispatchWorkItem { [weak self] in
+      guard let self, self.isStarted, !self.monitoringEnabled else { return }
+      self.authenticationDetectionWorkItem = nil
+      self.identifyPlatform {}
+    }
+    authenticationDetectionWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
   }
 
   private func enterBrowserOnlyMode() {
@@ -1411,6 +1463,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
 
+    guard monitoringEnabled else { return }
+
     if requiresInteractiveAuthentication(url) {
       handleAuthenticationRequired("平台需要重新登录。")
       return
@@ -1446,6 +1500,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: Error
   ) {
+    guard monitoringEnabled else { return }
     needsImmediateScan = true
     handleScanFailure("平台页面加载失败：\(error.localizedDescription)")
   }
@@ -1497,6 +1552,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     if browserOnlyPage {
       emitBrowserOnlyState()
+      webView.reload()
+      return
+    }
+    if !monitoringEnabled {
+      tianchengLogin?.stop()
+      tianchengLogin = nil
+      platformIdentified = false
+      platformDetectionInProgress = false
       webView.reload()
       return
     }
@@ -1696,6 +1759,9 @@ final class MonitorController {
     guard disabledModuleIDs.insert(moduleID).inserted else { return }
     persistDisabledModuleIDs()
     monitor.stop()
+    if hasStarted, workspaceController.selectedCredentialID == moduleID {
+      monitor.startAuthenticationOnly()
+    }
     snapshotsByID[moduleID] = ModuleMonitorSnapshot(
       configuration: current.configuration,
       state: .disabled,
@@ -2016,7 +2082,15 @@ final class MonitorController {
 
   private func applyActivePage(_ credentialID: String?) {
     for (monitorID, monitor) in monitorsByID {
-      monitor.setPageActive(monitorID == credentialID)
+      let active = monitorID == credentialID
+      if hasStarted, disabledModuleIDs.contains(monitorID) {
+        if active {
+          monitor.startAuthenticationOnly()
+        } else {
+          monitor.stopAuthenticationOnly()
+        }
+      }
+      monitor.setPageActive(active)
     }
   }
 

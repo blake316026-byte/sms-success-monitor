@@ -9,7 +9,10 @@ const section = (from, to) => {
   return source.slice(start, end);
 };
 const ensure = section('private func ensureFinancialRefreshScheduled()', 'private func refreshFinancialMetricsNow()');
-assert.match(ensure, /guard isStarted, !browserOnlyPage, !financePermissionBlocked, !isRefreshingFinancial/);
+assert.match(
+  ensure,
+  /guard isStarted, monitoringEnabled, !browserOnlyPage, !financePermissionBlocked,\s+!isRefreshingFinancial/
+);
 assert.match(ensure, /financialRefreshWorkItem == nil \|\| financialRefreshWorkItem\?\.isCancelled == true/);
 assert.match(ensure, /scheduleFinancialRefresh\(after: 1\)/);
 assert.match(section('private func completeAutoLogin(token:', 'private func persistCurrentToken()'), /ensureFinancialRefreshScheduled\(\)/);

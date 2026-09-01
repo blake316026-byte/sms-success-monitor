@@ -84,6 +84,18 @@ assert.match(mainSource, /setTimeout\(\(\) => refreshFinancialModule\(page\.id\)
 assert.match(mainSource, /state\.smsPermissionBlocked = false/, 'manual refresh clears the SMS permission circuit breaker');
 assert.match(workbenchScript, /const result = await window\.smsApi\.reload\(\)/, 'refresh button awaits the main-process result');
 assert.match(workbenchScript, /reloadButton\.disabled = false/, 'refresh button is re-enabled after every result');
+assert.match(
+  workbenchSource,
+  /id="reload"[\s\S]*?id="clear-cache"[\s\S]*?id="address-form"/,
+  'clear-cache is a visible toolbar button immediately after refresh'
+);
+assert.match(mainSource, /ipcMain\.handle\('browser:clear-cache'/, 'main process handles cache clearing');
+assert.match(preloadSource, /clearBrowserCache/, 'preload exposes cache clearing');
+assert.match(
+  workbenchScript,
+  /clearCacheButton\.addEventListener\('click'[\s\S]*?window\.smsApi\.clearBrowserCache\(\)/,
+  'clear-cache button invokes the native cache action'
+);
 assert.match(workbenchStyles, /flex-wrap:\s*wrap/, 'platform tabs wrap onto additional rows');
 assert.doesNotMatch(workbenchStyles, /\.tab-button span[^}]*text-overflow:\s*ellipsis/, 'platform names are not hidden with ellipsis');
 assert.match(preloadSource, /setWorkbenchShellHeight/, 'renderer reports the wrapped navigation height');
