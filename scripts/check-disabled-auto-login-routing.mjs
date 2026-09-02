@@ -14,7 +14,7 @@ const section = (from, to) => {
 
 assert.match(
   section('func startAuthenticationOnly()', 'func setPageActive'),
-  /guard !monitoringEnabled[\s\S]*identifyPlatform[\s\S]*resumeAuthenticationOnlyIfNeeded/
+  /guard !monitoringEnabled[\s\S]*requiresAuthentication[\s\S]*resumeAuthenticationOnlyIfNeeded[\s\S]*identifyPlatform/
 );
 assert.match(
   section('private func requiresInteractiveAuthentication', 'private func isMonitorOrigin'),
@@ -22,7 +22,7 @@ assert.match(
 );
 assert.match(
   section('private func identifyPlatform', 'private func scheduleAuthenticationOnlyDetection'),
-  /PlatformRoutingPolicy\.shouldUseNPGMonitoring[\s\S]*monitoringEnabled[\s\S]*continueNPG\(\)[\s\S]*else[\s\S]*continueNPG\(\)/
+  /else if self\.monitoringEnabled[\s\S]*PlatformRoutingPolicy\.shouldUseNPGMonitoring[\s\S]*continueNPG\(\)[\s\S]*enterBrowserOnlyMode\(\)[\s\S]*else[\s\S]*continueNPG\(\)/
 );
 assert.match(
   section('func scanNow()', 'func updateSampleLimit'),
@@ -39,6 +39,10 @@ assert.match(
 assert.match(
   section('func setMonitoringEnabled', 'private func persistDisabledModuleIDs'),
   /monitor\.stop\(\)[\s\S]*selectedCredentialID == moduleID[\s\S]*startAuthenticationOnly\(\)/
+);
+assert.match(
+  section('func webView(_ webView', 'didFailProvisionalNavigation'),
+  /!monitoringEnabled, requiresAuthentication\(url\)[\s\S]*resumeAuthenticationOnlyIfNeeded\(\)[\s\S]*browserOnlyPage/
 );
 assert.match(
   section('fileprivate func handleSessionLifecycle', 'private func prepareAuthenticationRecovery'),

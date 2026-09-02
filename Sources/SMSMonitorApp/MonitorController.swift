@@ -168,6 +168,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       webView.load(URLRequest(url: configuration.targetURL))
       return
     }
+    if let url = webView.url, requiresAuthentication(url) {
+      resumeAuthenticationOnlyIfNeeded()
+      return
+    }
     identifyPlatform { [weak self] in self?.resumeAuthenticationOnlyIfNeeded() }
   }
 
@@ -1421,18 +1425,18 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           runtime: self.automationRuntime
         ) { [weak self] state in self?.emit(state, nextScanAt: nil) }
         self.tianchengLogin?.start()
-      } else if PlatformRoutingPolicy.shouldUseNPGMonitoring(
-        configurationID: self.configuration.id,
-        targetURL: self.configuration.targetURL
-      ) {
-        if self.monitoringEnabled {
+      } else if self.monitoringEnabled {
+        if PlatformRoutingPolicy.shouldUseNPGMonitoring(
+          configurationID: self.configuration.id,
+          targetURL: self.configuration.targetURL
+        ) {
           continueNPG()
           self.ensureFinancialRefreshScheduled()
         } else {
-          continueNPG()
+          self.enterBrowserOnlyMode()
         }
-      } else if self.monitoringEnabled {
-        self.enterBrowserOnlyMode()
+      } else {
+        continueNPG()
       }
     }
   }
@@ -1477,6 +1481,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard let url = webView.url else { return }
+
+    if !monitoringEnabled, requiresAuthentication(url) {
+      resumeAuthenticationOnlyIfNeeded()
+      return
+    }
 
     if browserOnlyPage {
       emitBrowserOnlyState()
