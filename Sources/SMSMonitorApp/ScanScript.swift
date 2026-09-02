@@ -1,7 +1,9 @@
 enum ScanScript {
   static let body = #"""
     const requestedLimit = Math.min(500, Math.max(10, Math.round(Number(sampleLimit) || 200)));
-    const maximumPages = Math.max(1, Math.ceil(requestedLimit / 20));
+    // Leave bounded headroom for duplicate rows at page boundaries so the
+    // deduplicated sample can still reach the requested size.
+    const maximumPages = Math.max(1, Math.ceil(requestedLimit / 20) + 5);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const createdStart = new Date(today);

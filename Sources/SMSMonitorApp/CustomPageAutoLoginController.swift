@@ -86,9 +86,6 @@ final class CustomPageAutoLoginController {
       case .failure:
         self.retry()
       case .success(let snapshot):
-        if !snapshot.token.isEmpty {
-          self.credentialStore.updateToken(snapshot.token, for: self.credentialID)
-        }
         switch snapshot.kind {
         case "login":
           self.solveCaptcha(profile: profile, dataURL: snapshot.captchaDataURL)
@@ -157,6 +154,12 @@ final class CustomPageAutoLoginController {
     let secret = profile.totpSecret.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !secret.isEmpty else {
       inProgress = false
+      return
+    }
+    guard TOTPSecretPolicy.isValid(secret) else {
+      inProgress = false
+      credentialStore.clearToken(for: credentialID)
+      cooldownUntil = Date.distantFuture
       return
     }
     let serverOffset = clockOffsetMilliseconds.isFinite
@@ -256,6 +259,7 @@ final class CustomPageAutoLoginController {
 
   private func persistCurrentToken() {
     guard let webView else { return }
+    guard let currentURL = webView.url, !requiresAuthentication(currentURL) else { return }
     loginAutomation.extractToken(in: webView) { [weak self] token in
       guard let self, !token.isEmpty else { return }
       self.credentialStore.updateToken(token, for: self.credentialID)

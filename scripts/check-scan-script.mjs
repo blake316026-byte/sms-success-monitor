@@ -140,6 +140,34 @@ const cappedPages = await executeScan(200);
 check(cappedPages.statuses.length === 200, 'continues paging when the server caps each page at 20 rows');
 check(cappedPageCalls === 10, 'stops after collecting 200 rows across ten capped pages');
 
+let duplicateBoundaryCalls = 0;
+globalThis.window = makeWindow(async (url, options) => {
+  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
+  duplicateBoundaryCalls += 1;
+  const pageNo = JSON.parse(options.body).query.pageNo;
+  if (pageNo === 1) {
+    return responseFor(Array.from({ length: 20 }, (_, index) => ({
+      id: `boundary-${index}`,
+      status: 'SUCCESS'
+    })), 100);
+  }
+  if (pageNo === 2) {
+    return responseFor([
+      { id: 'boundary-19', status: 'SUCCESS' },
+      ...Array.from({ length: 9 }, (_, index) => ({
+        id: `boundary-${20 + index}`,
+        status: 'SUCCESS'
+      }))
+    ], 100);
+  }
+  return responseFor([{ id: 'boundary-29', status: 'SUCCESS' }], 100);
+});
+const duplicateBoundary = await executeScan(30);
+check(
+  duplicateBoundary.statuses.length === 30 && duplicateBoundaryCalls === 3,
+  'fetches a bounded extra page when deduplication leaves the sample short'
+);
+
 let configuredPageCalls = 0;
 globalThis.window = makeWindow(async (url, options) => {
   if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();

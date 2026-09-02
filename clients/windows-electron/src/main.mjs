@@ -18,6 +18,7 @@ import {
   ALERT_THRESHOLD,
   calculateMetrics,
   isAlert,
+  isValidTotpSecret,
   MAX_CAPTCHA_LOGIN_ATTEMPTS,
   MAX_SAMPLE_LIMIT,
   MAX_TOTP_LOGIN_ATTEMPTS,
@@ -672,6 +673,7 @@ async function persistCurrentToken(id) {
   const page = pages.get(id);
   const state = moduleStates.get(id);
   if (!page || !state || !profileFor(id)) return;
+  if (isAuthenticationURL(page.view.webContents.getURL())) return;
   const expectedUsername = profileFor(id).username;
   let token = '';
   try {
@@ -907,6 +909,17 @@ async function attemptAutoLogin(id, currentURL) {
         updateModule(id, {
           status: 'auth',
           message: '账号密码已通过，但本地未配置 Google 密钥，请人工完成二次验证。',
+          metrics: null
+        });
+        return;
+      }
+      if (!isValidTotpSecret(secret)) {
+        state.autoLoginInProgress = false;
+        profile.token = '';
+        await saveCredentialProfiles();
+        updateModule(id, {
+          status: 'auth',
+          message: 'Google 密钥格式无效，请重新保存原始 Base32 密钥或完整 otpauth:// 链接。',
           metrics: null
         });
         return;
@@ -1816,6 +1829,12 @@ function registerIPC() {
     const totpSecret = input?.clearTotp
       ? ''
       : String(input?.totpSecret || '').trim() || String(existing.totpSecret || '');
+    if (totpSecret && !isValidTotpSecret(totpSecret)) {
+      return {
+        ok: false,
+        message: 'Google 密钥格式无效，请填写原始 Base32 密钥或完整 otpauth:// 链接'
+      };
+    }
     credentialProfiles[id] = {
       username,
       password,

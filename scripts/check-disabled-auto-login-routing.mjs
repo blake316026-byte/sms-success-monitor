@@ -14,7 +14,15 @@ const section = (from, to) => {
 
 assert.match(
   section('func startAuthenticationOnly()', 'func setPageActive'),
-  /guard !monitoringEnabled[\s\S]*identifyPlatform \{\}/
+  /guard !monitoringEnabled[\s\S]*identifyPlatform[\s\S]*resumeAuthenticationOnlyIfNeeded/
+);
+assert.match(
+  section('private func requiresInteractiveAuthentication', 'private func isMonitorOrigin'),
+  /resumeAuthenticationOnlyIfNeeded[\s\S]*guard isStarted, !monitoringEnabled[\s\S]*requiresAuthentication[\s\S]*handleAuthenticationRequired/
+);
+assert.match(
+  section('private func identifyPlatform', 'private func scheduleAuthenticationOnlyDetection'),
+  /PlatformRoutingPolicy\.shouldUseNPGMonitoring[\s\S]*monitoringEnabled[\s\S]*continueNPG\(\)[\s\S]*else[\s\S]*continueNPG\(\)/
 );
 assert.match(
   section('func scanNow()', 'func updateSampleLimit'),
@@ -37,4 +45,4 @@ assert.match(
   /guard monitoringEnabled/
 );
 
-console.log('PASS: a selected disabled page may run Tiancheng DOM login while SMS, finance, NPG session recovery and alerts remain stopped');
+console.log('PASS: a selected disabled page may auto-login without running SMS, finance or alerts');

@@ -168,7 +168,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       webView.load(URLRequest(url: configuration.targetURL))
       return
     }
-    identifyPlatform {}
+    identifyPlatform { [weak self] in self?.resumeAuthenticationOnlyIfNeeded() }
   }
 
   func stopAuthenticationOnly() {
@@ -652,7 +652,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       if isStarted {
         platformIdentified = false
         platformDetectionInProgress = false
-        identifyPlatform {}
+        identifyPlatform { [weak self] in self?.resumeAuthenticationOnlyIfNeeded() }
       }
       return
     }
@@ -748,6 +748,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       }
       emit(.authenticationRequired("已退出账号，旧 Token 已作废；如需自动登录，请重新保存自动登录配置。"), nextScanAt: nil)
     } else if event == "authenticated" {
+      guard let currentURL = webView.url, !requiresAuthentication(currentURL) else { return }
       manualAuthenticationRequired = false
       credentialLoginPending = false
       resetAccountIdentityRecovery()
@@ -1034,6 +1035,17 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       )
       return
     }
+    guard TOTPSecretPolicy.isValid(secret) else {
+      autoLoginInProgress = false
+      credentialStore.clearToken(for: configuration.id)
+      emit(
+        .authenticationRequired(
+          "Google 密钥格式无效，请重新保存原始 Base32 密钥或完整 otpauth:// 链接。"
+        ),
+        nextScanAt: nextScanAt
+      )
+      return
+    }
     let serverOffset = clockOffsetMilliseconds.isFinite
       && abs(clockOffsetMilliseconds) <= 43_200_000
       ? clockOffsetMilliseconds / 1_000
@@ -1191,6 +1203,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private func persistCurrentToken() {
     guard !manualAuthenticationRequired else { return }
+    guard let currentURL = webView.url, !requiresAuthentication(currentURL) else { return }
     let epoch = authenticationEpoch
     guard let profile = credentialStore.profile(for: configuration.id) else { return }
     loginAutomation.extractToken(in: webView, expectedUsername: profile.username) { [weak self] token in
@@ -1356,6 +1369,16 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     ["/ga-auth", "/unlock-ip"].contains(url.path)
   }
 
+  private func resumeAuthenticationOnlyIfNeeded() {
+    guard isStarted, !monitoringEnabled, let url = webView.url,
+      requiresAuthentication(url)
+    else { return }
+    handleAuthenticationRequired(
+      "平台需要重新登录。",
+      progressMessage: "正在使用已保存账号登录当前页面"
+    )
+  }
+
   private func isMonitorOrigin(_ url: URL) -> Bool {
     url.scheme == configuration.targetURL.scheme
       && url.host == configuration.targetURL.host
@@ -1398,16 +1421,18 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           runtime: self.automationRuntime
         ) { [weak self] state in self?.emit(state, nextScanAt: nil) }
         self.tianchengLogin?.start()
-      } else if self.monitoringEnabled {
-        if PlatformRoutingPolicy.shouldUseNPGMonitoring(
-          configurationID: self.configuration.id,
-          targetURL: self.configuration.targetURL
-        ) {
+      } else if PlatformRoutingPolicy.shouldUseNPGMonitoring(
+        configurationID: self.configuration.id,
+        targetURL: self.configuration.targetURL
+      ) {
+        if self.monitoringEnabled {
           continueNPG()
           self.ensureFinancialRefreshScheduled()
         } else {
-          self.enterBrowserOnlyMode()
+          continueNPG()
         }
+      } else if self.monitoringEnabled {
+        self.enterBrowserOnlyMode()
       }
     }
   }
@@ -1463,7 +1488,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
 
-    guard monitoringEnabled else { return }
+    guard monitoringEnabled else {
+      resumeAuthenticationOnlyIfNeeded()
+      return
+    }
 
     if requiresInteractiveAuthentication(url) {
       handleAuthenticationRequired("平台需要重新登录。")
@@ -1910,10 +1938,17 @@ final class MonitorController {
         self.showCredentialError("账号和密码不能为空。")
         return
       }
+      let totpSecret = totpField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard totpSecret.isEmpty || TOTPSecretPolicy.isValid(totpSecret) else {
+        self.showCredentialError(
+          "Google 密钥格式无效。请填写原始 Base32 密钥或完整 otpauth:// 链接，不能填写动态验证码或其他文字。"
+        )
+        return
+      }
       let profile = LocalLoginProfile(
         username: username,
         password: password,
-        totpSecret: totpField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+        totpSecret: totpSecret,
         token: existing?.username == username ? (existing?.token ?? "") : "",
         autoLoginEnabled: enabledButton.state == .on
       )

@@ -6,6 +6,7 @@ import {
   canAttemptTotp,
   calculateMetrics,
   isAlert,
+  isValidTotpSecret,
   MAX_CAPTCHA_LOGIN_ATTEMPTS,
   MAX_SAMPLE_LIMIT,
   MAX_TOTP_LOGIN_ATTEMPTS,
@@ -59,6 +60,11 @@ assert.equal(canAttemptCaptcha(9), true);
 assert.equal(canAttemptCaptcha(10), false);
 assert.equal(canAttemptTotp(4), true);
 assert.equal(canAttemptTotp(5), false);
+assert.equal(isValidTotpSecret('GEZDGNBVGY3TQOJQ'), true);
+assert.equal(isValidTotpSecret('otpauth://totp/SMSMonitor?secret=GEZDGNBVGY3TQOJQ'), true);
+assert.equal(isValidTotpSecret('动态验证码密钥内容'), false);
+assert.equal(isValidTotpSecret('123456'), false);
+assert.equal(isValidTotpSecret('otpauth://totp/SMSMonitor'), false);
 assert.equal(normalizeSampleLimit('75'), 75);
 assert.equal(normalizeSampleLimit(1), MIN_SAMPLE_LIMIT);
 assert.equal(normalizeSampleLimit(10_000), MAX_SAMPLE_LIMIT);

@@ -78,6 +78,20 @@ check(
   "continues Google verification through attempt five and then stops"
 )
 check(
+  TOTPSecretPolicy.isValid("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"),
+  "accepts a Base32 Google secret"
+)
+check(
+  TOTPSecretPolicy.isValid("otpauth://totp/SMSMonitor?secret=GEZDGNBVGY3TQOJQ"),
+  "accepts an otpauth URI with a Base32 secret"
+)
+check(
+  !TOTPSecretPolicy.isValid("动态验证码密钥内容")
+    && !TOTPSecretPolicy.isValid("123456")
+    && !TOTPSecretPolicy.isValid("otpauth://totp/SMSMonitor"),
+  "rejects non-Base32 text, transient codes and incomplete otpauth URIs"
+)
+check(
   MonitorRefreshPolicy.nextScanDelay(scanInterval: 60, scanDuration: 20) == 40,
   "keeps a one-minute cadence after a fast scan"
 )

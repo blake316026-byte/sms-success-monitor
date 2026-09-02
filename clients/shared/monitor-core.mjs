@@ -15,6 +15,20 @@ export function canAttemptTotp(afterFailures) {
   return Number(afterFailures) < MAX_TOTP_LOGIN_ATTEMPTS;
 }
 
+export function isValidTotpSecret(value) {
+  let secret = String(value || '').trim();
+  if (!secret) return false;
+  if (/^otpauth:\/\//i.test(secret)) {
+    try {
+      secret = new URL(secret).searchParams.get('secret') || '';
+    } catch (_) {
+      return false;
+    }
+  }
+  const normalized = secret.replace(/[\s=-]+/g, '').toUpperCase();
+  return Boolean(normalized) && /^[A-Z2-7]+$/.test(normalized);
+}
+
 export function normalizeSampleLimit(value) {
   const parsed = Math.round(Number(value));
   if (!Number.isFinite(parsed)) return SAMPLE_LIMIT;
