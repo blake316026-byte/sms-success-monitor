@@ -179,5 +179,10 @@ globalThis.window = makeWindow(async () => {
 }, false);
 const unauthenticated = await executeFinance('', 'custom-a4e42517', 'okbet');
 check(unauthenticated.kind === 'auth', 'returns auth when no token is present');
+const savedTokenWithoutPageSession = await executeFinance('saved-token', 'custom-a4e42517', 'okbet');
+check(
+  savedTokenWithoutPageSession.kind === 'auth' && savedTokenWithoutPageSession.manualOnly === false,
+  'does not query finance using an encrypted saved token without a page session'
+);
 
 console.log('All finance-script checks passed');

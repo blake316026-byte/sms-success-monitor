@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前版本：**macOS v0.3.58 build 65、Windows v0.3.58**；Android 继续使用 v0.3.53。macOS 和 Windows 会拒绝无效 Google 密钥，且只在完成二次验证后保存长期 Token；macOS 关闭监控后仍允许当前页面自动登录，但不会抓取短信、财务或报警。详见[本版更新说明](releases/v0.3.58.md)。
+当前版本：**macOS v0.3.59 build 66、Windows v0.3.59**；Android 继续使用 v0.3.53。macOS 和 Windows 不再用本机旧 Token 创建不完整的网页会话；后台进入登录页后统一执行账号密码、图形验证码及 Google 验证流程。详见[本版更新说明](releases/v0.3.59.md)。

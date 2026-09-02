@@ -18,7 +18,7 @@ assert.match(
 );
 assert.match(
   section('private func requiresInteractiveAuthentication', 'private func isMonitorOrigin'),
-  /resumeAuthenticationOnlyIfNeeded[\s\S]*guard isStarted, !monitoringEnabled[\s\S]*requiresAuthentication[\s\S]*handleAuthenticationRequired/
+  /requiresAuthentication\(url\)[\s\S]*resumeAuthenticationOnlyIfNeeded[\s\S]*guard isStarted, !monitoringEnabled[\s\S]*requiresAuthentication[\s\S]*handleAuthenticationRequired/
 );
 assert.match(
   section('private func identifyPlatform', 'private func scheduleAuthenticationOnlyDetection'),
@@ -30,7 +30,7 @@ assert.match(
 );
 assert.match(
   section('func scanNow()', 'func updateSampleLimit'),
-  /guard isStarted, monitoringEnabled[\s\S]*ScanScript\.body/
+  /guard isStarted, monitoringEnabled[\s\S]*requiresInteractiveAuthentication\(currentURL\)[\s\S]*handleAuthenticationRequired[\s\S]*ScanScript\.body/
 );
 assert.match(
   section('private func scheduleFinancialRefresh', 'private func finishFinancialRefresh'),

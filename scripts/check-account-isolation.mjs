@@ -72,11 +72,10 @@ for (const [name, run, args] of adapters) {
     assert.equal((await run(...args)).kind, 'sessionChanged', `${name}: reject stale ${stage} result`);
   }
 
-  setup(async (_url, options) => {
-    assert.equal(options.headers.Auth, 'old-admin-token');
-    return response(200);
-  }, null);
-  assert.equal((await run(...args)).kind, 'ok', `${name}: empty startup session can recover`);
+  setup(() => { throw new Error('must authenticate before querying'); }, null);
+  const missingPageSession = await run(...args);
+  assert.equal(missingPageSession.kind, 'auth', `${name}: empty startup session requires login`);
+  assert.equal(missingPageSession.manualOnly, false, `${name}: saved profile may auto-login`);
   console.log(`PASS: ${name} account isolation, permission handling and stale-result rejection`);
 }
 

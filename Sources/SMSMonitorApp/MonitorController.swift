@@ -53,7 +53,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var autoLoginStage = ""
   private var autoLoginCooldownUntil: Date?
   private var autoLoginOutcomeWorkItem: DispatchWorkItem?
-  private var pageSessionRecoveryAttempted = false
   private var manualAuthenticationRequired = false
   private var credentialLoginPending = false
   private var accountIdentityRecoveryPending = false
@@ -406,8 +405,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       switch kind {
       case "ok":
         let statuses = payload["statuses"] as? [String] ?? []
-        let usedFallbackToken = payload["tokenSource"] as? String == "fallback"
-        let restoredPageSession = payload["restoredPageSession"] as? Bool ?? false
         let metrics = MetricsCalculator.calculate(
           statuses: statuses,
           sampleLimit: activeSampleLimit
@@ -418,18 +415,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         lastMetricsScannedAt = scannedAt
 
         if webView.url?.path == "/login" {
-          if !pageSessionRecoveryAttempted && (!usedFallbackToken || restoredPageSession) {
-            pageSessionRecoveryAttempted = true
-            needsImmediateScan = true
-            emit(.starting("已恢复本机 Token，正在打开短信记录页"), nextScanAt: nil)
-            webView.load(URLRequest(url: monitoringPageURL))
-          } else {
-            if !usedFallbackToken { manualAuthenticationRequired = true }
-            handleAuthenticationRequired(
-              "页面登录态无法通过有效 Token 恢复。",
-              progressMessage: "页面会话已失效，正在自动登录"
-            )
-          }
+          handleAuthenticationRequired(
+            "页面登录态已失效。",
+            progressMessage: "页面会话已失效，正在自动登录"
+          )
           return
         }
 
@@ -686,7 +675,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     autoLoginCooldownUntil = nil
     autoLoginInProgress = false
     autoLoginStage = ""
-    pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
     guard let currentURL = webView.url, requiresAuthentication(currentURL) else { return }
     credentialLoginPending = true
@@ -1382,7 +1370,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func requiresInteractiveAuthentication(_ url: URL) -> Bool {
-    ["/ga-auth", "/unlock-ip"].contains(url.path)
+    requiresAuthentication(url)
   }
 
   private func resumeAuthenticationOnlyIfNeeded() {
@@ -1531,20 +1519,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     guard isMonitorOrigin(url) else { return }
-    if url.path == "/login" {
-      guard !autoLoginInProgress else { return }
-      needsImmediateScan = true
-      scheduleConnectionKickoff()
-      return
-    }
     let completedAuthentication =
-      autoLoginInProgress || !autoLoginStage.isEmpty || pageSessionRecoveryAttempted
+      autoLoginInProgress || !autoLoginStage.isEmpty
     autoLoginInProgress = false
     autoLoginStage = ""
     captchaAutoLoginAttempts = 0
     totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
-    pageSessionRecoveryAttempted = false
     autoLoginOutcomeWorkItem?.cancel()
     persistCurrentToken()
     if completedAuthentication {

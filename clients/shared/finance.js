@@ -41,9 +41,8 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
     : usernameOf(pageUser);
   if (signedOut()) return { kind: 'auth', manualOnly: true, sessionUsername, message: '已退出账号，不再使用旧 Token。' };
   const pageToken = String(pageUser && typeof pageUser === 'object' ? pageUser.token || '' : '').trim();
-  const savedToken = String(fallbackToken || '').trim();
-  const tokens = [pageToken || (!pageUser ? savedToken : '')].filter(Boolean);
-  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), sessionUsername, message: '客户端登录态已失效，请重新登录。' };
+  const tokens = [pageToken].filter(Boolean);
+  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), sessionUsername, message: '页面登录态已失效，请重新登录。' };
   const initialSession = JSON.stringify(pageUser);
   const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
   const cache = readUrlCache();

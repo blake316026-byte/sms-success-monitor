@@ -183,22 +183,17 @@ const configuredPages = await executeScan(350);
 check(configuredPages.statuses.length === 350, 'returns the manually configured sample count');
 check(configuredPageCalls === 18, 'fetches enough capped pages for a configured sample count');
 
-let fallbackTokenSeen = false;
-globalThis.window = makeWindow(async (url, options) => {
-  if (url.includes('/api/dashboard4bix/realtime')) return dashboardResponse();
-  fallbackTokenSeen = options.headers.Auth === 'saved-token';
-  return responseFor([{ id: 'fallback-1', status: 'SUCCESS' }], 1);
+globalThis.window = makeWindow(async () => {
+  throw new Error('fetch should not run without a complete page session');
 }, false);
 const fallbackTokenResult = await executeScan(200, 'saved-token');
 check(
-  fallbackTokenResult.kind === 'ok' && fallbackTokenSeen,
-  'uses the encrypted saved token before starting automatic login'
+  fallbackTokenResult.kind === 'auth' && fallbackTokenResult.manualOnly === false,
+  'starts automatic login instead of querying with an encrypted saved token'
 );
 check(
-  fallbackTokenResult.tokenSource === 'fallback'
-    && fallbackTokenResult.restoredPageSession === true
-    && JSON.parse(globalThis.window.localStorage.getItem('lt-user')).token === 'saved-token',
-  'creates a page session when the encrypted saved token is still valid'
+  globalThis.window.localStorage.getItem('lt-user') === null,
+  'never creates a partial browser session from an encrypted saved token'
 );
 
 let staleTokenCalls = 0;
