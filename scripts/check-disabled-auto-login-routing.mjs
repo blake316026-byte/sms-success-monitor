@@ -14,7 +14,7 @@ const section = (from, to) => {
 
 assert.match(
   section('func startAuthenticationOnly()', 'func setPageActive'),
-  /guard !monitoringEnabled[\s\S]*requiresAuthentication[\s\S]*resumeAuthenticationOnlyIfNeeded[\s\S]*identifyPlatform/
+  /guard !monitoringEnabled[\s\S]*scheduleAuthenticationOnlyDetection\(\)[\s\S]*requiresAuthentication[\s\S]*resumeAuthenticationOnlyIfNeeded[\s\S]*identifyPlatform/
 );
 assert.match(
   section('private func requiresInteractiveAuthentication', 'private func isMonitorOrigin'),
@@ -23,6 +23,10 @@ assert.match(
 assert.match(
   section('private func identifyPlatform', 'private func scheduleAuthenticationOnlyDetection'),
   /else if self\.monitoringEnabled[\s\S]*PlatformRoutingPolicy\.shouldUseNPGMonitoring[\s\S]*continueNPG\(\)[\s\S]*enterBrowserOnlyMode\(\)[\s\S]*else[\s\S]*continueNPG\(\)/
+);
+assert.match(
+  section('private func scheduleAuthenticationOnlyDetection', 'private func enterBrowserOnlyMode'),
+  /guard let self, self\.isStarted, !self\.monitoringEnabled[\s\S]*requiresAuthentication\(url\)[\s\S]*!self\.autoLoginInProgress[\s\S]*resumeAuthenticationOnlyIfNeeded\(\)[\s\S]*scheduleAuthenticationOnlyDetection\(\)/
 );
 assert.match(
   section('func scanNow()', 'func updateSampleLimit'),

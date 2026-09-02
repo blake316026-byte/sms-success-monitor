@@ -164,6 +164,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard !monitoringEnabled else { return }
     isStarted = true
     mockScenario = nil
+    NSLog(
+      "[SMSMonitor] %@ starting authentication-only mode at %@",
+      configuration.id, webView.url?.path ?? "<unloaded>"
+    )
+    scheduleAuthenticationOnlyDetection()
     if webView.url == nil {
       webView.load(URLRequest(url: configuration.targetURL))
       return
@@ -893,6 +898,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
     guard let profile = credentialStore.profile(for: configuration.id), profile.canAutoLogin else {
+      NSLog("[SMSMonitor] %@ automatic login skipped: no enabled profile", configuration.id)
       emit(.authenticationRequired("\(message) 请打开对应后台标签完成登录。"), nextScanAt: nextScanAt)
       return
     }
@@ -953,8 +959,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
       switch result {
       case .failure(let error):
+        NSLog("[SMSMonitor] %@ login snapshot failed: %@", self.configuration.id, error.localizedDescription)
         self.retryAutoLogin("无法读取登录页面：\(error.localizedDescription)")
       case .success(let snapshot):
+        NSLog("[SMSMonitor] %@ login snapshot kind: %@", self.configuration.id, snapshot.kind)
         switch snapshot.kind {
         case "login":
           self.solveCaptchaAndSubmit(profile: profile, dataURL: snapshot.captchaDataURL)
@@ -1068,14 +1076,17 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
         switch result {
         case .failure(let error):
+          NSLog("[SMSMonitor] %@ TOTP generation failed: %@", self.configuration.id, error.localizedDescription)
           self.retryAutoLogin("Google 动态码生成失败：\(error.localizedDescription)")
         case .success(let code):
           self.loginAutomation.submitTOTP(in: self.webView, code: code) { [weak self] submitResult in
             guard let self, self.authenticationEpoch == epoch else { return }
             guard (try? submitResult.get()) == true else {
+              NSLog("[SMSMonitor] %@ TOTP form submission was not accepted", self.configuration.id)
               self.retryAutoLogin("Google 验证页面尚未准备完成")
               return
             }
+            NSLog("[SMSMonitor] %@ TOTP form submitted", self.configuration.id)
             self.autoLoginStage = "totp"
             self.scheduleAutoLoginOutcomeCheck()
           }
@@ -1116,6 +1127,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private func retryAutoLogin(_ message: String) {
     guard !manualAuthenticationRequired else { return }
+    NSLog("[SMSMonitor] %@ automatic login retry: %@", configuration.id, message)
     let epoch = authenticationEpoch
     autoLoginInProgress = false
     autoLoginStage = ""
@@ -1377,6 +1389,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard isStarted, !monitoringEnabled, let url = webView.url,
       requiresAuthentication(url)
     else { return }
+    NSLog(
+      "[SMSMonitor] %@ resuming authentication-only login at %@",
+      configuration.id, url.path
+    )
     handleAuthenticationRequired(
       "平台需要重新登录。",
       progressMessage: "正在使用已保存账号登录当前页面"
@@ -1446,7 +1462,14 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let item = DispatchWorkItem { [weak self] in
       guard let self, self.isStarted, !self.monitoringEnabled else { return }
       self.authenticationDetectionWorkItem = nil
-      self.identifyPlatform {}
+      if self.tianchengLogin == nil, let url = self.webView.url,
+        self.requiresAuthentication(url), !self.autoLoginInProgress
+      {
+        self.resumeAuthenticationOnlyIfNeeded()
+      } else if !self.platformIdentified, self.tianchengLogin == nil, !self.browserOnlyPage {
+        self.identifyPlatform {}
+      }
+      self.scheduleAuthenticationOnlyDetection()
     }
     authenticationDetectionWorkItem = item
     DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
