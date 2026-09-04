@@ -16,9 +16,11 @@ enum ScanScript {
     };
 
     const readStoredValue = (suffix) => {
-      let found = null;
+      const candidates = [];
       const identities = new Set();
-      for (const store of [window.localStorage, window.sessionStorage]) {
+      // Prefer the active session token. localStorage can briefly retain the
+      // previous token while the platform rotates the session.
+      for (const store of [window.sessionStorage, window.localStorage]) {
         for (let index = 0; index < store.length; index += 1) {
           const key = store.key(index);
           if (!key || (key !== suffix && !key.endsWith(`-${suffix}`))) continue;
@@ -28,13 +30,16 @@ enum ScanScript {
           try { value = JSON.parse(raw); } catch (_) { value = raw; }
           if (suffix !== 'lt-user') return value;
           if (value && typeof value === 'object') {
-            identities.add(JSON.stringify([value.token || '', value.username || value.account || value.id || '']));
+            const identity = String(value.username || value.account || value.loginName || value.id || '').trim();
+            if (identity) identities.add(identity);
           }
-          if (found == null) found = value;
+          candidates.push(value);
         }
       }
       if (identities.size > 1) return { accountConflict: true };
-      return found;
+      return candidates.find((value) => value && typeof value === 'object' && value.token)
+        ?? candidates[0]
+        ?? null;
     };
 
     const readUrlCache = () => {
@@ -66,7 +71,7 @@ enum ScanScript {
     const tokenCandidates = [];
     if (pageToken) tokenCandidates.push({ token: pageToken, source: 'page' });
     if (tokenCandidates.length === 0) {
-      return { kind: 'auth', manualOnly: Boolean(user), sessionUsername, message: '页面登录态已失效，请重新登录。' };
+      return { kind: 'auth', manualOnly: Boolean(user?.accountConflict), sessionUsername, message: '页面登录态已失效，请重新登录。' };
     }
     const initialSession = JSON.stringify(user);
     const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
@@ -259,6 +264,6 @@ enum ScanScript {
       };
     }
 
-    return { kind: 'auth', manualOnly: Boolean(user), sessionUsername, message: lastAuthenticationMessage };
+    return { kind: 'auth', manualOnly: false, sessionUsername, message: lastAuthenticationMessage };
     """#
 }

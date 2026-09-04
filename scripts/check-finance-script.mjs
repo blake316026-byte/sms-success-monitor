@@ -169,7 +169,7 @@ globalThis.window = makeWindow(async (url, options) => {
 });
 const fallbackFinance = await executeFinance('saved-token', 'custom-a4e42517', 'okbet');
 check(
-  fallbackFinance.kind === 'auth' && fallbackFinance.manualOnly
+  fallbackFinance.kind === 'auth' && fallbackFinance.manualOnly === false
     && staleTokenCalls === 1,
   'never retries finance using a different saved account when the page token expires'
 );

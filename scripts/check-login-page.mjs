@@ -138,6 +138,7 @@ assert.equal(loginButton.clicked, true);
 
 useUnnamedCaptcha = true;
 loginButton.clicked = false;
+context.requestAnimationFrame = () => 1; // Simulate a hidden WebView that never renders.
 const fallbackLoginResult = await context.smsLoginAutomation.submitLogin({
   username: 'operator2',
   password: 'secret2',

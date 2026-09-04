@@ -148,6 +148,8 @@ enum LocalAutomationRuntimeError: LocalizedError {
   case resourceMissing(String)
   case runtimeUnavailable
   case invalidResult
+  case operationTimedOut
+  case pageOperationTimedOut
 
   var errorDescription: String? {
     switch self {
@@ -157,6 +159,10 @@ enum LocalAutomationRuntimeError: LocalizedError {
       return "本地验证码识别组件尚未就绪"
     case .invalidResult:
       return "本地自动登录组件返回了无效结果"
+    case .operationTimedOut:
+      return "本地验证码识别超过 20 秒"
+    case .pageOperationTimedOut:
+      return "登录页面操作超过 15 秒"
     }
   }
 }
@@ -169,11 +175,21 @@ final class LocalAutomationRuntime: NSObject, WKNavigationDelegate {
     let fail: (Error) -> Void
   }
 
+  private struct QueuedCall {
+    let id: UUID
+    let body: String
+    let arguments: [String: Any]
+    let completion: StringCompletion
+  }
+
   private let server: LocalAutomationHTTPServer?
   private let webView: WKWebView
   private var isReady = false
   private var loadError: Error?
   private var pending: [PendingOperation] = []
+  private var queuedCalls: [QueuedCall] = []
+  private var activeCallID: UUID?
+  private var activeCallTimeout: DispatchWorkItem?
 
   override init() {
     let resourceURL = Bundle.main.resourceURL?.appendingPathComponent("auto-login")
@@ -255,18 +271,51 @@ final class LocalAutomationRuntime: NSObject, WKNavigationDelegate {
     arguments: [String: Any],
     completion: @escaping StringCompletion
   ) {
-    webView.callAsyncJavaScript(body, arguments: arguments, in: nil, in: .page) { result in
+    queuedCalls.append(
+      QueuedCall(id: UUID(), body: body, arguments: arguments, completion: completion)
+    )
+    runNextCall()
+  }
+
+  private func runNextCall() {
+    guard isReady, activeCallID == nil, !queuedCalls.isEmpty else { return }
+    let call = queuedCalls.removeFirst()
+    activeCallID = call.id
+
+    let timeout = DispatchWorkItem { [weak self] in
+      guard let self, self.activeCallID == call.id else { return }
+      self.activeCallID = nil
+      self.activeCallTimeout = nil
+      call.completion(.failure(LocalAutomationRuntimeError.operationTimedOut))
+      self.isReady = false
+      self.webView.reload()
+    }
+    activeCallTimeout = timeout
+    DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: timeout)
+
+    webView.callAsyncJavaScript(
+      call.body,
+      arguments: call.arguments,
+      in: nil,
+      in: .page
+    ) { [weak self] result in
       DispatchQueue.main.async {
+        guard let self, self.activeCallID == call.id else { return }
+        self.activeCallTimeout?.cancel()
+        self.activeCallTimeout = nil
+        self.activeCallID = nil
         switch result {
         case .success(let value):
           guard let text = value as? String else {
-            completion(.failure(LocalAutomationRuntimeError.invalidResult))
+            call.completion(.failure(LocalAutomationRuntimeError.invalidResult))
+            self.runNextCall()
             return
           }
-          completion(.success(text))
+          call.completion(.success(text))
         case .failure(let error):
-          completion(.failure(error))
+          call.completion(.failure(error))
         }
+        self.runNextCall()
       }
     }
   }
@@ -286,6 +335,7 @@ final class LocalAutomationRuntime: NSObject, WKNavigationDelegate {
           let operations = self.pending
           self.pending.removeAll()
           operations.forEach { $0.run() }
+          self.runNextCall()
         case .failure(let error):
           self.loadError = error
           let operations = self.pending

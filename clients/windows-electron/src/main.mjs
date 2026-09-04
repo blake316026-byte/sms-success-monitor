@@ -104,6 +104,7 @@ for (const module of modules) {
     autoLoginCooldownUntil: 0,
     autoLoginTimer: null,
     pageSessionRecoveryAttempted: false,
+    apiAuthenticationValidationAttempted: false,
     needsImmediateScan: true
   });
 }
@@ -513,6 +514,7 @@ function ensurePageState(page) {
     autoLoginCooldownUntil: 0,
     autoLoginTimer: null,
     pageSessionRecoveryAttempted: false,
+    apiAuthenticationValidationAttempted: false,
     needsImmediateScan: true
   };
   moduleStates.set(page.id, state);
@@ -695,6 +697,7 @@ function resetAutoLoginState(state) {
   state.autoLoginStage = '';
   state.autoLoginCooldownUntil = 0;
   state.pageSessionRecoveryAttempted = false;
+  state.apiAuthenticationValidationAttempted = false;
   if (state.autoLoginTimer) clearTimeout(state.autoLoginTimer);
   state.autoLoginTimer = null;
 }
@@ -1000,6 +1003,43 @@ function handleAuthenticationRequired(id, message) {
   else page.view.webContents.loadURL(loginURLFor(state));
 }
 
+function handleAPIAuthenticationRequired(id, result, fallbackMessage) {
+  const state = moduleStates.get(id);
+  const page = pages.get(id);
+  if (!state || !page || !state.monitoringEnabled) return;
+  const message = result?.message || fallbackMessage;
+  const currentURL = page.view.webContents.getURL();
+
+  if (result?.manualOnly || requiresInteractiveAuthentication(currentURL)) {
+    if (result?.manualOnly) state.manualAuthenticationRequired = true;
+    handleAuthenticationRequired(id, message);
+    return;
+  }
+
+  if (!state.apiAuthenticationValidationAttempted) {
+    state.apiAuthenticationValidationAttempted = true;
+    state.needsImmediateScan = true;
+    updateModule(id, {
+      status: 'starting',
+      message: '接口登录态异常，正在刷新当前页面确认',
+      metrics: null,
+      dailyFinancial: null,
+      nextScanAt: null
+    });
+    page.view.webContents.reload();
+    return;
+  }
+
+  updateModule(id, {
+    status: 'error',
+    message: `${message} 网页仍保持登录，客户端不会反复退出登录；稍后重试接口。`,
+    metrics: null,
+    dailyFinancial: null,
+    scannedAt: Date.now(),
+    nextScanAt: Date.now() + SCAN_INTERVAL_MS
+  });
+}
+
 function handleScanFailure(id, message) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
@@ -1079,8 +1119,7 @@ async function scanModule(id) {
       broadcastSnapshot(id);
       return;
     } else if (result.kind === 'auth') {
-      if (result.manualOnly) state.manualAuthenticationRequired = true;
-      handleAuthenticationRequired(id, result.message || '平台登录已失效。');
+      handleAPIAuthenticationRequired(id, result, '平台登录已失效。');
       return;
     } else if (result.kind === 'sessionChanged') {
       updateModule(id, {
@@ -1089,6 +1128,7 @@ async function scanModule(id) {
       });
       return;
     } else if (result.kind === 'ok') {
+      state.apiAuthenticationValidationAttempted = false;
       const currentPath = (() => {
         try { return new URL(page.view.webContents.getURL()).pathname; } catch (_) { return ''; }
       })();
@@ -1154,14 +1194,18 @@ async function refreshFinancialModule(id) {
     );
     if (!state.monitoringEnabled) return;
     if (result?.kind === 'ok') {
+      state.apiAuthenticationValidationAttempted = false;
       state.dailyFinancial = result.dailyFinancial;
       state.financeMessage = '';
     } else {
       state.dailyFinancial = null;
       state.financeMessage = result?.message || '今日财务查询失败';
       if (result?.kind === 'permission') state.financePermissionBlocked = true;
-      if (result?.kind === 'permission' || result?.manualOnly) state.manualAuthenticationRequired = true;
       if (result?.kind === 'sessionChanged') state.metrics = null;
+      if (result?.kind === 'auth') {
+        handleAPIAuthenticationRequired(id, result, '今日统计登录态已失效，请重新登录。');
+        return;
+      }
     }
   } catch (error) {
     state.dailyFinancial = null;

@@ -214,7 +214,7 @@ const recoveredUser = JSON.parse(
   globalThis.window.localStorage.getItem('gamebox-admin-lt-user')
 );
 check(
-  recoveredTokenResult.kind === 'auth' && recoveredTokenResult.manualOnly && staleTokenCalls === 1,
+  recoveredTokenResult.kind === 'auth' && recoveredTokenResult.manualOnly === false && staleTokenCalls === 1,
   'does not substitute a saved account when the page token expires'
 );
 check(

@@ -16,12 +16,12 @@ final class SessionCheck: NSObject, WKNavigationDelegate, WKScriptMessageHandler
     ))
     page = WKWebView(frame: .zero, configuration: configuration)
     page.navigationDelegate = self
-    load()
+    load(path: "/dashboard")
     DispatchQueue.main.asyncAfter(deadline: .now() + 30) { self.finish(false, "WebKit timeout") }
   }
 
-  private func load() {
-    page.loadHTMLString("<html><body>Local session regression fixture</body></html>", baseURL: URL(string: "https://session-test.invalid/")!)
+  private func load(path: String) {
+    page.loadHTMLString("<html><body>Local session regression fixture</body></html>", baseURL: URL(string: "https://session-test.invalid\(path)")!)
   }
 
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -34,18 +34,51 @@ final class SessionCheck: NSObject, WKNavigationDelegate, WKScriptMessageHandler
     if phase == 0 {
       phase = 1
       page.callAsyncJavaScript(#"""
+        window.__smsMonitorSessionEndDelay = 20;
         const original = JSON.stringify({ username: 'fixture-user', token: 'fake-old-token' });
         localStorage.setItem('lt-user', original);
         localStorage.removeItem('lt-user');
+        localStorage.setItem('lt-user', original);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return localStorage.getItem('lt-user') === original
+          && localStorage.getItem('__smsMonitorSignedOut') === null;
+        """#, arguments: [:], in: nil, in: .page) { result in
+          guard (try? result.get()) as? Bool == true else { self.finish(false, "temporary token rotation"); return }
+          self.load(path: "/ga-auth")
+        }
+    } else if phase == 1 {
+      phase = 2
+      page.callAsyncJavaScript(#"""
+        window.__smsMonitorSessionEndDelay = 20;
+        const original = localStorage.getItem('lt-user');
+        localStorage.removeItem('lt-user');
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        const stillActive = localStorage.getItem('__smsMonitorSignedOut') === null;
+        localStorage.setItem('lt-user', original);
+        return stillActive;
+        """#, arguments: [:], in: nil, in: .page) { result in
+          guard (try? result.get()) as? Bool == true else { self.finish(false, "ga-auth token transition"); return }
+          self.load(path: "/login")
+        }
+    } else if phase == 2 {
+      phase = 3
+      page.callAsyncJavaScript(#"""
+        window.__smsMonitorSessionEndDelay = 20;
+        const original = localStorage.getItem('lt-user');
+        localStorage.removeItem('lt-user');
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        const signedOut = localStorage.getItem('__smsMonitorSignedOut') === '1';
         localStorage.setItem('lt-user', original);
         const staleBlocked = localStorage.getItem('lt-user') === null;
         localStorage.setItem('lt-user', JSON.stringify({ username: 'fixture-user', token: 'fake-new-token' }));
         const freshAllowed = localStorage.getItem('__smsMonitorSignedOut') === null;
         localStorage.clear();
-        return staleBlocked && freshAllowed && localStorage.getItem('__smsMonitorSignedOut') === '1';
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return signedOut && staleBlocked && freshAllowed
+          && localStorage.getItem('__smsMonitorSignedOut') === '1';
         """#, arguments: [:], in: nil, in: .page) { result in
           guard (try? result.get()) as? Bool == true else { self.finish(false, "logout/late response/fresh session"); return }
-          self.load()
+          self.load(path: "/login")
         }
     } else {
       let code = """

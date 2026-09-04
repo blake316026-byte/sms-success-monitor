@@ -21,6 +21,7 @@ struct LoginPageIdentity {
 
 final class LoginPageAutomation {
   private let source: String
+  private var pendingCalls: [UUID: DispatchWorkItem] = [:]
 
   init() {
     let url = Bundle.main.resourceURL?
@@ -144,13 +145,24 @@ final class LoginPageAutomation {
       completion(.failure(LocalAutomationRuntimeError.resourceMissing("login-page.js")))
       return
     }
+    let callID = UUID()
+    let timeout = DispatchWorkItem { [weak self] in
+      guard self?.pendingCalls.removeValue(forKey: callID) != nil else { return }
+      completion(.failure(LocalAutomationRuntimeError.pageOperationTimedOut))
+    }
+    pendingCalls[callID] = timeout
+    DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: timeout)
     webView.callAsyncJavaScript(
       "\(source)\n\(body)",
       arguments: arguments,
       in: nil,
       in: .page
-    ) { result in
-      DispatchQueue.main.async { completion(result) }
+    ) { [weak self] result in
+      DispatchQueue.main.async {
+        guard let timeout = self?.pendingCalls.removeValue(forKey: callID) else { return }
+        timeout.cancel()
+        completion(result)
+      }
     }
   }
 

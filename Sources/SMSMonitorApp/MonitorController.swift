@@ -46,6 +46,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private(set) var latestDailyFinancialMetrics: DailyFinancialMetrics?
   private var latestEmittedState: AppMonitorState?
   private var needsImmediateScan = true
+  private var apiAuthenticationValidationAttempted = false
   private var consecutiveScanFailures = 0
   private var captchaAutoLoginAttempts = 0
   private var totpAutoLoginAttempts = 0
@@ -53,6 +54,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var autoLoginStage = ""
   private var autoLoginCooldownUntil: Date?
   private var autoLoginOutcomeWorkItem: DispatchWorkItem?
+  private var loginCompletionDeadline: Date?
   private var manualAuthenticationRequired = false
   private var credentialLoginPending = false
   private var accountIdentityRecoveryPending = false
@@ -221,10 +223,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
     guard !manualAuthenticationRequired else { return }
-    if credentialLoginPending {
-      handleAuthenticationRequired("旧 Token 已清除，正在重新认证。")
-      return
-    }
     guard let currentURL = webView.url else {
       emit(.starting("平台页面尚未加载"), nextScanAt: nextScanAt)
       scheduleNextScan(after: 5)
@@ -240,6 +238,15 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       emit(.starting("正在返回后台入口"), nextScanAt: nextScanAt)
       webView.load(URLRequest(url: configuration.targetURL))
       scheduleNextScan(after: 10)
+      return
+    }
+
+    if credentialLoginPending {
+      confirmAutoLoginCompletion()
+      return
+    }
+    if webView.isLoading || currentURL.path.isEmpty || currentURL.path == "/" {
+      scheduleNextScan(after: 2)
       return
     }
 
@@ -410,6 +417,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           sampleLimit: activeSampleLimit
         )
         consecutiveScanFailures = 0
+        apiAuthenticationValidationAttempted = false
         lastMetrics = metrics
         let scannedAt = Date()
         lastMetricsScannedAt = scannedAt
@@ -433,8 +441,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
       case "auth":
         let message = payload["message"] as? String ?? "平台登录已失效。"
-        prepareAuthenticationRecovery(from: payload)
-        handleAuthenticationRequired(message)
+        handleAPIAuthenticationRequired(payload: payload, message: message)
 
       case "permission":
         smsPermissionBlocked = true
@@ -546,7 +553,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
     guard let currentURL = webView.url, isMonitorOrigin(currentURL),
-      !requiresInteractiveAuthentication(currentURL)
+      !requiresInteractiveAuthentication(currentURL), !webView.isLoading,
+      !currentURL.path.isEmpty, currentURL.path != "/"
     else {
       scheduleFinancialRefresh(after: Self.financialRefreshInterval)
       return
@@ -608,10 +616,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
           scheduleNextScan(after: 5)
         }
         if kind == "auth" {
-          prepareAuthenticationRecovery(from: payload)
           let message = payload["message"] as? String ?? "今日统计登录态已失效，请重新登录。"
           NSLog("[SMSMonitor] %@ financial refresh requires authentication", configuration.id)
-          handleAuthenticationRequired(message)
+          handleAPIAuthenticationRequired(payload: payload, message: message)
           return
         }
         let message = payload["message"] as? String ?? "今日统计接口读取失败。"
@@ -667,6 +674,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     lastMetricsScannedAt = nil
     latestDailyFinancialMetrics = nil
     manualAuthenticationRequired = false
+    apiAuthenticationValidationAttempted = false
     resetAccountIdentityRecovery()
     smsPermissionBlocked = false
     financePermissionBlocked = false
@@ -689,6 +697,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let payload = message.body as? [String: Any]
     let event = payload?["event"] as? String ?? message.body as? String ?? ""
     let signedOutUsername = payload?["username"] as? String ?? ""
+    NSLog(
+      "[SMSMonitor] %@ session lifecycle %@ at %@",
+      configuration.id,
+      event,
+      webView.url?.path ?? "(unknown)"
+    )
     if event == "ended" {
       authenticationEpoch = UUID()
       let epoch = authenticationEpoch
@@ -747,6 +761,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     } else if event == "authenticated" {
       guard let currentURL = webView.url, !requiresAuthentication(currentURL) else { return }
       manualAuthenticationRequired = false
+      apiAuthenticationValidationAttempted = false
       credentialLoginPending = false
       resetAccountIdentityRecovery()
       smsPermissionBlocked = false
@@ -794,6 +809,45 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     accountIdentityConflict = !observedUsername.isEmpty
     accountIdentityCheckInProgress = false
     accountIdentityCheckAttempts = 0
+  }
+
+  private func handleAPIAuthenticationRequired(payload: [String: Any], message: String) {
+    latestDailyFinancialMetrics = nil
+
+    if payload["manualOnly"] as? Bool == true {
+      prepareAuthenticationRecovery(from: payload)
+      handleAuthenticationRequired(message)
+      return
+    }
+
+    guard let currentURL = webView.url, !requiresInteractiveAuthentication(currentURL) else {
+      prepareAuthenticationRecovery(from: payload)
+      handleAuthenticationRequired(message)
+      return
+    }
+
+    if !apiAuthenticationValidationAttempted {
+      apiAuthenticationValidationAttempted = true
+      needsImmediateScan = true
+      cancelNextScan()
+      NSLog(
+        "[SMSMonitor] %@ API authentication failed on an authenticated page; reloading once to validate the browser session",
+        configuration.id
+      )
+      emit(.starting("接口登录态异常，正在刷新当前页面确认"), nextScanAt: nil)
+      webView.reload()
+      return
+    }
+
+    NSLog(
+      "[SMSMonitor] %@ API authentication is still failing while the page remains authenticated; automatic login suppressed",
+      configuration.id
+    )
+    scheduleNextScanAfterCurrentRun()
+    emit(
+      .error("\(message) 网页仍保持登录，客户端不会反复退出登录；稍后重试接口。", Date()),
+      nextScanAt: nextScanAt
+    )
   }
 
   private func resetAccountIdentityRecovery() {
@@ -936,6 +990,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     autoLoginInProgress = true
+    loginCompletionDeadline = nil
     emit(
       .starting(
         "正在自动登录（\(isTOTP ? "Google 验证码" : "图片验证码") \(attempts + 1)/\(maximumAttempts)）"
@@ -962,7 +1017,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         case "manual":
           self.pauseForManualLogin()
         case "authenticated":
-          self.completeAutoLogin(token: snapshot.token)
+          self.confirmAutoLoginCompletion()
         case "unlock-ip":
           self.autoLoginInProgress = false
           self.emit(
@@ -1083,7 +1138,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
   }
 
-  private func scheduleAutoLoginOutcomeCheck() {
+  private func scheduleAutoLoginOutcomeCheck(after delay: TimeInterval = 7) {
     autoLoginOutcomeWorkItem?.cancel()
     let epoch = authenticationEpoch
     let item = DispatchWorkItem { [weak self] in
@@ -1107,10 +1162,44 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         }
         return
       }
-      self.completeAutoLogin(token: "")
+      self.confirmAutoLoginCompletion()
     }
     autoLoginOutcomeWorkItem = item
-    DispatchQueue.main.asyncAfter(deadline: .now() + 7, execute: item)
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+  }
+
+  private func confirmAutoLoginCompletion() {
+    guard !manualAuthenticationRequired,
+      let url = webView.url, isMonitorOrigin(url), !requiresAuthentication(url),
+      let profile = credentialStore.profile(for: configuration.id)
+    else { return }
+    if let cooldown = autoLoginCooldownUntil, cooldown > Date() { return }
+    if loginCompletionDeadline == nil {
+      loginCompletionDeadline = Date().addingTimeInterval(30)
+    }
+    guard Date() < loginCompletionDeadline! else {
+      autoLoginInProgress = false
+      autoLoginCooldownUntil = Date().addingTimeInterval(Self.autoLoginCooldown)
+      autoLoginOutcomeWorkItem?.cancel()
+      emit(.authenticationRequired("登录后页面或会话未就绪，已暂停自动重试；不会重新提交账号密码。"), nextScanAt: nextScanAt)
+      return
+    }
+    autoLoginInProgress = true
+    // NPG visits / between password login, Google verification and the app
+    // route. A completed document navigation is not completed authentication.
+    guard !webView.isLoading, !url.path.isEmpty, url.path != "/" else {
+      scheduleAutoLoginOutcomeCheck(after: 1)
+      return
+    }
+    let epoch = authenticationEpoch
+    loginAutomation.extractToken(in: webView, expectedUsername: profile.username) { [weak self] token in
+      guard let self, self.authenticationEpoch == epoch, !self.manualAuthenticationRequired else { return }
+      guard self.webView.url == url, !self.webView.isLoading, !token.isEmpty else {
+        self.scheduleAutoLoginOutcomeCheck(after: 1)
+        return
+      }
+      self.completeAutoLogin(token: token)
+    }
   }
 
   private func retryAutoLogin(_ message: String) {
@@ -1180,6 +1269,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func completeAutoLogin(token: String) {
+    authenticationEpoch = UUID()
+    activeScanID = nil
+    isScanning = false
+    isRefreshingFinancial = false
+    scanTimeoutWorkItem?.cancel()
+    loginCompletionDeadline = nil
     credentialLoginPending = false
     manualAuthenticationRequired = false
     resetAccountIdentityRecovery()
@@ -1189,6 +1284,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     totpAutoLoginAttempts = 0
     autoLoginCooldownUntil = nil
     autoLoginOutcomeWorkItem?.cancel()
+    NSLog("[SMSMonitor] %@ login confirmed at %@; recovery flag cleared", configuration.id, webView.url?.path ?? "")
     needsImmediateScan = true
     if !token.isEmpty {
       credentialStore.updateToken(token, for: configuration.id)
@@ -1492,6 +1588,12 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard let url = webView.url else { return }
+    NSLog(
+      "[SMSMonitor] %@ navigation finished at %@%@",
+      configuration.id,
+      url.host ?? "(unknown)",
+      url.path
+    )
 
     if !monitoringEnabled, requiresAuthentication(url) {
       resumeAuthenticationOnlyIfNeeded()
@@ -1519,18 +1621,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     guard isMonitorOrigin(url) else { return }
-    let completedAuthentication =
-      autoLoginInProgress || !autoLoginStage.isEmpty
-    autoLoginInProgress = false
-    autoLoginStage = ""
-    captchaAutoLoginAttempts = 0
-    totpAutoLoginAttempts = 0
-    autoLoginCooldownUntil = nil
-    autoLoginOutcomeWorkItem?.cancel()
-    persistCurrentToken()
-    if completedAuthentication {
-      needsImmediateScan = true
+    if autoLoginInProgress || !autoLoginStage.isEmpty || credentialLoginPending {
+      scheduleAutoLoginOutcomeCheck(after: 1)
+      return
     }
+    persistCurrentToken()
     ensureFinancialRefreshScheduled()
     guard needsImmediateScan else { return }
     scheduleConnectionKickoff()

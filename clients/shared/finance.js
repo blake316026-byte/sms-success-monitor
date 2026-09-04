@@ -1,8 +1,8 @@
 globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, platformName, fallbackToken = '') {
   const readStoredValue = (suffix) => {
-    let found = null;
+    const candidates = [];
     const identities = new Set();
-    for (const store of [window.localStorage, window.sessionStorage]) {
+    for (const store of [window.sessionStorage, window.localStorage]) {
       for (let index = 0; index < store.length; index += 1) {
         const key = store.key(index);
         if (!key || (key !== suffix && !key.endsWith(`-${suffix}`))) continue;
@@ -12,13 +12,16 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
         try { value = JSON.parse(raw); } catch (_) { value = raw; }
         if (suffix !== 'lt-user') return value;
         if (value && typeof value === 'object') {
-          identities.add(JSON.stringify([value.token || '', value.username || value.account || value.id || '']));
+          const identity = String(value.username || value.account || value.loginName || value.id || '').trim();
+          if (identity) identities.add(identity);
         }
-        if (found == null) found = value;
+        candidates.push(value);
       }
     }
     if (identities.size > 1) return { accountConflict: true };
-    return found;
+    return candidates.find((value) => value && typeof value === 'object' && value.token)
+      ?? candidates[0]
+      ?? null;
   };
   const readUrlCache = () => {
     try {
@@ -42,7 +45,7 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
   if (signedOut()) return { kind: 'auth', manualOnly: true, sessionUsername, message: '已退出账号，不再使用旧 Token。' };
   const pageToken = String(pageUser && typeof pageUser === 'object' ? pageUser.token || '' : '').trim();
   const tokens = [pageToken].filter(Boolean);
-  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser), sessionUsername, message: '页面登录态已失效，请重新登录。' };
+  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser?.accountConflict), sessionUsername, message: '页面登录态已失效，请重新登录。' };
   const initialSession = JSON.stringify(pageUser);
   const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
   const cache = readUrlCache();
@@ -125,5 +128,5 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
       return { kind: 'error', message: error?.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。' };
     }
   }
-  return { kind: 'auth', manualOnly: Boolean(pageUser), sessionUsername, message: '今日统计登录态已失效，请重新登录。' };
+  return { kind: 'auth', manualOnly: false, sessionUsername, message: '今日统计登录态已失效，请重新登录。' };
 };

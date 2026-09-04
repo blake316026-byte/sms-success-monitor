@@ -48,7 +48,7 @@ for (const [name, run, args] of adapters) {
     assert.equal(result.kind, expected, name);
     assert.deepEqual(calls, ['restricted-token'], `${name}: no old account retry`);
     if (expected === 'auth') {
-      assert.equal(result.manualOnly, true, name);
+      assert.equal(result.manualOnly, false, name);
       assert.equal(result.sessionUsername, 'payrobot', `${name}: carries only the current account identity`);
     }
     assert.equal(JSON.parse(window.localStorage.getItem('gamebox-admin-lt-user')).token, 'restricted-token');
@@ -59,8 +59,16 @@ for (const [name, run, args] of adapters) {
     if (conflict) window.sessionStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'admin', token: 'other-token' }));
     const result = await run(...args);
     assert.equal(result.kind, 'auth', name);
-    assert.equal(result.manualOnly, true, name);
+    assert.equal(result.manualOnly, conflict, name);
     assert.equal(result.sessionUsername, conflict ? '' : 'payrobot', name);
+  }
+
+  {
+    const calls = [];
+    setup(async (_url, options) => { calls.push(options.headers.Auth); return response(200); }, { username: 'payrobot', token: 'old-token' });
+    window.sessionStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'payrobot', token: 'new-token' }));
+    assert.equal((await run(...args)).kind, 'ok', `${name}: same-account token rotation remains authenticated`);
+    assert.deepEqual(calls, ['new-token'], `${name}: prefers the current session token`);
   }
 
   for (const stage of ['fetch', 'json']) {

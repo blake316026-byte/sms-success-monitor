@@ -12,6 +12,8 @@ swift run --package-path "${ROOT_DIR}" SMSMonitorCoreChecks
 node "${ROOT_DIR}/scripts/check-scan-script.mjs"
 node "${ROOT_DIR}/scripts/check-finance-script.mjs"
 node "${ROOT_DIR}/scripts/check-account-isolation.mjs"
+node "${ROOT_DIR}/scripts/check-api-auth-validation.mjs"
+node "${ROOT_DIR}/scripts/check-login-completion.mjs"
 node "${ROOT_DIR}/scripts/check-session-lifecycle.mjs"
 zsh "${ROOT_DIR}/scripts/check-session-webkit.sh"
 zsh "${ROOT_DIR}/scripts/check-table-refresh.sh"

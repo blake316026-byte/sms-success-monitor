@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前版本：**macOS v0.3.59 build 66、Windows v0.3.59**；Android 继续使用 v0.3.53。macOS 和 Windows 不再用本机旧 Token 创建不完整的网页会话；后台进入登录页后统一执行账号密码、图形验证码及 Google 验证流程。详见[本版更新说明](releases/v0.3.59.md)。
+本版：**macOS v0.3.61 build 68、Windows v0.3.61、Android v0.3.61 versionCode 61**。macOS 在业务页面和完整会话确认后统一解除重新认证状态，加载首页和二次验证期间不提前恢复扫描。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.61.md)。

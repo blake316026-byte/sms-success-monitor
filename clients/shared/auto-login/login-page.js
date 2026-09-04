@@ -2,16 +2,28 @@
   if (globalThis.smsLoginAutomation) return;
 
   const findStoredValue = (suffix) => {
-    for (const store of [window.localStorage, window.sessionStorage]) {
+    const candidates = [];
+    const identities = new Set();
+    for (const store of [window.sessionStorage, window.localStorage]) {
       for (let index = 0; index < store.length; index += 1) {
         const key = store.key(index);
         if (!key || (key !== suffix && !key.endsWith(`-${suffix}`))) continue;
         const raw = store.getItem(key);
         if (raw == null) continue;
-        try { return JSON.parse(raw); } catch (_) { return raw; }
+        let value;
+        try { value = JSON.parse(raw); } catch (_) { value = raw; }
+        if (suffix !== 'lt-user') return value;
+        if (value && typeof value === 'object') {
+          const identity = String(value.username || value.account || value.loginName || value.id || '').trim();
+          if (identity) identities.add(identity);
+        }
+        candidates.push(value);
       }
     }
-    return null;
+    if (identities.size > 1) return { accountConflict: true };
+    return candidates.find((value) => value && typeof value === 'object' && value.token)
+      ?? candidates[0]
+      ?? null;
   };
 
   const visible = (element) => Boolean(
@@ -230,8 +242,12 @@
     setValue(passwordField, password);
     setValue(codeField, captcha);
     await new Promise((resolve) => {
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
-      else setTimeout(resolve, 0);
+      // Background WebViews can suspend animation frames indefinitely.
+      const timeout = setTimeout(resolve, 50);
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => {
+        clearTimeout(timeout);
+        resolve();
+      });
     });
     if (manualLoginActive) {
       return { submitted: false, manual: true, message: '检测到人工输入，自动登录已暂停' };
