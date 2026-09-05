@@ -16,4 +16,4 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
-当前开发版本：**macOS v0.3.62 build 69**；Windows、Android 的已发布版本为 v0.3.61。macOS 网页查找会高亮全部匹配字符，以橙色区分当前匹配，并显示当前位置和匹配总数。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.62.md)。
+本版：**macOS v0.3.62 build 69**；Windows、Android 继续使用 v0.3.61。macOS 网页查找会高亮全部匹配字符，以橙色区分当前匹配，并显示当前位置和匹配总数。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.62.md)。

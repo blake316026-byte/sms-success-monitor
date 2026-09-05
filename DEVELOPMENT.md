@@ -14,7 +14,7 @@
 
 ## 2026-09-05 macOS 网页查找高亮
 
-- 本机候选版本为 macOS v0.3.62 build 69，尚未提交或发布 GitHub Release。
+- macOS v0.3.62 build 69 已完成本机验证并进入 GitHub 发布流程；最终发布状态以公开 `v0.3.62` 标签、Release 附件和 SHA256 校验清单为准。
 - `PageFindScript` 使用浏览器 CSS Highlight API 标亮当前页面全部匹配字符；普通匹配为黄色，当前匹配为橙色并带下划线，不包装或改写业务页面 DOM。
 - 查找栏显示“当前序号/总数”，输入新关键词从首项开始，上一个、下一个和 Shift-Enter 支持循环导航，Esc 或清空关键词会删除高亮。
 - 若旧版 WebKit 不支持 CSS Highlight API，自动回退到 `WKWebView.find`，保留基本定位能力。
