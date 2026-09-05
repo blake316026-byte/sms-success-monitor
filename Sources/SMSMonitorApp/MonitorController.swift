@@ -29,6 +29,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var authenticationDetectionWorkItem: DispatchWorkItem?
   private var nextScanWorkItem: DispatchWorkItem?
   private var startupWorkItem: DispatchWorkItem?
+  private var startupID: UUID?
   private var connectionKickoffWorkItem: DispatchWorkItem?
   private var connectionKickoffDeadline: Date?
   private var scanTimeoutWorkItem: DispatchWorkItem?
@@ -138,8 +139,11 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let safeDelay = max(0, delay)
     if safeDelay > 0 {
       emit(.starting("已错峰排队，监控将在 \(Int(ceil(safeDelay))) 秒内启动"), nextScanAt: nil)
+      let startupID = UUID()
+      self.startupID = startupID
       let item = DispatchWorkItem { [weak self] in
-        guard let self, self.isStarted else { return }
+        guard let self, self.isStarted, self.startupID == startupID else { return }
+        self.startupID = nil
         self.startupWorkItem = nil
         self.beginConnection()
       }
@@ -147,6 +151,16 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       DispatchQueue.main.asyncAfter(deadline: .now() + safeDelay, execute: item)
       return
     }
+    startupID = nil
+    beginConnection()
+  }
+
+  private func expediteStartupIfNeeded() {
+    guard isStarted, monitoringEnabled, startupID != nil else { return }
+    startupID = nil
+    startupWorkItem?.cancel()
+    startupWorkItem = nil
+    NSLog("[SMSMonitor] %@ startup expedited for active page", configuration.id)
     beginConnection()
   }
 
@@ -191,6 +205,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func setPageActive(_ active: Bool) {
+    if active {
+      expediteStartupIfNeeded()
+    }
     guard isPageActive != active else { return }
     isPageActive = active
     if active {
@@ -321,6 +338,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     authenticationDetectionWorkItem = nil
     startupWorkItem?.cancel()
     startupWorkItem = nil
+    startupID = nil
     nextScanWorkItem?.cancel()
     nextScanWorkItem = nil
     connectionKickoffWorkItem?.cancel()
@@ -661,6 +679,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       }
       return
     }
+    expediteStartupIfNeeded()
     guard !browserOnlyPage else {
       emitBrowserOnlyState()
       return
@@ -1108,6 +1127,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     let retryOffsets = [0, -30, 30, -60, 60]
     let offset = serverOffset
       + Double(retryOffsets[min(totpAutoLoginAttempts, retryOffsets.count - 1)])
+    NSLog(
+      "[SMSMonitor] %@ TOTP attempt %d using server offset %.1f seconds and retry offset %d seconds",
+      configuration.id,
+      totpAutoLoginAttempts + 1,
+      serverOffset,
+      retryOffsets[min(totpAutoLoginAttempts, retryOffsets.count - 1)]
+    )
     let adjustedNow = Date().addingTimeInterval(TimeInterval(offset))
     let cyclePosition = adjustedNow.timeIntervalSince1970.truncatingRemainder(dividingBy: 30)
     let delay = cyclePosition > 24 ? 6.5 : 0
