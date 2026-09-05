@@ -170,25 +170,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
     let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
     localFindCheckWebView = webView
     webView.navigationDelegate = self
-    webView.loadHTMLString("<html><body>monitor find check</body></html>", baseURL: nil)
+    webView.loadHTMLString(
+      "<html><body>monitor find check<p>FIND again</p><span>final find</span></body></html>",
+      baseURL: nil
+    )
   }
 }
 
 extension AppDelegate: WKNavigationDelegate {
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard webView === localFindCheckWebView else { return }
-    let configuration = WKFindConfiguration()
-    configuration.caseSensitive = false
-    configuration.wraps = true
-    webView.find("find check", configuration: configuration) { [weak self] result in
-      guard result.matchFound else {
-        fputs("Local page find check failed\n", stderr)
+    webView.callAsyncJavaScript(
+      PageFindScript.body,
+      arguments: ["query": "find", "backwards": false, "advance": false],
+      in: nil,
+      in: .page
+    ) { [weak self] result in
+      guard case .success(let value) = result,
+        let payload = value as? [String: Any], payload["supported"] as? Bool == true,
+        (payload["count"] as? NSNumber)?.intValue == 3,
+        (payload["active"] as? NSNumber)?.intValue == 1
+      else {
+        fputs("Local page find highlight check failed\n", stderr)
         exit(1)
       }
-      print("Local OCR, TOTP and page find runtime checks passed")
-      self?.localAutomationCheckRuntime = nil
-      self?.localFindCheckWebView = nil
-      NSApp.terminate(nil)
+      webView.callAsyncJavaScript(
+        PageFindScript.body,
+        arguments: ["query": "find", "backwards": false, "advance": true],
+        in: nil,
+        in: .page
+      ) { navigationResult in
+        guard case .success(let navigationValue) = navigationResult,
+          let navigationPayload = navigationValue as? [String: Any],
+          (navigationPayload["active"] as? NSNumber)?.intValue == 2
+        else {
+          fputs("Local page find navigation check failed\n", stderr)
+          exit(1)
+        }
+        print("Local OCR, TOTP and all-match page highlighting checks passed")
+        self?.localAutomationCheckRuntime = nil
+        self?.localFindCheckWebView = nil
+        NSApp.terminate(nil)
+      }
     }
   }
 }

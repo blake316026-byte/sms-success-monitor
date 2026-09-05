@@ -545,7 +545,9 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   private var knownBuiltInIDs: Set<String> = []
   private var addressField: NSTextField?
   private var findField: NSSearchField?
+  private var findResultLabel: NSTextField?
   private var findNavigationControl: NSSegmentedControl?
+  private var findRequestGeneration = 0
   private var backItem: NSToolbarItem?
   private var forwardItem: NSToolbarItem?
   private var reloadItem: NSToolbarItem?
@@ -627,7 +629,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     guard let findField else { return }
     window.makeFirstResponder(findField)
     findField.selectText(nil)
-    findInSelectedPage(backwards: false)
+    findInSelectedPage(backwards: false, advance: false)
   }
 
   func stopAll() {
@@ -650,7 +652,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     tabController.onSelectionChange = { [weak self] in
       self?.syncWrappingTabBar()
       self?.updateToolbar()
-      self?.findInSelectedPage(backwards: false)
+      self?.findInSelectedPage(backwards: false, advance: false)
       self?.applySelectedPagePerformanceMode()
     }
     tabController.onMoveTab = { [weak self] source, target in
@@ -1019,20 +1021,52 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   @objc private func navigateFindResult(_ sender: NSSegmentedControl) {
-    findInSelectedPage(backwards: sender.selectedSegment == 0)
+    findInSelectedPage(backwards: sender.selectedSegment == 0, advance: true)
   }
 
-  private func findInSelectedPage(backwards: Bool) {
+  private func findInSelectedPage(backwards: Bool, advance: Bool) {
     guard let webView = selectedPage?.webView, let findField else { return }
     let query = findField.stringValue
+    findRequestGeneration += 1
+    let generation = findRequestGeneration
     findNavigationControl?.isEnabled = !query.isEmpty
     guard !query.isEmpty else {
       findField.textColor = .labelColor
       findField.toolTip = "查找当前后台网页内容"
+      findResultLabel?.stringValue = ""
+      webView.callAsyncJavaScript(
+        PageFindScript.body,
+        arguments: ["query": "", "backwards": false, "advance": false],
+        in: nil,
+        in: .page
+      ) { _ in }
       webView.find("", configuration: WKFindConfiguration()) { _ in }
       return
     }
 
+    webView.callAsyncJavaScript(
+      PageFindScript.body,
+      arguments: ["query": query, "backwards": backwards, "advance": advance],
+      in: nil,
+      in: .page
+    ) { [weak self, weak webView] result in
+      guard let self, let webView, webView === self.selectedPage?.webView else { return }
+      guard generation == self.findRequestGeneration, query == self.findField?.stringValue else {
+        return
+      }
+      guard case .success(let value) = result,
+        let payload = value as? [String: Any], payload["supported"] as? Bool == true
+      else {
+        self.findUsingWebKit(query, backwards: backwards, in: webView)
+        return
+      }
+      let count = (payload["count"] as? NSNumber)?.intValue ?? 0
+      let active = (payload["active"] as? NSNumber)?.intValue ?? 0
+      self.updateFindStatus(active: active, count: count)
+    }
+  }
+
+  private func findUsingWebKit(_ query: String, backwards: Bool, in webView: WKWebView) {
     let configuration = WKFindConfiguration()
     configuration.backwards = backwards
     configuration.caseSensitive = false
@@ -1040,15 +1074,24 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     webView.find(query, configuration: configuration) { [weak self, weak webView] result in
       guard let self, let webView, webView === self.selectedPage?.webView else { return }
       guard query == self.findField?.stringValue else { return }
+      self.findResultLabel?.stringValue = result.matchFound ? "1/?" : "0/0"
       self.findField?.textColor = result.matchFound ? .labelColor : .systemRed
       self.findField?.toolTip = result.matchFound ? "已找到匹配项" : "当前网页中未找到"
       self.findNavigationControl?.isEnabled = result.matchFound
     }
   }
 
+  private func updateFindStatus(active: Int, count: Int) {
+    let found = count > 0
+    findResultLabel?.stringValue = "\(active)/\(count)"
+    findField?.textColor = found ? .labelColor : .systemRed
+    findField?.toolTip = found ? "已高亮全部 \(count) 个匹配项" : "当前网页中未找到"
+    findNavigationControl?.isEnabled = found
+  }
+
   func controlTextDidChange(_ notification: Notification) {
     guard let field = notification.object as? NSSearchField, field === findField else { return }
-    findInSelectedPage(backwards: false)
+    findInSelectedPage(backwards: false, advance: false)
   }
 
   func control(
@@ -1059,12 +1102,12 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     guard control === findField else { return false }
     if commandSelector == #selector(NSResponder.insertNewline(_:)) {
       let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
-      findInSelectedPage(backwards: backwards)
+      findInSelectedPage(backwards: backwards, advance: true)
       return true
     }
     if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
       findField?.stringValue = ""
-      findInSelectedPage(backwards: false)
+      findInSelectedPage(backwards: false, advance: false)
       selectedPage?.webView.window?.makeFirstResponder(selectedPage?.webView)
       return true
     }
@@ -1319,6 +1362,15 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       field.setAccessibilityLabel("查找当前后台网页内容")
       findField = field
 
+      let resultLabel = NSTextField(labelWithString: "")
+      resultLabel.alignment = .center
+      resultLabel.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
+      resultLabel.textColor = .secondaryLabelColor
+      resultLabel.setContentHuggingPriority(.required, for: .horizontal)
+      resultLabel.widthAnchor.constraint(equalToConstant: 42).isActive = true
+      resultLabel.setAccessibilityLabel("查找结果数量")
+      findResultLabel = resultLabel
+
       let navigation = NSSegmentedControl(
         images: [
           NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "上一个匹配项")
@@ -1337,11 +1389,11 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       navigation.isEnabled = false
       findNavigationControl = navigation
 
-      let stack = NSStackView(views: [field, navigation])
+      let stack = NSStackView(views: [field, resultLabel, navigation])
       stack.orientation = .horizontal
       stack.alignment = .centerY
       stack.spacing = 4
-      stack.frame = NSRect(x: 0, y: 0, width: 224, height: 28)
+      stack.frame = NSRect(x: 0, y: 0, width: 270, height: 28)
 
       let item = NSToolbarItem(itemIdentifier: itemIdentifier)
       item.label = "查找"

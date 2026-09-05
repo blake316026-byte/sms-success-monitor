@@ -11,3 +11,11 @@
 - `scripts/check-login-completion.mjs` 抽取实际 Swift 方法编译执行，无真实凭据、网络或账户操作；覆盖加载首页、二次验证、缺少会话、恢复标记清除、旧回调、超时暂停。完整 `scripts/test.sh` 和 Universal 打包自检通过。
 - 新版现场：12:18:15 cg04 记录 `login confirmed at /ck-dashboard; recovery flag cleared`，12:18:19、12:18:37、12:19:37 扫描返回；cg12 于 12:19:53 同样完成登录确认。
 - 验证边界：上述为新版启动登录及短期连续扫描；新版主动注销后的恢复、刷新测试暂因桌面工具无法访问实际窗口而未完成，不能宣称长期或全平台彻底解决。
+
+## 2026-09-05 macOS 网页查找高亮
+
+- 本机候选版本为 macOS v0.3.62 build 69，尚未提交或发布 GitHub Release。
+- `PageFindScript` 使用浏览器 CSS Highlight API 标亮当前页面全部匹配字符；普通匹配为黄色，当前匹配为橙色并带下划线，不包装或改写业务页面 DOM。
+- 查找栏显示“当前序号/总数”，输入新关键词从首项开始，上一个、下一个和 Shift-Enter 支持循环导航，Esc 或清空关键词会删除高亮。
+- 若旧版 WebKit 不支持 CSS Highlight API，自动回退到 `WKWebView.find`，保留基本定位能力。
+- macOS 打包自检会在真实 `WKWebView` 中核对大小写不敏感的三处高亮和第二项导航；Windows 继续使用 Chromium `findInPage` 的原生全部匹配高亮。
