@@ -16,4 +16,14 @@
 
 macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
 
+### macOS 首次打开
+
+当前 macOS 包使用内部临时签名，尚未使用 Apple Developer ID 签名和公证。从 GitHub 下载后若提示“Apple 无法验证”，请确认下载来源为本仓库，然后：
+
+1. 将应用放入“应用程序”文件夹并尝试打开一次，在提示中点击“完成”。
+2. 打开“系统设置”→“隐私与安全性”，向下滚动到“安全性”。
+3. 在 SMS Success Monitor 提示旁点击“仍要打开”，输入本机登录密码后再次确认“打开”。
+
+该例外保存后，以后可以正常双击启动。正式消除此提示需要使用 Apple Developer ID 签名并通过 Apple 公证。
+
 本版：**macOS v0.3.62 build 69**；Windows、Android 继续使用 v0.3.61。macOS 网页查找会高亮全部匹配字符，以橙色区分当前匹配，并显示当前位置和匹配总数。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.62.md)。

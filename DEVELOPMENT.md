@@ -19,3 +19,4 @@
 - 查找栏显示“当前序号/总数”，输入新关键词从首项开始，上一个、下一个和 Shift-Enter 支持循环导航，Esc 或清空关键词会删除高亮。
 - 若旧版 WebKit 不支持 CSS Highlight API，自动回退到 `WKWebView.find`，保留基本定位能力。
 - macOS 打包自检会在真实 `WKWebView` 中核对大小写不敏感的三处高亮和第二项导航；Windows 继续使用 Chromium `findInPage` 的原生全部匹配高亮。
+- GitHub v0.3.62 的 macOS 包经现场复核为 ad-hoc 内部签名（无 Team ID、无公证票据），Gatekeeper 对隔离下载包返回 `rejected`。在配置 Apple Developer ID 和公证凭据前，使用者需在“系统设置”→“隐私与安全性”中人工确认“仍要打开”；不要把本地 `codesign --verify` 通过描述为 Apple 公证通过。
