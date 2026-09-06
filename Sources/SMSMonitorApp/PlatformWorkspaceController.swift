@@ -507,6 +507,18 @@ private final class WorkspaceContainerController: NSViewController {
   }
 }
 
+private final class PersistentHighlightReadyHandler: NSObject, WKScriptMessageHandler {
+  weak var owner: PlatformWorkspaceController?
+
+  func userContentController(
+    _ userContentController: WKUserContentController,
+    didReceive message: WKScriptMessage
+  ) {
+    guard message.frameInfo.isMainFrame, let webView = message.webView else { return }
+    owner?.applyPersistentHighlights(to: webView)
+  }
+}
+
 final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelegate,
   NSSearchFieldDelegate
 {
@@ -527,6 +539,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     static let clearCache = NSToolbarItem.Identifier("SMSMonitorPlatformClearCache")
     static let address = NSToolbarItem.Identifier("SMSMonitorPlatformAddress")
     static let find = NSToolbarItem.Identifier("SMSMonitorPlatformFind")
+    static let persistentHighlight = NSToolbarItem.Identifier("SMSMonitorPersistentHighlight")
     static let autoLogin = NSToolbarItem.Identifier("SMSMonitorPlatformAutoLogin")
     static let sampleLimit = NSToolbarItem.Identifier("SMSMonitorPlatformSampleLimit")
     static let addPage = NSToolbarItem.Identifier("SMSMonitorPlatformAddPage")
@@ -536,6 +549,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private static let savedPagesKey = "SMSMonitorPlatformPages.v1"
   private static let savedLayoutKey = "SMSMonitorPlatformLayout.v2"
+  private static let persistentHighlightKey = "SMSMonitorPersistentHighlight.v1"
 
   private let defaultInitialURL: URL
   private var sampleLimit: Int
@@ -548,11 +562,15 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   private var findResultLabel: NSTextField?
   private var findNavigationControl: NSSegmentedControl?
   private var findRequestGeneration = 0
+  private let persistentHighlightHandler = PersistentHighlightReadyHandler()
+  private var persistentHighlightSettings = PersistentHighlightSettings.defaults
+  private var highlightConfiguredWebViews: Set<ObjectIdentifier> = []
   private var backItem: NSToolbarItem?
   private var forwardItem: NSToolbarItem?
   private var reloadItem: NSToolbarItem?
   private var sampleLimitItem: NSToolbarItem?
   private var autoLoginItem: NSToolbarItem?
+  private var persistentHighlightItem: NSToolbarItem?
   private var closePageItem: NSToolbarItem?
   private var renamePageItem: NSToolbarItem?
 
@@ -573,6 +591,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
     super.init()
 
+    persistentHighlightHandler.owner = self
+    persistentHighlightSettings = Self.loadPersistentHighlightSettings()
     configureWindow()
     for (index, descriptor) in monitoredPages.enumerated() {
       let page = PlatformPageViewController(
@@ -694,6 +714,59 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       "\(pages.count) 个监控后台 · 样本 \(sampleLimit) 条 · 不同标签使用独立登录会话"
   }
 
+  private static func loadPersistentHighlightSettings() -> PersistentHighlightSettings {
+    guard let data = UserDefaults.standard.data(forKey: persistentHighlightKey),
+      let value = try? JSONDecoder().decode(PersistentHighlightSettings.self, from: data)
+    else { return .defaults }
+    return value.normalized()
+  }
+
+  private func savePersistentHighlightSettings() {
+    persistentHighlightSettings = persistentHighlightSettings.normalized()
+    if let data = try? JSONEncoder().encode(persistentHighlightSettings) {
+      UserDefaults.standard.set(data, forKey: Self.persistentHighlightKey)
+    }
+  }
+
+  private func installPersistentHighlights(in webView: WKWebView) {
+    let identifier = ObjectIdentifier(webView)
+    guard highlightConfiguredWebViews.insert(identifier).inserted else { return }
+    let content = webView.configuration.userContentController
+    content.add(persistentHighlightHandler, name: "smsPersistentHighlightReady")
+    if !PersistentHighlightScript.body.isEmpty {
+      content.addUserScript(
+        WKUserScript(
+          source: PersistentHighlightScript.body,
+          injectionTime: .atDocumentEnd,
+          forMainFrameOnly: true
+        )
+      )
+    }
+    if webView.url != nil {
+      applyPersistentHighlights(to: webView, installRuntime: true)
+    }
+  }
+
+  fileprivate func applyPersistentHighlights(to webView: WKWebView) {
+    applyPersistentHighlights(to: webView, installRuntime: false)
+  }
+
+  private func applyPersistentHighlights(to webView: WKWebView, installRuntime: Bool) {
+    let runtime = installRuntime ? PersistentHighlightScript.body : ""
+    webView.callAsyncJavaScript(
+      "\(runtime)\nreturn globalThis.smsPersistentHighlighter?.configure(settings) ?? { supported: false, count: 0 };",
+      arguments: ["settings": persistentHighlightSettings.javascriptValue],
+      in: nil,
+      in: .page
+    ) { _ in }
+  }
+
+  private func applyPersistentHighlightsToAllPages() {
+    for page in pages where page.webView.url != nil {
+      applyPersistentHighlights(to: page.webView, installRuntime: true)
+    }
+  }
+
   private func restoreWorkspaceLayout() {
     if let data = UserDefaults.standard.data(forKey: Self.savedLayoutKey),
       let layout = try? JSONDecoder().decode(SavedWorkspaceLayout.self, from: data)
@@ -756,6 +829,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private func addPage(_ page: PlatformPageViewController, select: Bool) {
+    installPersistentHighlights(in: page.webView)
     page.onNavigationStateChange = { [weak self] in
       self?.updateToolbar()
     }
@@ -787,6 +861,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private func attachTab(for page: PlatformPageViewController) {
+    installPersistentHighlights(in: page.webView)
     page.onNavigationStateChange = { [weak self] in self?.updateToolbar() }
     let item = NSTabViewItem(identifier: page.monitorID ?? page.id.uuidString)
     item.viewController = page
@@ -1016,6 +1091,102 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     )
   }
 
+  @objc private func configurePersistentHighlights() {
+    let settings = persistentHighlightSettings.normalized()
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    alert.messageText = "自动高亮关键词"
+    alert.informativeText = "保存后会应用到全部后台页面，网页刷新和内容更新后仍会自动高亮。"
+    alert.addButton(withTitle: "保存")
+    alert.addButton(withTitle: "取消")
+
+    let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 272))
+    let enabled = NSButton(checkboxWithTitle: "启用自动高亮", target: nil, action: nil)
+    enabled.frame = NSRect(x: 0, y: 242, width: 180, height: 22)
+    enabled.state = settings.enabled ? .on : .off
+
+    let wordsLabel = NSTextField(labelWithString: "关键词（每行一个，最多 200 个）")
+    wordsLabel.frame = NSRect(x: 0, y: 212, width: 300, height: 20)
+
+    let scrollView = NSScrollView(frame: NSRect(x: 0, y: 62, width: 440, height: 146))
+    scrollView.hasVerticalScroller = true
+    scrollView.borderType = .bezelBorder
+    let words = NSTextView(frame: scrollView.contentView.bounds)
+    words.font = .systemFont(ofSize: 13)
+    words.isRichText = false
+    words.isAutomaticQuoteSubstitutionEnabled = false
+    words.isAutomaticDashSubstitutionEnabled = false
+    words.string = settings.terms.joined(separator: "\n")
+    words.setAccessibilityLabel("自动高亮关键词，每行一个")
+    scrollView.documentView = words
+
+    let wholeWords = NSButton(checkboxWithTitle: "仅匹配完整单词或词组", target: nil, action: nil)
+    wholeWords.frame = NSRect(x: 0, y: 29, width: 220, height: 22)
+    wholeWords.state = settings.wholeWords ? .on : .off
+
+    let colorLabel = NSTextField(labelWithString: "高亮颜色")
+    colorLabel.frame = NSRect(x: 278, y: 29, width: 72, height: 20)
+    colorLabel.alignment = .right
+    let colorWell = NSColorWell(frame: NSRect(x: 360, y: 25, width: 80, height: 28))
+    colorWell.color = Self.color(fromHex: settings.color)
+    colorWell.setAccessibilityLabel("高亮颜色")
+
+    let notice = NSTextField(labelWithString: "不区分大小写；输入框、脚本和隐藏内容不会被高亮。")
+    notice.frame = NSRect(x: 0, y: 0, width: 440, height: 18)
+    notice.font = .systemFont(ofSize: 11.5)
+    notice.textColor = .secondaryLabelColor
+
+    for view in [enabled, wordsLabel, scrollView, wholeWords, colorLabel, colorWell, notice] {
+      accessory.addSubview(view)
+    }
+    alert.accessoryView = accessory
+
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn, let self else { return }
+      self.persistentHighlightSettings = PersistentHighlightSettings(
+        enabled: enabled.state == .on,
+        terms: words.string.components(separatedBy: .newlines),
+        color: Self.hexString(from: colorWell.color),
+        wholeWords: wholeWords.state == .on
+      ).normalized()
+      self.savePersistentHighlightSettings()
+      self.applyPersistentHighlightsToAllPages()
+      self.updatePersistentHighlightToolTip()
+    }
+  }
+
+  private func updatePersistentHighlightToolTip() {
+    let settings = persistentHighlightSettings.normalized()
+    persistentHighlightItem?.toolTip = settings.enabled && !settings.terms.isEmpty
+      ? "自动高亮已开启（\(settings.terms.count) 个关键词）"
+      : "设置网页自动高亮关键词"
+  }
+
+  private static func color(fromHex value: String) -> NSColor {
+    let text = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    guard text.count == 6, let number = Int(text, radix: 16) else {
+      return NSColor(red: 1, green: 241 / 255, blue: 118 / 255, alpha: 1)
+    }
+    return NSColor(
+      red: CGFloat((number >> 16) & 255) / 255,
+      green: CGFloat((number >> 8) & 255) / 255,
+      blue: CGFloat(number & 255) / 255,
+      alpha: 1
+    )
+  }
+
+  private static func hexString(from color: NSColor) -> String {
+    guard let rgb = color.usingColorSpace(.sRGB) else {
+      return PersistentHighlightSettings.defaultColor
+    }
+    return String(
+      format: "#%02x%02x%02x",
+      Int(round(rgb.redComponent * 255)),
+      Int(round(rgb.greenComponent * 255)),
+      Int(round(rgb.blueComponent * 255))
+    )
+  }
+
   @objc private func configureSampleLimit() {
     onSampleLimitSettings?()
   }
@@ -1185,6 +1356,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     let credentialID = page.credentialID
     onPageRemoved?(credentialID)
     page.webView.stopLoading()
+    page.webView.configuration.userContentController.removeScriptMessageHandler(
+      forName: "smsPersistentHighlightReady"
+    )
+    highlightConfiguredWebViews.remove(ObjectIdentifier(page.webView))
     tabController.removeTabViewItem(item)
     pages.removeAll { $0 === page }
     saveWorkspaceLayout()
@@ -1254,6 +1429,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       .flexibleSpace,
       ToolbarIdentifier.address,
       ToolbarIdentifier.find,
+      ToolbarIdentifier.persistentHighlight,
       ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
@@ -1271,6 +1447,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       ToolbarIdentifier.address,
       .flexibleSpace,
       ToolbarIdentifier.find,
+      ToolbarIdentifier.persistentHighlight,
       ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
@@ -1400,6 +1577,18 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       item.paletteLabel = "查找"
       item.toolTip = "查找当前后台网页内容（Command-F）"
       item.view = stack
+      return item
+
+    case ToolbarIdentifier.persistentHighlight:
+      let item = toolbarButton(
+        identifier: itemIdentifier,
+        label: "自动高亮",
+        symbol: "highlighter",
+        toolTip: "设置网页自动高亮关键词",
+        action: #selector(configurePersistentHighlights)
+      )
+      persistentHighlightItem = item
+      updatePersistentHighlightToolTip()
       return item
 
     case ToolbarIdentifier.sampleLimit:

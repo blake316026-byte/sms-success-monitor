@@ -207,11 +207,45 @@ extension AppDelegate: WKNavigationDelegate {
           fputs("Local page find navigation check failed\n", stderr)
           exit(1)
         }
-        print("Local OCR, TOTP and all-match page highlighting checks passed")
-        self?.localAutomationCheckRuntime = nil
-        self?.localFindCheckWebView = nil
-        NSApp.terminate(nil)
+        self?.runPersistentHighlightCheck(in: webView)
       }
+    }
+  }
+
+  private func runPersistentHighlightCheck(in webView: WKWebView) {
+    webView.callAsyncJavaScript(
+      """
+      \(PersistentHighlightScript.body)
+      const first = globalThis.smsPersistentHighlighter.configure({
+        enabled: true,
+        terms: ["monitor", "dynamic term"],
+        color: "#fff176",
+        wholeWords: false
+      });
+      const paragraph = document.createElement("p");
+      paragraph.textContent = "dynamic term";
+      document.body.appendChild(paragraph);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const highlight = CSS.highlights.get("sms-monitor-persistent-highlight");
+      return { supported: first.supported, initialCount: first.count, finalCount: highlight?.size ?? 0 };
+      """,
+      arguments: [:],
+      in: nil,
+      in: .page
+    ) { [weak self] result in
+      guard case .success(let value) = result,
+        let payload = value as? [String: Any],
+        payload["supported"] as? Bool == true,
+        (payload["initialCount"] as? NSNumber)?.intValue == 1,
+        (payload["finalCount"] as? NSNumber)?.intValue == 2
+      else {
+        fputs("Local persistent highlight check failed\n", stderr)
+        exit(1)
+      }
+      print("Local OCR, TOTP, page find and persistent highlighting checks passed")
+      self?.localAutomationCheckRuntime = nil
+      self?.localFindCheckWebView = nil
+      NSApp.terminate(nil)
     }
   }
 }

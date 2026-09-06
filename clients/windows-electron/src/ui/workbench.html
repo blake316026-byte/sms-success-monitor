@@ -32,6 +32,7 @@
         <button class="icon-button" id="detail" title="监控总览" aria-label="监控总览"><i data-lucide="table-properties"></i></button>
         <button class="icon-button" id="credentials" title="自动登录设置" aria-label="自动登录设置"><i data-lucide="key-round"></i></button>
         <button class="icon-button" id="find" title="在当前后台中查找（Ctrl F）" aria-label="在当前后台中查找"><i data-lucide="search"></i></button>
+        <button class="icon-button" id="highlights" title="自动高亮关键词" aria-label="自动高亮关键词"><i data-lucide="highlighter"></i></button>
         <button class="icon-button" id="add" title="新增监控后台" aria-label="新增监控后台"><i data-lucide="plus"></i></button>
         <button class="icon-button" id="rename-page" title="重命名自定义页面" aria-label="重命名自定义页面"><i data-lucide="pencil"></i></button>
         <button class="icon-button" id="close-page" title="从本机删除当前平台" aria-label="删除当前平台"><i data-lucide="x"></i></button>
@@ -98,6 +99,37 @@
           <button type="button" class="secondary-button danger-button" id="remove-credentials">删除配置</button>
           <span></span>
           <button type="button" class="secondary-button" id="cancel-credentials-bottom">取消</button>
+          <button type="submit" class="primary-button">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="highlights-dialog" class="page-dialog highlights-dialog">
+      <form method="dialog" id="highlights-form">
+        <div class="dialog-heading">
+          <h2>自动高亮关键词</h2>
+          <button type="button" class="icon-button" id="cancel-highlights" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <label class="checkbox-row highlight-enabled-row">
+          <input id="highlights-enabled" type="checkbox">启用自动高亮
+        </label>
+        <label>关键词<textarea id="highlight-terms" rows="9" placeholder="每行一个关键词" spellcheck="false"></textarea></label>
+        <div class="highlight-options-row">
+          <fieldset class="color-swatches">
+            <legend>高亮颜色</legend>
+            <label title="黄色"><input type="radio" name="highlight-color" value="#fff176"><span style="--swatch:#fff176"></span></label>
+            <label title="橙色"><input type="radio" name="highlight-color" value="#ffb74d"><span style="--swatch:#ffb74d"></span></label>
+            <label title="绿色"><input type="radio" name="highlight-color" value="#81c784"><span style="--swatch:#81c784"></span></label>
+            <label title="蓝色"><input type="radio" name="highlight-color" value="#64b5f6"><span style="--swatch:#64b5f6"></span></label>
+            <label title="粉色"><input type="radio" name="highlight-color" value="#f48fb1"><span style="--swatch:#f48fb1"></span></label>
+          </fieldset>
+          <label class="checkbox-row whole-words-row">
+            <input id="highlights-whole-words" type="checkbox">完整词匹配
+          </label>
+        </div>
+        <p class="dialog-error" id="highlights-error"></p>
+        <div class="dialog-actions">
+          <button type="button" class="secondary-button" id="cancel-highlights-bottom">取消</button>
           <button type="submit" class="primary-button">保存</button>
         </div>
       </form>

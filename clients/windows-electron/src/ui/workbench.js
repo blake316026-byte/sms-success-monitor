@@ -7,6 +7,7 @@ import {
   FileText,
   Eraser,
   Hash,
+  Highlighter,
   KeyRound,
   Lock,
   LockKeyhole,
@@ -34,6 +35,7 @@ const iconSet = {
   FileText,
   Eraser,
   Hash,
+  Highlighter,
   KeyRound,
   Lock,
   LockKeyhole,
@@ -66,6 +68,7 @@ const clearCacheButton = document.querySelector('#clear-cache');
 const closeButton = document.querySelector('#close-page');
 const renameButton = document.querySelector('#rename-page');
 const credentialsButton = document.querySelector('#credentials');
+const highlightsButton = document.querySelector('#highlights');
 const sampleLimitInput = document.querySelector('#sample-limit');
 const zoomOutButton = document.querySelector('#zoom-out');
 const zoomResetButton = document.querySelector('#zoom-reset');
@@ -93,6 +96,11 @@ const credentialEnabled = document.querySelector('#credential-enabled');
 const credentialStatus = document.querySelector('#credential-status');
 const credentialsError = document.querySelector('#credentials-error');
 const removeCredentialsButton = document.querySelector('#remove-credentials');
+const highlightsDialog = document.querySelector('#highlights-dialog');
+const highlightsEnabled = document.querySelector('#highlights-enabled');
+const highlightTerms = document.querySelector('#highlight-terms');
+const highlightsWholeWords = document.querySelector('#highlights-whole-words');
+const highlightsError = document.querySelector('#highlights-error');
 let credentialModuleId;
 
 new ResizeObserver(() => {
@@ -118,7 +126,7 @@ async function showWorkbenchDialog(target, initialFocus) {
 }
 
 function restoreWorkbenchView() {
-  if (!dialog.open && !renameDialog.open && !credentialsDialog.open) {
+  if (!dialog.open && !renameDialog.open && !credentialsDialog.open && !highlightsDialog.open) {
     window.smsApi.setWorkbenchModalOpen(false);
   }
 }
@@ -294,6 +302,20 @@ document.querySelector('#scan').addEventListener('click', () => {
 });
 document.querySelector('#detail').addEventListener('click', () => window.smsApi.showDetail());
 document.querySelector('#find').addEventListener('click', openFind);
+highlightsButton.addEventListener('click', async () => {
+  const result = await window.smsApi.getHighlightSettings();
+  if (!result?.ok) return;
+  const settings = result.settings;
+  highlightsEnabled.checked = Boolean(settings.enabled);
+  highlightTerms.value = (settings.terms || []).join('\n');
+  highlightsWholeWords.checked = Boolean(settings.wholeWords);
+  const color = document.querySelector(
+    `input[name="highlight-color"][value="${settings.color}"]`
+  ) || document.querySelector('input[name="highlight-color"]');
+  if (color) color.checked = true;
+  highlightsError.textContent = '';
+  await showWorkbenchDialog(highlightsDialog, highlightTerms);
+});
 credentialsButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
   if (!selected) return;
@@ -320,7 +342,8 @@ credentialsButton.addEventListener('click', async () => {
   await showWorkbenchDialog(credentialsDialog, credentialUsername);
 });
 document.querySelector('#add').addEventListener('click', async () => {
-  if (openingDialog || dialog.open || renameDialog.open || credentialsDialog.open) return;
+  if (openingDialog || dialog.open || renameDialog.open || credentialsDialog.open
+    || highlightsDialog.open) return;
   dialogError.textContent = '';
   pageName.value = `后台账号 ${snapshot.pages.filter((page) => !page.monitored).length + 1}`;
   pageURL.value = snapshot.pages[0]?.url || '';
@@ -328,7 +351,8 @@ document.querySelector('#add').addEventListener('click', async () => {
 });
 closeButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  if (!selected || openingDialog || dialog.open || renameDialog.open || credentialsDialog.open) return;
+  if (!selected || openingDialog || dialog.open || renameDialog.open || credentialsDialog.open
+    || highlightsDialog.open) return;
   if (!window.confirm(`确定从本机客户端删除“${selected.name}”吗？`)) return;
   closeButton.disabled = true;
   const result = await window.smsApi.closePage(selected.id);
@@ -339,7 +363,8 @@ closeButton.addEventListener('click', async () => {
 });
 renameButton.addEventListener('click', async () => {
   const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  if (!selected || openingDialog || dialog.open || renameDialog.open || credentialsDialog.open) return;
+  if (!selected || openingDialog || dialog.open || renameDialog.open || credentialsDialog.open
+    || highlightsDialog.open) return;
   renameError.textContent = '';
   renameName.value = selected.name;
   await showWorkbenchDialog(renameDialog, renameName);
@@ -377,9 +402,13 @@ for (const id of ['cancel-credentials', 'cancel-credentials-bottom']) {
 for (const id of ['cancel-rename', 'cancel-rename-bottom']) {
   document.querySelector(`#${id}`).addEventListener('click', () => renameDialog.close());
 }
+for (const id of ['cancel-highlights', 'cancel-highlights-bottom']) {
+  document.querySelector(`#${id}`).addEventListener('click', () => highlightsDialog.close());
+}
 dialog.addEventListener('close', restoreWorkbenchView);
 renameDialog.addEventListener('close', restoreWorkbenchView);
 credentialsDialog.addEventListener('close', restoreWorkbenchView);
+highlightsDialog.addEventListener('close', restoreWorkbenchView);
 document.querySelector('#add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const result = await window.smsApi.addPage({ name: pageName.value, url: pageURL.value });
@@ -419,6 +448,22 @@ document.querySelector('#credentials-form').addEventListener('submit', async (ev
     return;
   }
   credentialsDialog.close();
+});
+
+document.querySelector('#highlights-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const selectedColor = document.querySelector('input[name="highlight-color"]:checked');
+  const result = await window.smsApi.saveHighlightSettings({
+    enabled: highlightsEnabled.checked,
+    terms: highlightTerms.value,
+    color: selectedColor?.value || '#fff176',
+    wholeWords: highlightsWholeWords.checked
+  });
+  if (!result?.ok) {
+    highlightsError.textContent = result?.message || '自动高亮设置保存失败';
+    return;
+  }
+  highlightsDialog.close();
 });
 
 removeCredentialsButton.addEventListener('click', async () => {

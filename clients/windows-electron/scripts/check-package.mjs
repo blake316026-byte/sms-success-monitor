@@ -13,6 +13,7 @@ for (const file of [
   '../shared/auto-login/runtime.html',
   '../shared/auto-login/runtime.js',
   '../shared/auto-login/login-page.js',
+  '../shared/auto-login/persistent-highlight.js',
   '../shared/auto-login/common_old.onnx',
   '../shared/auto-login/vendor/ort.wasm.min.js',
   '../shared/auto-login/vendor/ort-wasm-simd-threaded.mjs',
@@ -66,6 +67,12 @@ assert.match(preloadSource, /findInPage/, 'preload exposes page find commands');
 assert.match(workbenchSource, /id="find-bar"/, 'workbench renders the page find bar');
 assert.match(workbenchSource, /id="find-previous"/, 'workbench renders previous match');
 assert.match(workbenchSource, /id="find-next"/, 'workbench renders next match');
+assert.match(workbenchSource, /id="highlights"/, 'workbench renders persistent highlight settings');
+assert.match(workbenchSource, /name="highlight-color"/, 'persistent highlights use visible color swatches');
+assert.match(mainSource, /persistentHighlightSettings/, 'persistent highlight settings are stored locally');
+assert.match(mainSource, /applyPersistentHighlightsToAllPages/, 'saved terms apply to every backend page');
+assert.match(mainSource, /did-finish-load[\s\S]*applyPersistentHighlights/, 'highlights return after navigation');
+assert.match(preloadSource, /saveHighlightSettings/, 'preload exposes persistent highlight settings');
 assert.match(mainSource, /function ensurePageState/, 'custom pages receive local auto-login state');
 assert.match(
   mainSource,

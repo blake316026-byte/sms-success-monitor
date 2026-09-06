@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('smsApi', {
   clearBrowserCache: () => ipcRenderer.invoke('browser:clear-cache'),
   findInPage: (query, options) => ipcRenderer.invoke('page:find', query, options),
   stopFindInPage: (action) => ipcRenderer.invoke('page:stop-find', action),
+  getHighlightSettings: () => ipcRenderer.invoke('highlights:get'),
+  saveHighlightSettings: (settings) => ipcRenderer.invoke('highlights:save', settings),
   addPage: (page) => ipcRenderer.invoke('page:add', page),
   renamePage: (id, name) => ipcRenderer.invoke('page:rename', id, name),
   closePage: (id) => ipcRenderer.invoke('page:close', id),

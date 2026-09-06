@@ -37,6 +37,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -260,7 +262,11 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         credentials.setOnClickListener(view -> showLoginSettings());
         navigation.addView(credentials, square(dp(38)));
 
-        ImageButton sampleLimit = iconButton(android.R.drawable.ic_menu_edit, "设置样本条数");
+        ImageButton highlights = iconButton(android.R.drawable.ic_menu_edit, "自动高亮关键词");
+        highlights.setOnClickListener(view -> showHighlightSettings());
+        navigation.addView(highlights, square(dp(38)));
+
+        ImageButton sampleLimit = iconButton(android.R.drawable.ic_menu_sort_by_size, "设置样本条数");
         sampleLimit.setOnClickListener(view -> showSampleLimitSettings());
         navigation.addView(sampleLimit, square(dp(38)));
 
@@ -535,6 +541,117 @@ public final class MainActivity extends Activity implements MonitorService.Liste
                 dialog.dismiss();
             });
         });
+        dialog.show();
+    }
+
+    private void showHighlightSettings() {
+        if (!bound) {
+            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        MonitorService.HighlightSettings settings = monitorService.getHighlightSettings();
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(20), dp(4), dp(20), 0);
+
+        CheckBox enabled = new CheckBox(this);
+        enabled.setText("启用自动高亮");
+        enabled.setChecked(settings.enabled);
+        form.addView(enabled, matchWidth(dp(42)));
+
+        TextView termsLabel = new TextView(this);
+        termsLabel.setText("关键词");
+        termsLabel.setTextColor(COLOR_INK);
+        termsLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        termsLabel.setPadding(0, dp(7), 0, dp(5));
+        form.addView(termsLabel, matchWidth(dp(34)));
+
+        EditText terms = new EditText(this);
+        terms.setGravity(Gravity.TOP | Gravity.START);
+        terms.setMinLines(7);
+        terms.setMaxLines(12);
+        terms.setHint("每行一个关键词");
+        terms.setText(String.join("\n", settings.terms));
+        terms.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        terms.setBackground(rounded(Color.WHITE, COLOR_BORDER, 5));
+        terms.setPadding(dp(10), dp(8), dp(10), dp(8));
+        form.addView(terms, matchWidth(dp(190)));
+
+        TextView colorLabel = new TextView(this);
+        colorLabel.setText("高亮颜色");
+        colorLabel.setTextColor(COLOR_INK);
+        colorLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        colorLabel.setPadding(0, dp(12), 0, dp(6));
+        form.addView(colorLabel, matchWidth(dp(38)));
+
+        String[] colorValues = new String[]{"#fff176", "#ffb74d", "#81c784", "#64b5f6", "#f48fb1"};
+        int[] colors = new int[]{
+                Color.rgb(255, 241, 118), Color.rgb(255, 183, 77),
+                Color.rgb(129, 199, 132), Color.rgb(100, 181, 246),
+                Color.rgb(244, 143, 177)
+        };
+        String[] selectedColor = new String[]{settings.color};
+        LinearLayout swatches = new LinearLayout(this);
+        swatches.setOrientation(LinearLayout.HORIZONTAL);
+        swatches.setGravity(Gravity.CENTER_VERTICAL);
+        List<TextView> swatchViews = new ArrayList<>();
+        for (int index = 0; index < colorValues.length; index++) {
+            TextView swatch = new TextView(this);
+            swatch.setTag(colorValues[index]);
+            swatch.setContentDescription("高亮颜色 " + (index + 1));
+            swatchViews.add(swatch);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(34), dp(34));
+            params.setMargins(0, 0, dp(10), 0);
+            swatches.addView(swatch, params);
+            int selectedIndex = index;
+            swatch.setOnClickListener(view -> {
+                selectedColor[0] = colorValues[selectedIndex];
+                for (int item = 0; item < swatchViews.size(); item++) {
+                    boolean selected = colorValues[item].equals(selectedColor[0]);
+                    swatchViews.get(item).setBackground(rounded(
+                            colors[item], selected ? COLOR_BLUE : COLOR_BORDER,
+                            selected ? 17 : 15
+                    ));
+                }
+            });
+        }
+        for (int index = 0; index < swatchViews.size(); index++) {
+            boolean selected = colorValues[index].equals(selectedColor[0]);
+            swatchViews.get(index).setBackground(rounded(
+                    colors[index], selected ? COLOR_BLUE : COLOR_BORDER,
+                    selected ? 17 : 15
+            ));
+        }
+        form.addView(swatches, matchWidth(dp(42)));
+
+        CheckBox wholeWords = new CheckBox(this);
+        wholeWords.setText("仅匹配完整单词或词组");
+        wholeWords.setChecked(settings.wholeWords);
+        form.addView(wholeWords, matchWidth(dp(42)));
+
+        ScrollView scrollView = new ScrollView(this);
+        scrollView.addView(form);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("自动高亮关键词")
+                .setView(scrollView)
+                .setPositiveButton("保存", null)
+                .setNegativeButton("取消", null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(view -> {
+                    String error = monitorService.saveHighlightSettings(
+                            enabled.isChecked(),
+                            terms.getText().toString(),
+                            selectedColor[0],
+                            wholeWords.isChecked()
+                    );
+                    if (!error.isEmpty()) {
+                        Toast.makeText(this, error, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    dialog.dismiss();
+                }));
         dialog.show();
     }
 

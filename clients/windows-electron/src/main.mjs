@@ -38,6 +38,10 @@ import {
   nextWorkbenchZoomFactor,
   normalizeWorkbenchZoomFactor
 } from './workbench-zoom.mjs';
+import {
+  DEFAULT_PERSISTENT_HIGHLIGHT_SETTINGS,
+  normalizePersistentHighlightSettings
+} from './persistent-highlight-settings.mjs';
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.resolve(currentDirectory, '..');
@@ -49,6 +53,10 @@ const scanSource = fs.readFileSync(path.join(sharedRoot, 'scan.js'), 'utf8');
 const financeSource = fs.readFileSync(path.join(sharedRoot, 'finance.js'), 'utf8');
 const loginAutomationSource = fs.readFileSync(
   path.join(sharedRoot, 'auto-login/login-page.js'),
+  'utf8'
+);
+const persistentHighlightSource = fs.readFileSync(
+  path.join(sharedRoot, 'auto-login/persistent-highlight.js'),
   'utf8'
 );
 let shellHeight = 112;
@@ -70,6 +78,7 @@ let settingsPath;
 let credentialProfiles = {};
 let sampleLimit = SAMPLE_LIMIT;
 let workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
+let persistentHighlightSettings = { ...DEFAULT_PERSISTENT_HIGHLIGHT_SETTINGS };
 let disabledModuleIds = new Set();
 let pausedMonitorIds = new Set();
 let moduleDisplayNames = {};
@@ -255,6 +264,20 @@ async function performPackagedLocalAutomationCheck() {
       throw new Error(`Windows WebContentsView page find returned ${findResult.matches} matches`);
     }
     workbenchCheckView.webContents.stopFindInPage('clearSelection');
+    const highlightResult = await workbenchCheckView.webContents.executeJavaScript(
+      `(async () => { ${persistentHighlightSource}\n`
+        + `const initial = globalThis.smsPersistentHighlighter.configure({`
+        + `enabled:true,terms:['monitor','dynamic term'],color:'#fff176',wholeWords:false});`
+        + `const p=document.createElement('p');p.textContent='dynamic term';document.body.appendChild(p);`
+        + `await new Promise(resolve=>setTimeout(resolve,300));`
+        + `return {supported:initial.supported,initialCount:initial.count,`
+        + `finalCount:CSS.highlights.get('sms-monitor-persistent-highlight')?.size||0};})()`
+    );
+    if (!highlightResult.supported
+      || highlightResult.initialCount !== 2
+      || highlightResult.finalCount !== 3) {
+      throw new Error('Windows persistent page highlighting did not refresh');
+    }
   } finally {
     workbenchCheckWindow.contentView.removeChildView(workbenchCheckView);
     workbenchCheckView.webContents.close();
@@ -346,6 +369,9 @@ async function loadMonitorSettings() {
     const stored = JSON.parse(await fsPromises.readFile(settingsPath, 'utf8'));
     sampleLimit = normalizeSampleLimit(stored?.sampleLimit);
     workbenchZoomFactor = normalizeWorkbenchZoomFactor(stored?.workbenchZoomFactor);
+    persistentHighlightSettings = normalizePersistentHighlightSettings(
+      stored?.persistentHighlightSettings
+    );
     disabledModuleIds = new Set(
       Array.isArray(stored?.disabledModuleIds)
         ? stored.disabledModuleIds.filter((id) => modules.some((module) => module.id === id))
@@ -362,6 +388,7 @@ async function loadMonitorSettings() {
   } catch (_) {
     sampleLimit = SAMPLE_LIMIT;
     workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
+    persistentHighlightSettings = { ...DEFAULT_PERSISTENT_HIGHLIGHT_SETTINGS };
     disabledModuleIds = new Set();
     pausedMonitorIds = new Set();
     moduleDisplayNames = {};
@@ -373,9 +400,10 @@ async function saveMonitorSettings() {
   await fsPromises.writeFile(
     settingsPath,
     `${JSON.stringify({
-      version: 2,
+      version: 3,
       sampleLimit,
       workbenchZoomFactor,
+      persistentHighlightSettings,
       disabledModuleIds: [...disabledModuleIds],
       pausedMonitorIds: [...pausedMonitorIds],
       moduleDisplayNames
@@ -455,6 +483,27 @@ function applyWorkbenchZoom() {
     if (applyPageZoom(page)) appliedCount += 1;
   }
   return appliedCount;
+}
+
+async function applyPersistentHighlights(page) {
+  if (!page || page.view.webContents.isDestroyed()) {
+    return { supported: false, count: 0 };
+  }
+  try {
+    return await page.view.webContents.executeJavaScript(
+      `(async () => { ${persistentHighlightSource}\n`
+        + `return globalThis.smsPersistentHighlighter.configure(`
+        + `${JSON.stringify(persistentHighlightSettings)}); })()`
+    );
+  } catch (error) {
+    console.warn(`[SMSMonitor] ${page.id} persistent highlight failed: ${error.message}`);
+    return { supported: false, count: 0 };
+  }
+}
+
+async function applyPersistentHighlightsToAllPages() {
+  const results = await Promise.all([...pages.values()].map(applyPersistentHighlights));
+  return results.filter((result) => result?.supported).length;
 }
 
 async function changeWorkbenchZoom(direction) {
@@ -543,6 +592,7 @@ function createRemotePage(page) {
   });
   view.webContents.on('did-finish-load', () => {
     applyPageZoom({ id: page.id, view });
+    void applyPersistentHighlights({ id: page.id, view });
     handlePageFinished(page.id);
     if (moduleStates.get(page.id)?.monitoringEnabled) {
       setTimeout(() => refreshFinancialModule(page.id), 900);
@@ -1844,6 +1894,23 @@ function registerIPC() {
     scanAllPages();
     return { ok: true, sampleLimit };
   });
+  ipcMain.handle('highlights:get', () => ({
+    ok: true,
+    settings: persistentHighlightSettings
+  }));
+  ipcMain.handle('highlights:save', async (_event, input) => {
+    const previous = persistentHighlightSettings;
+    persistentHighlightSettings = normalizePersistentHighlightSettings(input);
+    try {
+      await saveMonitorSettings();
+      const appliedCount = await applyPersistentHighlightsToAllPages();
+      return { ok: true, settings: persistentHighlightSettings, appliedCount };
+    } catch (error) {
+      persistentHighlightSettings = previous;
+      await applyPersistentHighlightsToAllPages();
+      return { ok: false, message: `无法保存自动高亮设置：${error.message}` };
+    }
+  });
   ipcMain.handle('workbench:zoom', (_event, direction) => {
     if (!['in', 'out', 'reset'].includes(direction)) {
       return { ok: false, message: '无法识别缩放操作' };
@@ -1928,7 +1995,7 @@ app.whenReady().then(async () => {
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
-    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP, workbench zoom and page find checks passed';
+    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP, zoom, page find and persistent highlighting checks passed';
     try {
       await runPackagedLocalAutomationCheck();
     } catch (error) {

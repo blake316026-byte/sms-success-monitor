@@ -92,6 +92,32 @@ public final class MonitorService extends Service {
         }
     }
 
+    public static final class HighlightSettings {
+        public final boolean enabled;
+        public final List<String> terms;
+        public final String color;
+        public final boolean wholeWords;
+
+        HighlightSettings(boolean enabled, List<String> terms, String color, boolean wholeWords) {
+            this.enabled = enabled;
+            this.terms = Collections.unmodifiableList(new ArrayList<>(terms));
+            this.color = color;
+            this.wholeWords = wholeWords;
+        }
+
+        JSONObject toJson() {
+            JSONObject value = new JSONObject();
+            try {
+                value.put("enabled", enabled);
+                value.put("terms", new JSONArray(terms));
+                value.put("color", color);
+                value.put("wholeWords", wholeWords);
+            } catch (Exception ignored) {
+            }
+            return value;
+        }
+    }
+
     public final class LocalBinder extends Binder {
         public MonitorService getService() {
             return MonitorService.this;
@@ -132,6 +158,8 @@ public final class MonitorService extends Service {
     private SharedPreferences preferences;
     private String scanSource;
     private String loginAutomationSource;
+    private String persistentHighlightSource;
+    private HighlightSettings highlightSettings;
     private LocalCredentialStore credentialStore;
     private LocalAutomationRuntime automationRuntime;
     private WindowManager windowManager;
@@ -177,12 +205,14 @@ public final class MonitorService extends Service {
         sampleLimit = normalizeSampleLimit(
                 preferences.getInt("sample-limit", DEFAULT_SAMPLE_LIMIT)
         );
+        highlightSettings = loadHighlightSettings();
         createNotificationChannels();
         startForegroundMonitor(buildForegroundNotification(null));
 
         try {
             scanSource = readAsset("scan.js");
             loginAutomationSource = readAsset("auto-login/login-page.js");
+            persistentHighlightSource = readAsset("auto-login/persistent-highlight.js");
             for (ModuleConfig module : ModuleConfig.load(this)) createPage(module);
             refreshOutputs();
             mainHandler.postDelayed(periodicScan, 5_000L);
@@ -243,6 +273,7 @@ public final class MonitorService extends Service {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                applyPersistentHighlights(page);
                 handlePageFinished(page, url);
             }
 
@@ -328,6 +359,66 @@ public final class MonitorService extends Service {
 
     private static int normalizeSampleLimit(int value) {
         return Math.min(MAX_SAMPLE_LIMIT, Math.max(MIN_SAMPLE_LIMIT, value));
+    }
+
+    private HighlightSettings loadHighlightSettings() {
+        boolean enabled = preferences.getBoolean("highlight-enabled", false);
+        boolean wholeWords = preferences.getBoolean("highlight-whole-words", false);
+        String color = preferences.getString("highlight-color", "#fff176");
+        String terms = preferences.getString("highlight-terms", "");
+        return normalizeHighlightSettings(enabled, terms, color, wholeWords);
+    }
+
+    private static HighlightSettings normalizeHighlightSettings(
+            boolean enabled,
+            String rawTerms,
+            String rawColor,
+            boolean wholeWords
+    ) {
+        LinkedHashMap<String, String> unique = new LinkedHashMap<>();
+        String[] values = rawTerms == null ? new String[0] : rawTerms.split("\\r?\\n");
+        for (String value : values) {
+            String term = value == null ? "" : value.trim();
+            if (term.length() > 100) term = term.substring(0, 100);
+            if (term.isEmpty()) continue;
+            unique.putIfAbsent(term.toLowerCase(Locale.ROOT), term);
+            if (unique.size() >= 200) break;
+        }
+        String color = rawColor != null && rawColor.matches("^#[0-9A-Fa-f]{6}$")
+                ? rawColor.toLowerCase(Locale.ROOT)
+                : "#fff176";
+        return new HighlightSettings(enabled, new ArrayList<>(unique.values()), color, wholeWords);
+    }
+
+    public HighlightSettings getHighlightSettings() {
+        return highlightSettings;
+    }
+
+    public String saveHighlightSettings(
+            boolean enabled,
+            String terms,
+            String color,
+            boolean wholeWords
+    ) {
+        HighlightSettings next = normalizeHighlightSettings(enabled, terms, color, wholeWords);
+        highlightSettings = next;
+        boolean saved = preferences.edit()
+                .putBoolean("highlight-enabled", next.enabled)
+                .putString("highlight-terms", String.join("\n", next.terms))
+                .putString("highlight-color", next.color)
+                .putBoolean("highlight-whole-words", next.wholeWords)
+                .commit();
+        if (!saved) return "无法保存自动高亮设置";
+        for (ManagedPage page : pages.values()) applyPersistentHighlights(page);
+        return "";
+    }
+
+    private void applyPersistentHighlights(ManagedPage page) {
+        if (persistentHighlightSource == null || persistentHighlightSource.isEmpty()) return;
+        String script = "(function(){" + persistentHighlightSource
+                + "return globalThis.smsPersistentHighlighter.configure("
+                + highlightSettings.toJson() + ");})()";
+        page.webView.evaluateJavascript(script, null);
     }
 
     public WebView attachPage(String id, Activity activity, ViewGroup container) {
