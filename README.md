@@ -26,4 +26,4 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 该例外保存后，以后可以正常双击启动。正式消除此提示需要使用 Apple Developer ID 签名并通过 Apple 公证。
 
-本版：**macOS v0.3.62 build 69**；Windows、Android 继续使用 v0.3.61。macOS 网页查找会高亮全部匹配字符，以橙色区分当前匹配，并显示当前位置和匹配总数。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.62.md)。
+本版：**macOS v0.3.64 build 71、Windows v0.3.64**；Android 下载继续使用已验证的 v0.3.61。macOS 和 Windows 新增持久关键词高亮：用户可保存关键词、颜色和完整词匹配设置，刷新、切换后台及网页动态更新后会继续高亮。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.64.md)。
