@@ -2,6 +2,7 @@ import Foundation
 
 public enum PlatformRoutingPolicy {
   private static let monitoredCustomDomains = [
+    "fpljsoft.com",
     "npgaaa.com",
     "sixsass.com",
   ]

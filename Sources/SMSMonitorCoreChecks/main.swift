@@ -220,6 +220,13 @@ check(
 )
 check(
   PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "custom-fpljsoft",
+    targetURL: URL(string: "https://earmsh.fpljsoft.com/login")!
+  ),
+  "monitors custom NPG fpljsoft domains"
+)
+check(
+  PlatformRoutingPolicy.shouldUseNPGMonitoring(
     configurationID: "custom-okbet",
     targetURL: URL(string: "https://test.sixsass.com/login")!
   ),
