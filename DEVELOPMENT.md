@@ -2,6 +2,14 @@
 
 本文是 SMS Success Monitor 的开发、维护、跨窗口接手和技术决策真源。`README.md` 面向使用者，本文面向主管、开发者和后续 Codex 窗口。
 
+## 2026-09-08 fpljsoft 新增后台自动登录
+
+- 发布目标为 macOS v0.3.65 build 72；Windows 继续提供 v0.3.64，Android 继续提供已验证的 v0.3.61。
+- “后台账号 29”凭据文件中存在正确的页面 ID、账号和密码，自动登录已启用，但 `earmsh.fpljsoft.com` 未包含在 `PlatformRoutingPolicy` 的 NPG 域名范围内，页面因此被误判为仅浏览模式并跳过自动登录。
+- 将 `fpljsoft.com` 纳入已确认的 NPG 后台路由，同时保留未知域名默认仅浏览、不发送短信或财务查询的边界。
+- 核心回归新增 `earmsh.fpljsoft.com` 路由用例；完整测试、Universal 构建、签名和打包自检通过。
+- 旧 Mac 安装 build 72 后选择并刷新“后台账号 29”，页面自动进入 `silver02` 后台主界面；加密配置回读确认新 Token 已保存。测试未修改账号权限或业务数据。
+
 ## 2026-09-07 持久关键词高亮
 
 - 发布目标为 macOS v0.3.64 build 71、Windows v0.3.64；Android 源码已接入但当前环境未接受 Android SDK 许可、未完成 APK 编译，Release 继续提供已验证的 v0.3.61 APK，不能描述为 Android v0.3.64。
