@@ -350,12 +350,23 @@ private final class WorkspaceTabViewController: NSTabViewController {
 private final class WrappingTabBarView: NSView {
   var onSelect: ((Int) -> Void)?
   var onMove: ((Int, Int) -> Void)?
-  var items: [NSTabViewItem] = [] { didSet { rebuildButtons() } }
+  var items: [NSTabViewItem] = [] {
+    didSet {
+      if dragStartIndex == nil {
+        synchronizeButtons()
+      } else {
+        refresh()
+      }
+    }
+  }
   var selectedIndex = 0 { didSet { updateSelection() } }
   var onHeightChange: ((CGFloat) -> Void)?
 
   private var buttons: [NSButton] = []
+  private var buttonItems: [NSTabViewItem] = []
+  private var dragStartIndex: Int?
   private var draggedIndex: Int?
+  private weak var draggedButton: NSButton?
   private var lastHeight: CGFloat = 0
   private let horizontalPadding: CGFloat = 8
   private let verticalPadding: CGFloat = 6
@@ -374,30 +385,63 @@ private final class WrappingTabBarView: NSView {
     addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(handleTabDrag(_:))))
   }
 
-  private func rebuildButtons() {
-    buttons.forEach { $0.removeFromSuperview() }
-    buttons = items.enumerated().map { index, item in
-      let button = NSButton(title: item.label, target: self, action: #selector(selectTab(_:)))
-      button.tag = index
-      button.image = item.image
-      button.imagePosition = .imageLeading
-      button.bezelStyle = .rounded
-      button.font = .systemFont(ofSize: 12)
-      button.toolTip = item.toolTip
-      button.lineBreakMode = .byClipping
-      addSubview(button)
-      return button
+  private func makeButton(for item: NSTabViewItem) -> NSButton {
+    let button = NSButton(title: item.label, target: self, action: #selector(selectTab(_:)))
+    button.image = item.image
+    button.imagePosition = .imageLeading
+    button.bezelStyle = .rounded
+    button.font = .systemFont(ofSize: 12)
+    button.toolTip = item.toolTip
+    button.lineBreakMode = .byClipping
+    addSubview(button)
+    return button
+  }
+
+  private func synchronizeButtons() {
+    let existing = Dictionary(
+      uniqueKeysWithValues: zip(buttonItems, buttons).map {
+        (ObjectIdentifier($0.0), $0.1)
+      }
+    )
+    let nextItemIDs = Set(items.map(ObjectIdentifier.init))
+    for (item, button) in zip(buttonItems, buttons)
+    where !nextItemIDs.contains(ObjectIdentifier(item)) {
+      button.removeFromSuperview()
     }
+
+    buttonItems = items
+    buttons = items.map { item in
+      existing[ObjectIdentifier(item)] ?? makeButton(for: item)
+    }
+    refresh()
+  }
+
+  private func refreshButtonContents() {
+    for (index, button) in buttons.enumerated() where buttonItems.indices.contains(index) {
+      let item = buttonItems[index]
+      button.tag = index
+      button.title = item.label
+      button.image = item.image
+      button.toolTip = item.toolTip
+    }
+  }
+
+  private func previewMove(from source: Int, to target: Int) {
+    guard buttons.indices.contains(source), buttons.indices.contains(target), source != target else {
+      return
+    }
+    let button = buttons.remove(at: source)
+    buttons.insert(button, at: target)
+    let item = buttonItems.remove(at: source)
+    buttonItems.insert(item, at: target)
+    refreshButtonContents()
     updateSelection()
     needsLayout = true
+    layoutSubtreeIfNeeded()
   }
 
   func refresh() {
-    for (index, button) in buttons.enumerated() where items.indices.contains(index) {
-      button.title = items[index].label
-      button.image = items[index].image
-      button.toolTip = items[index].toolTip
-    }
+    refreshButtonContents()
     updateSelection()
     needsLayout = true
   }
@@ -435,16 +479,41 @@ private final class WrappingTabBarView: NSView {
     guard buttons.count > 1 else { return }
     switch recognizer.state {
     case .began:
-      draggedIndex = buttonIndex(at: recognizer.location(in: self), nearest: false)
+      guard let source = buttonIndex(at: recognizer.location(in: self), nearest: false) else {
+        return
+      }
+      dragStartIndex = source
+      draggedIndex = source
+      draggedButton = buttons[source]
+      draggedButton?.alphaValue = 0.68
     case .changed:
       guard let source = draggedIndex,
         let target = buttonIndex(at: recognizer.location(in: self), nearest: true),
         source != target
       else { return }
-      onMove?(source, target)
+      previewMove(from: source, to: target)
       draggedIndex = target
+    case .ended:
+      finishTabDrag(commit: true)
+    case .cancelled, .failed:
+      finishTabDrag(commit: false)
     default:
-      draggedIndex = nil
+      break
+    }
+  }
+
+  private func finishTabDrag(commit: Bool) {
+    let source = dragStartIndex
+    let target = draggedIndex
+    draggedButton?.alphaValue = 1
+    dragStartIndex = nil
+    draggedIndex = nil
+    draggedButton = nil
+
+    if commit, let source, let target, source != target {
+      onMove?(source, target)
+    } else {
+      synchronizeButtons()
     }
   }
 
@@ -452,7 +521,7 @@ private final class WrappingTabBarView: NSView {
     if let index = buttons.firstIndex(where: { $0.frame.contains(point) }) {
       return index
     }
-    guard nearest, bounds.insetBy(dx: -24, dy: -24).contains(point) else { return nil }
+    guard nearest, bounds.insetBy(dx: -80, dy: -60).contains(point) else { return nil }
     return buttons.indices.min { lhs, rhs in
       let left = buttons[lhs].frame
       let right = buttons[rhs].frame
@@ -462,9 +531,12 @@ private final class WrappingTabBarView: NSView {
   }
 
   private func updateSelection() {
+    let selectedItem = items.indices.contains(selectedIndex) ? items[selectedIndex] : nil
     for (index, button) in buttons.enumerated() {
-      button.state = index == selectedIndex ? .on : .off
-      button.contentTintColor = index == selectedIndex ? .controlAccentColor : .labelColor
+      let selected = selectedItem != nil && buttonItems.indices.contains(index)
+        && buttonItems[index] === selectedItem
+      button.state = selected ? .on : .off
+      button.contentTintColor = selected ? .controlAccentColor : .labelColor
     }
   }
 }
