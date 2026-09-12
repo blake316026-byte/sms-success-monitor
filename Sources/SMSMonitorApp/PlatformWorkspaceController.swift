@@ -115,7 +115,7 @@ private struct SavedWorkspaceLayout: Codable {
 private final class PlatformPageViewController: NSViewController, WKNavigationDelegate {
   let id: UUID
   let monitorID: String?
-  let webView: WKWebView
+  private(set) var webView: WKWebView
   var pageName: String
   var startURL: URL
   var onNavigationStateChange: (() -> Void)?
@@ -146,6 +146,10 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
       webView.navigationDelegate = self
     }
 
+    observeWebView()
+  }
+
+  private func observeWebView() {
     observations = [
       webView.observe(\.url, options: [.new]) { [weak self] _, _ in
         self?.onNavigationStateChange?()
@@ -171,6 +175,11 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
 
   override func loadView() {
     let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 1180, height: 720))
+    attachWebView(to: contentView)
+    view = contentView
+  }
+
+  private func attachWebView(to contentView: NSView) {
     webView.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(webView)
     NSLayoutConstraint.activate([
@@ -179,7 +188,19 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
       webView.topAnchor.constraint(equalTo: contentView.topAnchor),
       webView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
     ])
-    view = contentView
+  }
+
+  func replaceWebView(_ replacement: WKWebView) {
+    observations.forEach { $0.invalidate() }
+    observations = []
+    let previous = webView
+    webView = replacement
+    if isViewLoaded {
+      previous.removeFromSuperview()
+      attachWebView(to: view)
+    }
+    observeWebView()
+    applyPerformanceMode()
   }
 
   func setPerformanceActive(_ active: Bool) {
@@ -732,6 +753,24 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   func pageDescriptors() -> [PlatformPageDescriptor] {
     pages.map(Self.descriptor)
+  }
+
+  func replaceWebView(
+    credentialID: String,
+    previous: WKWebView,
+    replacement: WKWebView
+  ) {
+    guard let page = pages.first(where: { $0.credentialID == credentialID }),
+      page.webView === previous
+    else { return }
+    replacement.uiDelegate = self
+    highlightConfiguredWebViews.remove(ObjectIdentifier(previous))
+    highlightConfiguredWebViews.insert(ObjectIdentifier(replacement))
+    page.replaceWebView(replacement)
+    if page === selectedPage {
+      updateToolbar()
+      findInSelectedPage(backwards: false, advance: false)
+    }
   }
 
   func refreshMonitorCount() {

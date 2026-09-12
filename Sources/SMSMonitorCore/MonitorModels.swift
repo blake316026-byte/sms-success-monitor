@@ -80,25 +80,24 @@ public enum MonitorRefreshPolicy {
 }
 
 public enum InactivePageMaintenancePolicy {
-  public static let recycleAfter: TimeInterval = 2 * 60 * 60
+  public static let compactAfter: TimeInterval = 30
 
-  public static func shouldRecycle(
+  public static func shouldCompact(
     isActive: Bool,
     inactiveSince: Date?,
     lastSuccessfulScanAt: Date?,
-    lastRecycleAt: Date?,
     now: Date,
     scanInterval: TimeInterval
   ) -> Bool {
     guard !isActive,
       let inactiveSince,
       let lastSuccessfulScanAt,
-      now.timeIntervalSince(inactiveSince) >= recycleAfter,
+      now.timeIntervalSince(inactiveSince) >= compactAfter,
       now.timeIntervalSince(lastSuccessfulScanAt)
         <= max(2 * scanInterval, MonitorRefreshPolicy.minimumNextScanDelay)
     else { return false }
 
-    return lastRecycleAt.map { now.timeIntervalSince($0) >= recycleAfter } ?? true
+    return true
   }
 }
 

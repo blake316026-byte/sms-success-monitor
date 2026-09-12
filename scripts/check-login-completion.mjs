@@ -52,6 +52,7 @@ final class Controller {
   var autoLoginOutcomeWorkItem: DispatchWorkItem?, scanTimeoutWorkItem: DispatchWorkItem?
   var authenticationEpoch = UUID(), activeScanID: UUID?
   var isScanning = false, isRefreshingFinancial = false, needsImmediateScan = false
+  var isMemoryCompacted = false
   var monitoringEnabled = true, browserOnlyPage = false, platformIdentified = true
   var tianchengLogin: NSObject? = nil
   var scans = 0, logins = 0, financialStarts = 0

@@ -114,43 +114,40 @@ check(
 
 let maintenanceNow = Date(timeIntervalSince1970: 10_000)
 check(
-  InactivePageMaintenancePolicy.shouldRecycle(
+  InactivePageMaintenancePolicy.shouldCompact(
     isActive: false,
     inactiveSince: maintenanceNow.addingTimeInterval(
-      -InactivePageMaintenancePolicy.recycleAfter - 1
+      -InactivePageMaintenancePolicy.compactAfter - 1
     ),
     lastSuccessfulScanAt: maintenanceNow.addingTimeInterval(-30),
-    lastRecycleAt: nil,
     now: maintenanceNow,
     scanInterval: 60
   ),
-  "recycles only a long-idle page after a fresh successful scan"
+  "compacts an inactive page only after a fresh successful scan"
 )
 check(
-  !InactivePageMaintenancePolicy.shouldRecycle(
+  !InactivePageMaintenancePolicy.shouldCompact(
     isActive: true,
     inactiveSince: maintenanceNow.addingTimeInterval(
-      -InactivePageMaintenancePolicy.recycleAfter - 1
+      -InactivePageMaintenancePolicy.compactAfter - 1
     ),
     lastSuccessfulScanAt: maintenanceNow.addingTimeInterval(-30),
-    lastRecycleAt: nil,
     now: maintenanceNow,
     scanInterval: 60
   ),
-  "never recycles the visible page"
+  "never compacts the visible page"
 )
 check(
-  !InactivePageMaintenancePolicy.shouldRecycle(
+  !InactivePageMaintenancePolicy.shouldCompact(
     isActive: false,
     inactiveSince: maintenanceNow.addingTimeInterval(
-      -InactivePageMaintenancePolicy.recycleAfter - 1
+      -InactivePageMaintenancePolicy.compactAfter - 1
     ),
     lastSuccessfulScanAt: maintenanceNow.addingTimeInterval(-180),
-    lastRecycleAt: nil,
     now: maintenanceNow,
     scanInterval: 60
   ),
-  "does not recycle when monitoring data is stale"
+  "does not compact when monitoring data is stale"
 )
 let refreshReference = Date(timeIntervalSince1970: 1_000)
 check(

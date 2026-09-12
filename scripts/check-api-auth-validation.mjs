@@ -9,7 +9,7 @@ const macHandler = mac.slice(
   mac.indexOf('private func resetAccountIdentityRecovery')
 );
 assert.match(macHandler, /manualOnly[\s\S]*handleAuthenticationRequired/);
-assert.match(macHandler, /apiAuthenticationValidationAttempted[\s\S]*webView\.reload\(\)/);
+assert.match(macHandler, /apiAuthenticationValidationAttempted[\s\S]*reloadPlatformPage\(\)/);
 assert.match(macHandler, /automatic login suppressed/);
 assert.doesNotMatch(macHandler, /webView\.load\(URLRequest\(url: loginURL\)\)/);
 assert.match(mac, /case "auth":[\s\S]*handleAPIAuthenticationRequired/);

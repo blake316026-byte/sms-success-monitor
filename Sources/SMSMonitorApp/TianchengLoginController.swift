@@ -58,6 +58,10 @@ final class TianchengLoginController {
     busy = false
   }
 
+  func attach(to webView: WKWebView) {
+    self.webView = webView
+  }
+
   func credentialsDidChange() {
     stop()
     running = true

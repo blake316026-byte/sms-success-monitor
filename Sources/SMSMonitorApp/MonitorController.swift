@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 import SMSMonitorCore
 import WebKit
 
@@ -12,12 +13,17 @@ private final class SessionLifecycleHandler: NSObject, WKScriptMessageHandler {
 
 private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private(set) var configuration: MonitorConfiguration
-  let webView: WKWebView
+  private(set) var webView: WKWebView
   var onStateChange: ((AppMonitorState, Date?) -> Void)?
+  var onWebViewReplacement: ((WKWebView, WKWebView) -> Void)?
 
   private static let autoLoginCooldown: TimeInterval = 5 * 60
   private static let maximumScanDuration: TimeInterval = 3 * 60
   private static let financialRefreshInterval: TimeInterval = 20
+  private static let memoryLogger = Logger(
+    subsystem: "com.local.sms-success-monitor",
+    category: "Memory"
+  )
 
   private let credentialStore: LocalCredentialStore
   private let automationRuntime: LocalAutomationRuntime
@@ -69,7 +75,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var monitoringEnabled = false
   private var isPageActive = false
   private var inactiveSince: Date?
-  private var lastPageRecycleAt: Date?
+  private var isMemoryCompacted = false
+  private var isMemoryCompactionInProgress = false
+  private var compactedPageURL: URL?
+  private var memoryCompactionWorkItem: DispatchWorkItem?
 
   init(
     configuration: MonitorConfiguration,
@@ -124,12 +133,19 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     scanTimeoutWorkItem?.cancel()
     financialRefreshWorkItem?.cancel()
     autoLoginOutcomeWorkItem?.cancel()
+    memoryCompactionWorkItem?.cancel()
     tianchengLogin?.stop()
   }
 
   func start(after delay: TimeInterval = 0) {
     monitoringEnabled = true
     isStarted = true
+    if isPageActive {
+      restoreCompactedPageIfNeeded()
+    } else {
+      if inactiveSince == nil { inactiveSince = Date() }
+      scheduleInactivePageCompactionIfNeeded()
+    }
     mockScenario = ProcessInfo.processInfo.environment["SMS_MONITOR_TEST_SCENARIO"]
     if mockScenario != nil {
       emitMockState()
@@ -179,6 +195,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     guard !monitoringEnabled else { return }
     isStarted = true
     mockScenario = nil
+    if !isPageActive {
+      if inactiveSince == nil { inactiveSince = Date() }
+      scheduleInactivePageCompactionIfNeeded()
+    }
     NSLog(
       "[SMSMonitor] %@ starting authentication-only mode at %@",
       configuration.id, webView.url?.path ?? "<unloaded>"
@@ -207,6 +227,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   func setPageActive(_ active: Bool) {
     if active {
       expediteStartupIfNeeded()
+      memoryCompactionWorkItem?.cancel()
+      memoryCompactionWorkItem = nil
+      restoreCompactedPageIfNeeded()
     }
     guard isPageActive != active else { return }
     isPageActive = active
@@ -223,6 +246,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       handleAuthenticationRequired("平台需要重新登录。")
     } else {
       inactiveSince = Date()
+      scheduleInactivePageCompactionIfNeeded()
     }
   }
 
@@ -356,6 +380,8 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     lastMetrics = nil
     lastMetricsScannedAt = nil
     latestDailyFinancialMetrics = nil
+    memoryCompactionWorkItem?.cancel()
+    memoryCompactionWorkItem = nil
     webView.stopLoading()
   }
 
@@ -455,7 +481,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         } else {
           emit(.healthy(metrics, scannedAt), nextScanAt: nextScanAt)
         }
-        recycleInactivePageIfNeeded(now: scannedAt)
+        compactInactivePageIfNeeded(now: scannedAt)
 
       case "auth":
         let message = payload["message"] as? String ?? "平台登录已失效。"
@@ -513,7 +539,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       .error("\(message)；正在自动重载后台连接。", Date()),
       nextScanAt: nextScanAt
     )
-    webView.reload()
+    reloadPlatformPage()
   }
 
   private static func dailyFinancialMetrics(from payload: [String: Any]) -> DailyFinancialMetrics? {
@@ -595,6 +621,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         guard self.isStarted, self.authenticationEpoch == epoch else { return }
         self.isRefreshingFinancial = false
         self.finishFinancialRefresh(result)
+        self.compactInactivePageIfNeeded(now: Date())
         self.scheduleFinancialRefresh(after: Self.financialRefreshInterval)
       }
     }
@@ -649,21 +676,156 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
   }
 
-  private func recycleInactivePageIfNeeded(now: Date) {
-    guard InactivePageMaintenancePolicy.shouldRecycle(
+  private func compactInactivePageIfNeeded(now: Date, requiresFreshScan: Bool = true) {
+    let authenticationPaused: Bool
+    if case .authenticationRequired = latestEmittedState {
+      authenticationPaused = true
+    } else {
+      authenticationPaused = false
+    }
+    let sessionOnlyPage = browserOnlyPage || !monitoringEnabled
+      || manualAuthenticationRequired || authenticationPaused
+    let freshEnough = !requiresFreshScan || sessionOnlyPage
+      || InactivePageMaintenancePolicy.shouldCompact(
       isActive: isPageActive,
       inactiveSince: inactiveSince,
       lastSuccessfulScanAt: lastMetricsScannedAt,
-      lastRecycleAt: lastPageRecycleAt,
       now: now,
       scanInterval: configuration.scanInterval
-    ) else { return }
+    )
+    let inactiveLongEnough = !isPageActive
+      && inactiveSince.map {
+        now.timeIntervalSince($0) >= InactivePageMaintenancePolicy.compactAfter
+      } == true
+    guard freshEnough, inactiveLongEnough, !isMemoryCompacted,
+      !isMemoryCompactionInProgress, !isScanning, !isRefreshingFinancial,
+      !autoLoginInProgress, !credentialLoginPending,
+      (!manualAuthenticationRequired || sessionOnlyPage),
+      (tianchengLogin == nil || sessionOnlyPage), let currentURL = webView.url,
+      isMonitorOrigin(currentURL),
+      (!requiresInteractiveAuthentication(currentURL) || sessionOnlyPage),
+      onWebViewReplacement != nil
+    else { return }
 
-    lastPageRecycleAt = now
-    inactiveSince = now
-    needsImmediateScan = true
-    NSLog("[SMSMonitor] %@ recycling long-idle WebKit page after fresh scan", configuration.id)
-    webView.reload()
+    isMemoryCompactionInProgress = true
+    let previous = webView
+    let suspendedTianchengLogin = sessionOnlyPage ? tianchengLogin : nil
+    suspendedTianchengLogin?.stop()
+    previous.callAsyncJavaScript(
+      """
+      const entries = [];
+      for (let index = 0; index < window.sessionStorage.length; index += 1) {
+        const key = window.sessionStorage.key(index);
+        if (key != null) entries.push([key, window.sessionStorage.getItem(key)]);
+      }
+      return JSON.stringify(entries);
+      """,
+      arguments: [:],
+      in: nil,
+      in: .page
+    ) { [weak self, weak previous] result in
+      DispatchQueue.main.async {
+        guard let self, let previous, self.webView === previous else { return }
+        self.isMemoryCompactionInProgress = false
+        guard !self.isPageActive, !self.isMemoryCompacted,
+          !self.isScanning, !self.isRefreshingFinancial,
+          !self.autoLoginInProgress, !self.credentialLoginPending,
+          case .success(let rawSnapshot) = result,
+          let sessionStorageJSON = rawSnapshot as? String
+        else {
+          suspendedTianchengLogin?.start()
+          return
+        }
+        self.replaceWithCompactedWebView(
+          previous: previous,
+          currentURL: currentURL,
+          sessionStorageJSON: sessionStorageJSON
+        )
+      }
+    }
+  }
+
+  private func replaceWithCompactedWebView(
+    previous: WKWebView,
+    currentURL: URL,
+    sessionStorageJSON: String
+  ) {
+    guard webView === previous, let onWebViewReplacement else { return }
+    let webConfiguration = previous.configuration.copy() as! WKWebViewConfiguration
+    webConfiguration.userContentController = previous.configuration.userContentController
+    let replacement = WKWebView(frame: previous.frame, configuration: webConfiguration)
+    replacement.customUserAgent = previous.customUserAgent
+    replacement.allowsBackForwardNavigationGestures = previous.allowsBackForwardNavigationGestures
+    replacement.allowsMagnification = previous.allowsMagnification
+    replacement.magnification = previous.magnification
+    replacement.navigationDelegate = self
+    replacement.uiDelegate = previous.uiDelegate
+
+    compactedPageURL = currentURL
+    isMemoryCompacted = true
+    webView = replacement
+    onWebViewReplacement(previous, replacement)
+    previous.stopLoading()
+    previous.navigationDelegate = nil
+    previous.uiDelegate = nil
+
+    let snapshot = Data(sessionStorageJSON.utf8).base64EncodedString()
+    replacement.loadHTMLString(Self.compactedPageHTML(sessionStorageBase64: snapshot), baseURL: currentURL)
+    Self.memoryLogger.notice(
+      "Released inactive WebKit page memory for \(self.configuration.id, privacy: .public)"
+    )
+  }
+
+  private static func compactedPageHTML(sessionStorageBase64: String) -> String {
+    """
+    <!doctype html><html><head><meta charset="utf-8"><title>SMS Monitor</title>
+    <script>
+    (() => {
+      try {
+        const bytes = Uint8Array.from(atob("\(sessionStorageBase64)"), c => c.charCodeAt(0));
+        for (const [key, value] of JSON.parse(new TextDecoder().decode(bytes))) {
+          if (key != null && value != null) sessionStorage.setItem(key, value);
+        }
+      } catch (_) {}
+      window.__smsMonitorMemoryCompacted = true;
+    })();
+    </script></head><body></body></html>
+    """
+  }
+
+  private func restoreCompactedPageIfNeeded() {
+    guard isMemoryCompacted else { return }
+    let restoreURL = compactedPageURL ?? configuration.targetURL
+    isMemoryCompacted = false
+    compactedPageURL = nil
+    tianchengLogin?.attach(to: webView)
+    tianchengLogin?.start()
+    Self.memoryLogger.notice(
+      "Restoring visible platform page for \(self.configuration.id, privacy: .public)"
+    )
+    webView.load(URLRequest(url: restoreURL))
+  }
+
+  private func reloadPlatformPage() {
+    if isMemoryCompacted {
+      restoreCompactedPageIfNeeded()
+    } else {
+      webView.reload()
+    }
+  }
+
+  private func scheduleInactivePageCompactionIfNeeded() {
+    memoryCompactionWorkItem?.cancel()
+    guard !isPageActive, !isMemoryCompacted else { return }
+    let elapsed = inactiveSince.map { max(0, Date().timeIntervalSince($0)) } ?? 0
+    let delay = max(0, InactivePageMaintenancePolicy.compactAfter - elapsed)
+    let item = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.memoryCompactionWorkItem = nil
+      self.compactInactivePageIfNeeded(now: Date())
+    }
+    memoryCompactionWorkItem = item
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
   }
 
   func credentialsDidChange() {
@@ -854,7 +1016,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         configuration.id
       )
       emit(.starting("接口登录态异常，正在刷新当前页面确认"), nextScanAt: nil)
-      webView.reload()
+      reloadPlatformPage()
       return
     }
 
@@ -929,6 +1091,13 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     _ message: String,
     progressMessage: String = "Token 已失效，正在自动登录"
   ) {
+    if isMemoryCompacted {
+      restoreCompactedPageIfNeeded()
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        self?.handleAuthenticationRequired(message, progressMessage: progressMessage)
+      }
+      return
+    }
     lastMetrics = nil
     lastMetricsScannedAt = nil
     latestDailyFinancialMetrics = nil
@@ -940,6 +1109,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     consecutiveScanFailures = 0
     needsImmediateScan = true
     scheduleNextScan(after: configuration.scanInterval)
+    if !isPageActive { scheduleInactivePageCompactionIfNeeded() }
 
     guard !manualAuthenticationRequired else {
       autoLoginInProgress = false
@@ -1429,7 +1599,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       let message = "扫描超过 \(seconds) 秒；正在自动重载后台连接。"
       NSLog("[SMSMonitor] %@ scan timeout: %@", self.configuration.id, message)
       self.emit(.error(message, Date()), nextScanAt: self.nextScanAt)
-      self.webView.reload()
+      self.reloadPlatformPage()
     }
     scanTimeoutWorkItem = item
     DispatchQueue.main.asyncAfter(
@@ -1441,6 +1611,9 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private func emit(_ state: AppMonitorState, nextScanAt: Date?) {
     latestEmittedState = state
     onStateChange?(state, nextScanAt)
+    if case .authenticationRequired = state, !isPageActive {
+      scheduleInactivePageCompactionIfNeeded()
+    }
   }
 
   private func emitMockState() {
@@ -1603,6 +1776,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     lastMetrics = nil
     lastMetricsScannedAt = nil
     emitBrowserOnlyState()
+    scheduleInactivePageCompactionIfNeeded()
   }
 
   private func emitBrowserOnlyState() {
@@ -1613,6 +1787,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard webView === self.webView else { return }
     guard let url = webView.url else { return }
     NSLog(
       "[SMSMonitor] %@ navigation finished at %@%@",
@@ -1620,6 +1795,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       url.host ?? "(unknown)",
       url.path
     )
+    guard !isMemoryCompacted else { return }
 
     if !monitoringEnabled, requiresAuthentication(url) {
       resumeAuthenticationOnlyIfNeeded()
@@ -1712,9 +1888,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    guard webView === self.webView else { return }
     if browserOnlyPage {
       emitBrowserOnlyState()
-      webView.reload()
+      reloadPlatformPage()
       return
     }
     if !monitoringEnabled {
@@ -1722,7 +1899,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       tianchengLogin = nil
       platformIdentified = false
       platformDetectionInProgress = false
-      webView.reload()
+      reloadPlatformPage()
       return
     }
     scanTimeoutWorkItem?.cancel()
@@ -1737,7 +1914,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     needsImmediateScan = true
     scheduleNextScan(after: configuration.scanInterval)
     emit(.error("平台页面进程已重启，正在恢复。", Date()), nextScanAt: nextScanAt)
-    webView.reload()
+    reloadPlatformPage()
   }
 }
 
@@ -2191,6 +2368,14 @@ final class MonitorController {
         configuration: monitor.configuration,
         state: state,
         nextScanAt: nextScanAt
+      )
+    }
+    monitor.onWebViewReplacement = { [weak self, weak monitor] previous, replacement in
+      guard let self, let monitor else { return }
+      self.workspaceController.replaceWebView(
+        credentialID: monitor.configuration.id,
+        previous: previous,
+        replacement: replacement
       )
     }
   }
