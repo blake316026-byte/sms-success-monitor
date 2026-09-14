@@ -225,16 +225,20 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   func setPageActive(_ active: Bool) {
+    let stateChanged = isPageActive != active
+    isPageActive = active
     if active {
+      inactiveSince = nil
       expediteStartupIfNeeded()
       memoryCompactionWorkItem?.cancel()
       memoryCompactionWorkItem = nil
       restoreCompactedPageIfNeeded()
+    } else if stateChanged {
+      inactiveSince = Date()
+      scheduleInactivePageCompactionIfNeeded()
     }
-    guard isPageActive != active else { return }
-    isPageActive = active
+    guard stateChanged else { return }
     if active {
-      inactiveSince = nil
       guard isStarted, monitoringEnabled, platformIdentified, !browserOnlyPage,
         tianchengLogin == nil,
         let currentURL = webView.url, requiresAuthentication(currentURL)
@@ -244,9 +248,6 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         accountIdentityCheckAttempts = 0
       }
       handleAuthenticationRequired("平台需要重新登录。")
-    } else {
-      inactiveSince = Date()
-      scheduleInactivePageCompactionIfNeeded()
     }
   }
 
@@ -770,10 +771,24 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     previous.uiDelegate = nil
 
     let snapshot = Data(sessionStorageJSON.utf8).base64EncodedString()
-    replacement.loadHTMLString(Self.compactedPageHTML(sessionStorageBase64: snapshot), baseURL: currentURL)
+    let shellBaseURL = Self.compactedPageBaseURL(for: currentURL)
+    replacement.loadHTMLString(
+      Self.compactedPageHTML(sessionStorageBase64: snapshot),
+      baseURL: shellBaseURL
+    )
     Self.memoryLogger.notice(
       "Released inactive WebKit page memory for \(self.configuration.id, privacy: .public)"
     )
+  }
+
+  private static func compactedPageBaseURL(for currentURL: URL) -> URL {
+    guard var components = URLComponents(url: currentURL, resolvingAgainstBaseURL: false) else {
+      return currentURL
+    }
+    components.path = "/.sms-monitor-memory-shell"
+    components.query = nil
+    components.fragment = nil
+    return components.url ?? currentURL
   }
 
   private static func compactedPageHTML(sessionStorageBase64: String) -> String {

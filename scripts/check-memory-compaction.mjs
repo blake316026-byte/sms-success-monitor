@@ -22,6 +22,19 @@ const compaction = section(
   'private func compactInactivePageIfNeeded(',
   'func credentialsDidChange()'
 );
+const activation = section(
+  monitor,
+  'func setPageActive(_ active: Bool)',
+  'func scanNow()'
+);
+assert(
+  activation.indexOf('isPageActive = active') < activation.indexOf('restoreCompactedPageIfNeeded()'),
+  'the page must become active before restoration can trigger WebKit callbacks'
+);
+assert(
+  activation.indexOf('inactiveSince = nil') < activation.indexOf('restoreCompactedPageIfNeeded()'),
+  'restoration must clear the inactive deadline before loading the full page'
+);
 assert.match(compaction, /lastSuccessfulScanAt[\s\S]*!isPageActive/,
   'only inactive pages with a fresh successful scan may compact');
 assert.match(compaction, /browserOnlyPage \|\| !monitoringEnabled[\s\S]*\|\| manualAuthenticationRequired/,
@@ -42,8 +55,10 @@ assert.match(compaction, /suspendedTianchengLogin\?\.stop\(\)[\s\S]*suspendedTia
   'Tiancheng polling must be serialized with session capture and resumed on failure');
 assert.match(compaction, /let replacement = WKWebView[\s\S]*webView = replacement/,
   'memory compaction must replace the heavy WebView process');
-assert.match(compaction, /loadHTMLString\([\s\S]*baseURL: currentURL\)/,
-  'the lightweight page must retain the backend security origin');
+assert.match(compaction, /components\.path = "\/\.sms-monitor-memory-shell"[\s\S]*components\.query = nil[\s\S]*components\.fragment = nil/,
+  'the lightweight page must use a distinct same-origin URL');
+assert.match(compaction, /let shellBaseURL = Self\.compactedPageBaseURL\(for: currentURL\)[\s\S]*loadHTMLString\([\s\S]*baseURL: shellBaseURL/,
+  'the lightweight page must not impersonate the exact business page URL');
 assert.match(compaction, /restoreCompactedPageIfNeeded[\s\S]*webView\.load\(URLRequest\(url: restoreURL\)\)/,
   'selecting a compacted platform must restore its full page');
 assert.match(compaction, /tianchengLogin\?\.attach\(to: webView\)[\s\S]*tianchengLogin\?\.start\(\)/,
