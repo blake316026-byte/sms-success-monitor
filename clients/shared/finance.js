@@ -23,6 +23,27 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
       ?? candidates[0]
       ?? null;
   };
+  const readStoredUsers = () => {
+    const users = [];
+    const identities = new Set();
+    const snapshot = [];
+    for (const [storeName, store] of [['session', window.sessionStorage], ['local', window.localStorage]]) {
+      for (let index = 0; index < store.length; index += 1) {
+        const key = store.key(index);
+        if (!key || (key !== 'lt-user' && !key.endsWith('-lt-user'))) continue;
+        const raw = store.getItem(key);
+        snapshot.push([storeName, key, raw]);
+        let value;
+        try { value = JSON.parse(raw); } catch (_) { value = null; }
+        if (!value || typeof value !== 'object') continue;
+        const identity = String(value.username || value.account || value.loginName || value.id || '').trim();
+        if (identity) identities.add(identity);
+        users.push(value);
+      }
+    }
+    snapshot.sort((left, right) => `${left[0]}:${left[1]}`.localeCompare(`${right[0]}:${right[1]}`));
+    return { users, identities: [...identities], accountConflict: identities.size > 1, snapshot: JSON.stringify(snapshot) };
+  };
   const readUrlCache = () => {
     try {
       const encoded = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('CC');
@@ -36,18 +57,23 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
       ? value.username || value.account || value.loginName || ''
       : ''
   ).trim();
-  const pageUser = readStoredValue('lt-user');
+  const storedUsers = readStoredUsers();
+  const pageUser = storedUsers.users[0] ?? null;
   const signedOut = () => window.__smsMonitorSignedOut === true
     || window.localStorage.getItem('__smsMonitorSignedOut') === '1';
-  const sessionUsername = signedOut()
+  const sessionUsername = storedUsers.accountConflict ? '' : signedOut()
     ? String(window.localStorage.getItem('__smsMonitorSignedOutUsername') || '').trim()
-    : usernameOf(pageUser);
+    : (storedUsers.identities[0] || usernameOf(pageUser));
   if (signedOut()) return { kind: 'auth', manualOnly: true, sessionUsername, message: '已退出账号，不再使用旧 Token。' };
-  const pageToken = String(pageUser && typeof pageUser === 'object' ? pageUser.token || '' : '').trim();
-  const tokens = [pageToken].filter(Boolean);
-  if (tokens.length === 0) return { kind: 'auth', manualOnly: Boolean(pageUser?.accountConflict), sessionUsername, message: '页面登录态已失效，请重新登录。' };
-  const initialSession = JSON.stringify(pageUser);
-  const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
+  if (storedUsers.accountConflict) {
+    return { kind: 'auth', manualOnly: true, sessionUsername, message: '检测到多个账号的页面会话，请人工确认登录账号。' };
+  }
+  const tokens = storedUsers.users
+    .map((candidate) => String(candidate.token || '').trim())
+    .filter((token, index, values) => token && values.indexOf(token) === index);
+  if (tokens.length === 0) return { kind: 'auth', manualOnly: false, sessionUsername, message: '页面登录态已失效，请重新登录。' };
+  const initialSession = storedUsers.snapshot;
+  const sessionChanged = () => signedOut() || readStoredUsers().snapshot !== initialSession;
   const cache = readUrlCache();
   const country = String(cache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
   const normalizedID = String(platformID || '').trim().toLowerCase();
@@ -55,11 +81,12 @@ globalThis.smsMonitorFinance = async function smsMonitorFinance(platformID, plat
   const isOKBET = normalizedID === 'ok01' || normalizedName === 'okbet' || normalizedName === 'ok01';
 
   // NPG's report menu requires REPORT and CK_DASHBOARD, not payment summaries.
-  if (!isOKBET && pageUser && (Array.isArray(pageUser.resources) || typeof pageUser.root === 'boolean')) {
-    const allowed = (resource) => pageUser.root === true || (Array.isArray(pageUser.resources) && pageUser.resources.some((grant) => (
+  const permissionUsers = storedUsers.users.filter((candidate) => Array.isArray(candidate.resources) || typeof candidate.root === 'boolean');
+  if (!isOKBET && permissionUsers.length > 0) {
+    const allowed = (resource) => permissionUsers.every((candidate) => candidate.root === true || (Array.isArray(candidate.resources) && candidate.resources.some((grant) => (
       typeof grant === 'string' && (grant === resource
         || (grant.endsWith('_') && resource.startsWith(grant)))
-    )));
+    ))));
     if (!allowed('REPORT') || !allowed('CK_DASHBOARD')) {
       return { kind: 'permission', message: '当前账号未授权报表看板（REPORT / CK_DASHBOARD），已停止财务查询。' };
     }

@@ -44,6 +44,7 @@ for (const mutation of ['clear', 'remove', 'null']) {
   assert.equal(c.events.at(-1).username, 'test');
   assert.equal(Object.hasOwn(c.events.at(-1), 'token'), false, 'native notifications contain no token');
   assert.equal(c.window.localStorage.getItem('__smsMonitorSignedOut'), '1');
+  assert.ok(c.window.localStorage.getItem('__smsMonitorRevokedTokenFingerprint'), 'logout records a non-token fingerprint');
   c.window.localStorage.setItem('lt-user', session);
   assert.equal(c.window.localStorage.getItem('lt-user'), null, 'confirmed logout blocks a late revoked token');
   assert.equal(c.window.__smsMonitorSignedOut, true);
@@ -55,6 +56,31 @@ for (const mutation of ['clear', 'remove', 'null']) {
   assert.equal(refreshed.events.at(-1), 'authenticated');
   assert.equal(refreshed.window.__smsMonitorSignedOut, false);
   assert.equal(refreshed.window.localStorage.getItem('__smsMonitorSignedOut'), null);
+}
+{
+  const loggedOut = context([['lt-user', session]], '/login');
+  loggedOut.window.localStorage.removeItem('lt-user');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const saved = [...loggedOut.window.localStorage.values];
+
+  const revokedReplay = context([...saved, ['lt-user', session]], '/dashboard');
+  assert.equal(revokedReplay.window.__smsMonitorSignedOut, true, 'the revoked token stays blocked after restart');
+  assert.equal(eventName(revokedReplay.events.at(-1)), 'ended');
+
+  const freshSession = JSON.stringify({ username: 'test', token: 'fresh-session-token' });
+  const freshLogin = context([...saved, ['lt-user', freshSession]], '/dashboard');
+  assert.equal(freshLogin.window.__smsMonitorSignedOut, false, 'a newly issued token clears the old logout marker');
+  assert.equal(freshLogin.window.localStorage.getItem('__smsMonitorSignedOut'), null);
+  assert.equal(freshLogin.window.localStorage.getItem('__smsMonitorRevokedTokenFingerprint'), null);
+  assert.equal(eventName(freshLogin.events.at(-1)), 'authenticated');
+
+  const legacyLogin = context([
+    ['__smsMonitorSignedOut', '1'],
+    ['__smsMonitorSignedOutUsername', 'test'],
+    ['lt-user', freshSession]
+  ], '/dashboard');
+  assert.equal(legacyLogin.window.__smsMonitorSignedOut, false, 'legacy logout markers recover an authenticated page once');
+  assert.equal(eventName(legacyLogin.events.at(-1)), 'authenticated');
 }
 const c = context();
 {

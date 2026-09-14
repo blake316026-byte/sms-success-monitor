@@ -71,6 +71,17 @@ for (const [name, run, args] of adapters) {
     assert.deepEqual(calls, ['new-token'], `${name}: prefers the current session token`);
   }
 
+  {
+    const calls = [];
+    setup(async (_url, options) => {
+      calls.push(options.headers.Auth);
+      return options.headers.Auth === 'stale-token' ? response(401, {}) : response(200);
+    }, { username: 'payrobot', token: 'fresh-token' });
+    window.sessionStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'payrobot', token: 'stale-token' }));
+    assert.equal((await run(...args)).kind, 'ok', `${name}: same-account token rotation retries another page token`);
+    assert.deepEqual(calls, ['stale-token', 'fresh-token'], `${name}: retries only tokens found in the current page`);
+  }
+
   for (const stage of ['fetch', 'json']) {
     setup(async () => {
       const switchAccount = () => window.localStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'new-user', token: 'new-token' }));

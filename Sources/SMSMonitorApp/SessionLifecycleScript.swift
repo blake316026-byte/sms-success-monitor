@@ -5,6 +5,7 @@ enum SessionLifecycleScript {
       window.__smsMonitorSessionLifecycle = true;
       const marker = '__smsMonitorSignedOut';
       const usernameKey = '__smsMonitorSignedOutUsername';
+      const revokedTokenKey = '__smsMonitorRevokedTokenFingerprint';
       const get = Storage.prototype.getItem;
       const set = Storage.prototype.setItem;
       const remove = Storage.prototype.removeItem;
@@ -12,9 +13,20 @@ enum SessionLifecycleScript {
       const revoked = new Set();
       let pendingEnd = 0;
       let signedOutUsername = get.call(window.localStorage, usernameKey) || '';
+      let revokedTokenFingerprint = get.call(window.localStorage, revokedTokenKey) || '';
       const userKey = (key) => key === 'lt-user' || String(key).endsWith('-lt-user');
       const token = (raw) => { try { return String(JSON.parse(raw)?.token || ''); } catch (_) { return ''; } };
       const username = (raw) => { try { const u = JSON.parse(raw); return String(u?.username || u?.account || u?.loginName || '').trim(); } catch (_) { return ''; } };
+      const fingerprint = (value) => {
+        let first = 2166136261;
+        let second = 2246822507;
+        for (let index = 0; index < value.length; index += 1) {
+          const code = value.charCodeAt(index);
+          first = Math.imul(first ^ code, 16777619);
+          second = Math.imul(second ^ code, 3266489917);
+        }
+        return `${value.length}:${(first >>> 0).toString(16)}:${(second >>> 0).toString(16)}`;
+      };
       const notify = (event) => { try { window.webkit.messageHandlers.smsSessionLifecycle.postMessage(event); } catch (_) {} };
       // Only the primary login page confirms an explicit logout. The Google
       // verification and IP-unlock pages are intermediate authentication steps
@@ -33,10 +45,14 @@ enum SessionLifecycleScript {
         return '';
       };
       const end = (previous) => {
-        if (previous) revoked.add(previous);
+        if (previous) {
+          revoked.add(previous);
+          revokedTokenFingerprint = fingerprint(previous);
+        }
         window.__smsMonitorSignedOut = true;
         set.call(window.localStorage, marker, '1');
         set.call(window.localStorage, usernameKey, signedOutUsername);
+        if (revokedTokenFingerprint) set.call(window.localStorage, revokedTokenKey, revokedTokenFingerprint);
         notify({ event: 'ended', username: signedOutUsername });
       };
       const scheduleEnd = (previous) => {
@@ -47,7 +63,20 @@ enum SessionLifecycleScript {
           end(previous);
         }, delay);
       };
-      window.__smsMonitorSignedOut = get.call(window.localStorage, marker) === '1';
+      const startupToken = currentToken();
+      const hadLogoutMarker = get.call(window.localStorage, marker) === '1';
+      const startupTokenWasRevoked = Boolean(
+        startupToken && revokedTokenFingerprint && fingerprint(startupToken) === revokedTokenFingerprint
+      );
+      window.__smsMonitorSignedOut = hadLogoutMarker && (!startupToken || startupTokenWasRevoked);
+      if (hadLogoutMarker && startupToken && !startupTokenWasRevoked) {
+        remove.call(window.localStorage, marker);
+        remove.call(window.localStorage, usernameKey);
+        remove.call(window.localStorage, revokedTokenKey);
+        signedOutUsername = '';
+        revokedTokenFingerprint = '';
+        notify('authenticated');
+      }
       Storage.prototype.removeItem = function(key) {
         const previous = userKey(key) && token(get.call(this, key));
         if (previous) signedOutUsername = username(get.call(this, key));
@@ -85,7 +114,9 @@ enum SessionLifecycleScript {
           window.__smsMonitorSignedOut = false;
           remove.call(window.localStorage, marker);
           remove.call(window.localStorage, usernameKey);
+          remove.call(window.localStorage, revokedTokenKey);
           signedOutUsername = '';
+          revokedTokenFingerprint = '';
           notify('authenticated');
         }
         return result;

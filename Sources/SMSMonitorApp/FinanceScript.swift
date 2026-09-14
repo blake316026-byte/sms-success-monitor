@@ -25,6 +25,28 @@ enum FinanceScript {
         ?? null;
     };
 
+    const readStoredUsers = () => {
+      const users = [];
+      const identities = new Set();
+      const snapshot = [];
+      for (const [storeName, store] of [['session', window.sessionStorage], ['local', window.localStorage]]) {
+        for (let index = 0; index < store.length; index += 1) {
+          const key = store.key(index);
+          if (!key || (key !== 'lt-user' && !key.endsWith('-lt-user'))) continue;
+          const raw = store.getItem(key);
+          snapshot.push([storeName, key, raw]);
+          let value;
+          try { value = JSON.parse(raw); } catch (_) { value = null; }
+          if (!value || typeof value !== 'object') continue;
+          const identity = String(value.username || value.account || value.loginName || value.id || '').trim();
+          if (identity) identities.add(identity);
+          users.push(value);
+        }
+      }
+      snapshot.sort((left, right) => `${left[0]}:${left[1]}`.localeCompare(`${right[0]}:${right[1]}`));
+      return { users, identities: [...identities], accountConflict: identities.size > 1, snapshot: JSON.stringify(snapshot) };
+    };
+
     const readUrlCache = () => {
       try {
         const fragment = window.location.hash.replace(/^#/, '');
@@ -83,21 +105,25 @@ enum FinanceScript {
         ? value.username || value.account || value.loginName || ''
         : ''
     ).trim();
-    const user = readStoredValue('lt-user');
+    const storedUsers = readStoredUsers();
+    const user = storedUsers.users[0] ?? null;
     const signedOut = () => window.__smsMonitorSignedOut === true
       || window.localStorage.getItem('__smsMonitorSignedOut') === '1';
-    const sessionUsername = signedOut()
+    const sessionUsername = storedUsers.accountConflict ? '' : signedOut()
       ? String(window.localStorage.getItem('__smsMonitorSignedOutUsername') || '').trim()
-      : usernameOf(user);
+      : (storedUsers.identities[0] || usernameOf(user));
     if (signedOut()) return { kind: 'auth', manualOnly: true, sessionUsername, message: '已退出账号，不再使用旧 Token。' };
-    const pageToken = String(user && typeof user === 'object' ? user.token || '' : '').trim();
-    const tokenCandidates = [];
-    if (pageToken) tokenCandidates.push(pageToken);
-    if (tokenCandidates.length === 0) {
-      return { kind: 'auth', manualOnly: Boolean(user?.accountConflict), sessionUsername, message: '页面登录态已失效，请重新登录。' };
+    if (storedUsers.accountConflict) {
+      return { kind: 'auth', manualOnly: true, sessionUsername, message: '检测到多个账号的页面会话，请人工确认登录账号。' };
     }
-    const initialSession = JSON.stringify(user);
-    const sessionChanged = () => signedOut() || JSON.stringify(readStoredValue('lt-user')) !== initialSession;
+    const tokenCandidates = storedUsers.users
+      .map((candidate) => String(candidate.token || '').trim())
+      .filter((token, index, tokens) => token && tokens.indexOf(token) === index);
+    if (tokenCandidates.length === 0) {
+      return { kind: 'auth', manualOnly: false, sessionUsername, message: '页面登录态已失效，请重新登录。' };
+    }
+    const initialSession = storedUsers.snapshot;
+    const sessionChanged = () => signedOut() || readStoredUsers().snapshot !== initialSession;
 
     const urlCache = readUrlCache();
     const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
@@ -112,11 +138,12 @@ enum FinanceScript {
       || normalizedPlatformName === 'ok01';
 
     // NPG's report menu requires REPORT and CK_DASHBOARD, not payment summaries.
-    if (!isOKBET && user && (Array.isArray(user.resources) || typeof user.root === 'boolean')) {
-      const allowed = (resource) => user.root === true || (Array.isArray(user.resources) && user.resources.some((grant) => (
+    const permissionUsers = storedUsers.users.filter((candidate) => Array.isArray(candidate.resources) || typeof candidate.root === 'boolean');
+    if (!isOKBET && permissionUsers.length > 0) {
+      const allowed = (resource) => permissionUsers.every((candidate) => candidate.root === true || (Array.isArray(candidate.resources) && candidate.resources.some((grant) => (
         typeof grant === 'string' && (grant === resource
           || (grant.endsWith('_') && resource.startsWith(grant)))
-      )));
+      ))));
       if (!allowed('REPORT') || !allowed('CK_DASHBOARD')) {
         return { kind: 'permission', message: '当前账号未授权报表看板（REPORT / CK_DASHBOARD），已停止财务查询。' };
       }
