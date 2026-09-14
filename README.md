@@ -26,4 +26,4 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 该例外保存后，以后可以正常双击启动。正式消除此提示需要使用 Apple Developer ID 签名并通过 Apple 公证。
 
-本版：**macOS v0.3.68 build 75、Windows v0.3.68**；Android 下载继续使用已验证的 v0.3.61。macOS 优化多行平台拖动和隐藏网页内存占用；macOS、Windows 修复退出后旧会话误判、新 Token 恢复及同账号多 Token 扫描问题。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.68.md)。
+本版：**macOS v0.3.69 build 76、Windows v0.3.68**；Android 下载继续使用已验证的 v0.3.61。macOS 修复隐藏后台释放内存后，切换回来只显示空白页的问题，并保留 v0.3.68 的页面会话恢复与账号隔离修复。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.69.md)。
