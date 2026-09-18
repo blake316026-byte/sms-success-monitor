@@ -13,7 +13,7 @@ const scan = section('  func scanNow()', '  func updateSampleLimit');
 assert.match(scan, /if credentialLoginPending \{\s*confirmAutoLoginCompletion\(\)/);
 const methods = [
   section('  private func scheduleAutoLoginOutcomeCheck(', '  private func retryAutoLogin('),
-  section('  private func completeAutoLogin(', '  private func persistCurrentToken('),
+  section('  private func completeAutoLogin(', '  private func attemptAuthenticatedPageRecovery('),
   didFinish,
 ].join('\n').replaceAll('private func ', 'func ').replaceAll('WKWebView', 'Page').replaceAll('WKNavigation', 'NSObject');
 
@@ -51,17 +51,19 @@ final class Controller {
   var autoLoginCooldownUntil: Date?, loginCompletionDeadline: Date?, nextScanAt: Date?
   var autoLoginOutcomeWorkItem: DispatchWorkItem?, scanTimeoutWorkItem: DispatchWorkItem?
   var authenticationEpoch = UUID(), activeScanID: UUID?
+  var authenticatedPageRecoveryID: UUID?
   var isScanning = false, isRefreshingFinancial = false, needsImmediateScan = false
   var isMemoryCompacted = false
   var monitoringEnabled = true, browserOnlyPage = false, platformIdentified = true
   var tianchengLogin: NSObject? = nil
-  var scans = 0, logins = 0, financialStarts = 0
+  var scans = 0, logins = 0, financialStarts = 0, pageRecoveries = 0
   func requiresAuthentication(_ url: URL) -> Bool { ["/login", "/ga-auth", "/unlock-ip"].contains(url.path) }
   func requiresInteractiveAuthentication(_ url: URL) -> Bool { requiresAuthentication(url) }
   func isMonitorOrigin(_ url: URL) -> Bool { url.host == "fixture.invalid" }
   func retryAutoLogin(_ message: String) { logins += 1 }
   func attemptAutoLogin(profile: Profile, url: URL) { logins += 1 }
   func handleAuthenticationRequired(_ message: String) { logins += 1 }
+  func attemptAuthenticatedPageRecovery() { pageRecoveries += 1 }
   func resetAccountIdentityRecovery() {}
   func persistCurrentToken() {}
   func ensureFinancialRefreshScheduled() { financialStarts += 1 }
@@ -107,6 +109,11 @@ let timeout = Controller()
 timeout.loginCompletionDeadline = Date.distantPast
 timeout.confirmAutoLoginCompletion()
 check(timeout.autoLoginCooldownUntil != nil && timeout.logins == 0 && timeout.webView.loads == 0, "stalled bootstrap pauses without repeating password login")
+let staleNativeState = Controller()
+staleNativeState.manualAuthenticationRequired = true
+staleNativeState.webView.url = URL(string: "https://fixture.invalid/dashboard")
+staleNativeState.webView(staleNativeState.webView, didFinish: nil)
+check(staleNativeState.pageRecoveries == 1 && staleNativeState.scans == 0, "authenticated routes probe stale native login state before scanning")
 `;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-login-completion-'));
 try {

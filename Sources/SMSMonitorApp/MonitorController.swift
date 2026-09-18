@@ -68,6 +68,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var accountIdentityConflict = false
   private var accountIdentityCheckInProgress = false
   private var accountIdentityCheckAttempts = 0
+  private var authenticatedPageRecoveryID: UUID?
   private var authenticationEpoch = UUID()
   private let sessionLifecycleHandler = SessionLifecycleHandler()
   private var mockScenario: String?
@@ -264,7 +265,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       identifyPlatform { [weak self] in self?.scanNow() }
       return
     }
-    guard !manualAuthenticationRequired else { return }
+    guard !manualAuthenticationRequired else {
+      attemptAuthenticatedPageRecovery()
+      return
+    }
     guard let currentURL = webView.url else {
       emit(.starting("平台页面尚未加载"), nextScanAt: nextScanAt)
       scheduleNextScan(after: 5)
@@ -374,6 +378,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     financialRefreshWorkItem?.cancel()
     financialRefreshWorkItem = nil
     isRefreshingFinancial = false
+    authenticatedPageRecoveryID = nil
     nextScanAt = nil
     activeScanID = nil
     scanStartedAt = nil
@@ -862,6 +867,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       return
     }
     authenticationEpoch = UUID()
+    authenticatedPageRecoveryID = nil
     activeScanID = nil
     isScanning = false
     isRefreshingFinancial = false
@@ -901,6 +907,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     )
     if event == "ended" {
       authenticationEpoch = UUID()
+      authenticatedPageRecoveryID = nil
       let epoch = authenticationEpoch
       credentialStore.clearToken(for: configuration.id)
       manualAuthenticationRequired = true
@@ -956,6 +963,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       emit(.authenticationRequired("已退出账号，旧 Token 已作废；如需自动登录，请重新保存自动登录配置。"), nextScanAt: nil)
     } else if event == "authenticated" {
       guard let currentURL = webView.url, !requiresAuthentication(currentURL) else { return }
+      authenticatedPageRecoveryID = nil
       manualAuthenticationRequired = false
       apiAuthenticationValidationAttempted = false
       credentialLoginPending = false
@@ -974,6 +982,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   }
 
   private func prepareAuthenticationRecovery(from payload: [String: Any]) {
+    authenticatedPageRecoveryID = nil
     credentialStore.clearToken(for: configuration.id)
     credentialLoginPending = true
     let manualOnly = payload["manualOnly"] as? Bool == true
@@ -1481,6 +1490,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
 
   private func completeAutoLogin(token: String) {
     authenticationEpoch = UUID()
+    authenticatedPageRecoveryID = nil
     activeScanID = nil
     isScanning = false
     isRefreshingFinancial = false
@@ -1509,6 +1519,67 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
       self?.scanNow()
+    }
+  }
+
+  private func attemptAuthenticatedPageRecovery() {
+    guard manualAuthenticationRequired, authenticatedPageRecoveryID == nil,
+      let currentURL = webView.url, isMonitorOrigin(currentURL),
+      !requiresInteractiveAuthentication(currentURL), !webView.isLoading
+    else { return }
+
+    let recoveryID = UUID()
+    let epoch = authenticationEpoch
+    let expectedUsername = credentialStore.profile(for: configuration.id)?.username ?? ""
+    authenticatedPageRecoveryID = recoveryID
+    webView.callAsyncJavaScript(
+      AuthenticatedPageSessionScript.body,
+      arguments: ["expectedUsername": expectedUsername],
+      in: nil,
+      in: .page
+    ) { [weak self] result in
+      DispatchQueue.main.async {
+        guard let self, self.authenticatedPageRecoveryID == recoveryID else { return }
+        self.authenticatedPageRecoveryID = nil
+        guard self.authenticationEpoch == epoch, self.manualAuthenticationRequired,
+          self.webView.url == currentURL, !self.webView.isLoading,
+          case .success(let rawValue) = result,
+          let payload = rawValue as? [String: Any]
+        else { return }
+        let kind = payload["kind"] as? String ?? "invalid"
+        guard kind == "authenticated",
+          let token = payload["token"] as? String, !token.isEmpty
+        else {
+          NSLog(
+            "[SMSMonitor] %@ authenticated page recovery rejected: %@",
+            self.configuration.id,
+            kind
+          )
+          return
+        }
+
+        self.authenticationEpoch = UUID()
+        self.manualAuthenticationRequired = false
+        self.credentialLoginPending = false
+        self.resetAccountIdentityRecovery()
+        self.apiAuthenticationValidationAttempted = false
+        self.smsPermissionBlocked = false
+        self.financePermissionBlocked = false
+        self.lastMetrics = nil
+        self.lastMetricsScannedAt = nil
+        self.latestDailyFinancialMetrics = nil
+        self.needsImmediateScan = true
+        if !expectedUsername.isEmpty {
+          self.credentialStore.updateToken(token, for: self.configuration.id)
+        }
+        NSLog(
+          "[SMSMonitor] %@ recovered an authenticated page after stale native login state",
+          self.configuration.id
+        )
+        self.emit(.starting("已确认当前页面登录账号，正在恢复监控"), nextScanAt: nil)
+        self.ensureFinancialRefreshScheduled()
+        self.scheduleNextScan(after: 0)
+      }
     }
   }
 
@@ -1838,6 +1909,10 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
 
     guard isMonitorOrigin(url) else { return }
+    if manualAuthenticationRequired {
+      attemptAuthenticatedPageRecovery()
+      return
+    }
     if autoLoginInProgress || !autoLoginStage.isEmpty || credentialLoginPending {
       scheduleAutoLoginOutcomeCheck(after: 1)
       return
