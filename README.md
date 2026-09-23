@@ -26,4 +26,4 @@ macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Win
 
 该例外保存后，以后可以正常双击启动。正式消除此提示需要使用 Apple Developer ID 签名并通过 Apple 公证。
 
-本版：**macOS v0.3.70 build 77、Windows v0.3.68**；Android 下载继续使用已验证的 v0.3.61。macOS 修复后台页面已经登录但监控总览仍显示“需登录”的原生状态不同步问题，并保留真实注销、账号不一致和旧 Token 的安全阻断。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.70.md)。
+本版：**macOS v0.3.71 build 78、Windows v0.3.68**；Android 下载继续使用已验证的 v0.3.61。macOS 在后台同页登录跳转、标签切换和隐藏页面恢复后会重新核对会话，修复已登录却持续显示“需登录”的问题。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.71.md)。
