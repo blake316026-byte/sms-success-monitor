@@ -64,6 +64,7 @@ final class Controller {
   func attemptAutoLogin(profile: Profile, url: URL) { logins += 1 }
   func handleAuthenticationRequired(_ message: String) { logins += 1 }
   func attemptAuthenticatedPageRecovery() { pageRecoveries += 1 }
+  func reconcileAuthenticatedBusinessPageIfNeeded() { pageRecoveries += 1 }
   func resetAccountIdentityRecovery() {}
   func persistCurrentToken() {}
   func ensureFinancialRefreshScheduled() { financialStarts += 1 }

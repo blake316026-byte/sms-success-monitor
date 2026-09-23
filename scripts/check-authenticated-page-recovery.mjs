@@ -47,5 +47,11 @@ assert.match(recovery, /AuthenticatedPageSessionScript\.body/);
 assert.match(recovery, /kind == "authenticated"[\s\S]*!token\.isEmpty/);
 assert.match(recovery, /manualAuthenticationRequired = false[\s\S]*scheduleNextScan\(after: 0\)/);
 assert.match(controller, /guard !manualAuthenticationRequired else \{[\s\S]*attemptAuthenticatedPageRecovery\(\)/);
+assert.match(controller, /webView\.observe\(\\\.url[\s\S]*reconcileAuthenticatedBusinessPageIfNeeded\(\)/);
+assert.match(controller, /webView\.observe\(\\\.isLoading[\s\S]*reconcileAuthenticatedBusinessPageIfNeeded\(\)/);
+assert.match(controller, /webView = replacement\s+observePageNavigation\(\)/);
+assert.match(controller, /func setPageActive\([\s\S]*restoreCompactedPageIfNeeded\(\)[\s\S]*reconcileAuthenticatedBusinessPageIfNeeded\(\)/);
+assert.match(controller, /case \.authenticationRequired = latestEmittedState,[\s\S]*scheduleNextScan\(after: 0\)/);
+assert.match(recovery, /currentURL\.path != "\/\.sms-monitor-memory-shell"/);
 
-console.log('PASS: stale native login state recovers only from a matching, non-revoked page session');
+console.log('PASS: authenticated business routes recheck stale state on navigation, load and tab selection');

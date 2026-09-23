@@ -69,6 +69,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private var accountIdentityCheckInProgress = false
   private var accountIdentityCheckAttempts = 0
   private var authenticatedPageRecoveryID: UUID?
+  private var pageObservations: [NSKeyValueObservation] = []
   private var authenticationEpoch = UUID()
   private let sessionLifecycleHandler = SessionLifecycleHandler()
   private var mockScenario: String?
@@ -125,6 +126,20 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     content.add(sessionLifecycleHandler, name: "smsSessionLifecycle")
     content.addUserScript(WKUserScript(source: SessionLifecycleScript.body, injectionTime: .atDocumentStart, forMainFrameOnly: true))
     webView.evaluateJavaScript(SessionLifecycleScript.body, completionHandler: nil)
+    observePageNavigation()
+  }
+
+  private func observePageNavigation() {
+    pageObservations.removeAll()
+    pageObservations = [
+      webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+        DispatchQueue.main.async { [weak self] in self?.reconcileAuthenticatedBusinessPageIfNeeded() }
+      },
+      webView.observe(\.isLoading, options: [.new]) { [weak self] _, change in
+        guard change.newValue == false else { return }
+        DispatchQueue.main.async { [weak self] in self?.reconcileAuthenticatedBusinessPageIfNeeded() }
+      },
+    ]
   }
 
   deinit {
@@ -234,6 +249,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
       memoryCompactionWorkItem?.cancel()
       memoryCompactionWorkItem = nil
       restoreCompactedPageIfNeeded()
+      reconcileAuthenticatedBusinessPageIfNeeded()
     } else if stateChanged {
       inactiveSince = Date()
       scheduleInactivePageCompactionIfNeeded()
@@ -770,6 +786,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     compactedPageURL = currentURL
     isMemoryCompacted = true
     webView = replacement
+    observePageNavigation()
     onWebViewReplacement(previous, replacement)
     previous.stopLoading()
     previous.navigationDelegate = nil
@@ -1525,6 +1542,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
   private func attemptAuthenticatedPageRecovery() {
     guard manualAuthenticationRequired, authenticatedPageRecoveryID == nil,
       let currentURL = webView.url, isMonitorOrigin(currentURL),
+      currentURL.path != "/.sms-monitor-memory-shell",
       !requiresInteractiveAuthentication(currentURL), !webView.isLoading
     else { return }
 
@@ -1580,6 +1598,22 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
         self.ensureFinancialRefreshScheduled()
         self.scheduleNextScan(after: 0)
       }
+    }
+  }
+
+  private func reconcileAuthenticatedBusinessPageIfNeeded() {
+    guard isStarted, monitoringEnabled, !browserOnlyPage, !isMemoryCompacted,
+      let currentURL = webView.url, isMonitorOrigin(currentURL),
+      currentURL.path != "/.sms-monitor-memory-shell",
+      !requiresInteractiveAuthentication(currentURL), !webView.isLoading
+    else { return }
+
+    if manualAuthenticationRequired {
+      attemptAuthenticatedPageRecovery()
+    } else if case .authenticationRequired = latestEmittedState,
+      !isScanning, !autoLoginInProgress
+    {
+      scheduleNextScan(after: 0)
     }
   }
 
@@ -1919,6 +1953,7 @@ private final class ModuleMonitorController: NSObject, WKNavigationDelegate {
     }
     persistCurrentToken()
     ensureFinancialRefreshScheduled()
+    reconcileAuthenticatedBusinessPageIfNeeded()
     guard needsImmediateScan else { return }
     scheduleConnectionKickoff()
   }
