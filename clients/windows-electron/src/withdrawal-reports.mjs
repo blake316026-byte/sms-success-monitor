@@ -111,7 +111,7 @@ export class WithdrawalReports {
   }
   args(source, s) {
     return {expectedUsername:source.account || '', allowNPG:source.allowNPG !== false,
-      requiredNPGPermission:s.kind === 'pending' ? 'WITHDRAW_RECORD_LIST' : 'WITHDRAW_AUDIT_RECORD_LIST',
+      requiredNPGPermission:s.kind === 'pending' ? 'WITHDRAW_AUDIT_RECORD_LIST|WITHDRAW_RECORD_LIST' : 'WITHDRAW_AUDIT_RECORD_LIST',
       startDate:s.start, endDate:s.end, requestID:crypto.randomUUID()};
   }
   async probe(source, s) {
@@ -268,6 +268,7 @@ export class WithdrawalReports {
     if (!all && !item) throw new Error('列表已变化，请刷新后重试');
     const today = day(this.now());
     return {platformID, kind, id:all?'':id, all, contextID:row.contextID || '', family:row.family,
+      orderStatus:kind === 'pending' ? item.status : '',
       identity:row.identity, start:all?today:s.start, end:all?today:s.end, scope:row.scope};
   }
   updateTotal(target, total) {

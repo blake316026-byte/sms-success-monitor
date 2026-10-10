@@ -5,6 +5,9 @@ enum PendingOrdersScript {
     const ss = window.sessionStorage, ls = window.localStorage;
     const visible = e => e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
     const fail = message => { throw new Error(message); };
+    const npgAllowed = (users, permission) => users.every(u =>
+      !(typeof u.root === 'boolean' || Array.isArray(u.resources)) || u.root === true
+      || u.resources?.some(r => r === permission || (typeof r === 'string' && r.endsWith('_') && permission.startsWith(r))));
     const fingerprint = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))].map(b=>b.toString(16).padStart(2,'0')).join('');
     const capture = () => {
       const merchants = read(ss, 'merchants');
@@ -37,9 +40,8 @@ enum PendingOrdersScript {
       const usernames = [...new Set(users.map(u => text(u.username || u.account || u.loginName || u.id)).filter(Boolean))];
       const tokens = [...new Set(users.map(u => text(u.token)).filter(Boolean))];
       if (usernames.length !== 1 || tokens.length !== 1 || (expectedUsername && usernames[0] !== expectedUsername)) fail('需登录或账号会话不一致');
-      const permission = typeof requiredNPGPermission === 'string' ? requiredNPGPermission : 'WITHDRAW_RECORD_LIST';
-      if (users.some(u => (typeof u.root === 'boolean' || Array.isArray(u.resources)) && u.root !== true
-        && !u.resources?.some(r => r === permission || (typeof r === 'string' && r.endsWith('_') && permission.startsWith(r))))) fail('无提现记录查询权限');
+      const permission = typeof requiredNPGPermission === 'string' ? requiredNPGPermission : 'WITHDRAW_AUDIT_RECORD_LIST|WITHDRAW_RECORD_LIST';
+      if (!permission.split('|').some(p => npgAllowed(users, p))) fail('无提现记录查询权限');
       let cache = {};
       try { const cc = new URLSearchParams(location.hash.slice(1)).get('CC'); if (cc) cache = JSON.parse(atob(cc.replace(/-/g, '+').replace(/_/g, '/'))); } catch (_) {}
       const country = text(cache.COUNTRY || stored('COUNTRY')[0]).toUpperCase();
@@ -107,21 +109,28 @@ enum PendingOrdersScript {
       };
       const groups = current.family === 'TC'
         ? [['searchPendingApproval', '待处理', 20011], ['searchPending2ndApproval', '待审核', 20016], ['searchPendingPayment', '支付', 20020]]
-        : [['NEW', '待审核'], ['ERROR', '放款异常']];
+        : [['PENDING', '待审核'], ['ERROR', '放款异常']];
       const deadline = Date.now() + 90000;
       for (const [status, label, pid] of groups) {
         try {
           const permissions = read(ss, 'permission');
           if (current.family === 'TC' && Array.isArray(permissions) && !permissions.map(Number).includes(pid)) fail('无此页签权限');
+          const audit = current.family === 'NPG' && status === 'PENDING';
+          const users = current.family === 'NPG' ? JSON.parse(current.users) : [];
+          const auth = p => npgAllowed(users, p);
+          if (current.family === 'NPG' && !auth(audit ? 'WITHDRAW_AUDIT_RECORD_LIST' : 'WITHDRAW_RECORD_LIST')) fail('无此记录查询权限');
+          const auditQuery = audit ? { countryId: current.country,
+            invitedCountType: auth('WITHDRAW_AUDIT_USER') && !auth('WITHDRAW_AUDIT_CHANNEL') ? 0
+              : !auth('WITHDRAW_AUDIT_USER') && auth('WITHDRAW_AUDIT_CHANNEL') ? 1 : -1 } : {};
           let fetched = 0, lastPage = '', done = false;
           for (let pageNo = 1; pageNo <= 50; pageNo++) {
             if (Date.now() > deadline) fail('查询超时，结果不完整');
             const params = current.family === 'TC'
               ? { merchantCode: current.merchant, startDate: serverDate(start), endDate: serverDate(finish), searchDateMode: 'requestTime', paymentStatus: 'ALL', pageNo, pageSize: 50, pid }
-              : { query: { status, pageNo, pageSize: 50, dtCreated: { start, finish } } };
+              : { query: { ...auditQuery, status, pageNo, pageSize: 50, dtCreated: { start, finish } } };
             const p = current.family === 'TC'
               ? await request('/tac/api/relay/get/mcs-v3-player-withdraw-' + status, params)
-              : await request('/api/withdraw_record/page', params, 'POST');
+              : await request(audit ? '/api/withdraw_audit_record/page' : '/api/withdraw_record/page', params, 'POST');
             const rows = current.family === 'TC' ? p.value : p.page?.content;
             const total = current.family === 'TC' ? p.totalPageCount : p.page?.totalElements;
             if (!Array.isArray(rows) || (typeof total !== 'number' && !(typeof total === 'string' && /^\d+$/.test(total)))
@@ -130,11 +139,12 @@ enum PendingOrdersScript {
             if (rows.length && signature === lastPage) fail('分页未前进，结果不完整');
             lastPage = signature; fetched += rows.length;
             for (const row of rows) {
-              if ((typeof row.id !== 'string' && !Number.isSafeInteger(row.id)) || !String(row.id).trim()) fail('订单号缺失或精度异常');
+              const orderID = audit ? row.withdrawOrderId : row.id;
+              if ((typeof orderID !== 'string' && !Number.isSafeInteger(orderID)) || !String(orderID).trim()) fail('订单号缺失或精度异常');
               if (current.family === 'NPG' && row.status !== status) fail('接口返回非指定状态');
               if (current.family === 'TC' && row.merchantCode && row.merchantCode !== current.merchant) fail('接口返回其他商户订单');
               if (current.family === 'TC' && ['PAID', 'REJECT', 'REJECT_PAID', 'CANCELLED'].includes(row.status)) fail('待处理接口返回已结束订单');
-              orders.set(String(row.id), { id: String(row.id), status: label, rawStatus: String(row.status || status) });
+              orders.set(String(orderID), { id: String(orderID), status: label, rawStatus: String(row.status || status) });
             }
             if (fetched >= Number(total)) { done = true; break; }
             if (!rows.length) fail('订单数量变化，请刷新核对');

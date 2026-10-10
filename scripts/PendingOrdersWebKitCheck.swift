@@ -31,7 +31,13 @@ import WebKit
       window.fixtureStep='pending';
       """# + "\nconst result = await (async()=> {\(PendingOrdersScript.query)})();\n" + #"""
       if(result.kind!=='ok'||result.orders.length!==1||requests.length!==3) return false;
-      document.body.innerHTML='<form><div class="player-withdraw-action-bar"><input id="id"></div><div class="ant-picker-range"><input><input></div><button type="button">搜 索</button></form><div id="player-withdraw-list"><div role="tab" aria-selected="true">全部</div></div>';
+      document.body.innerHTML='<form><div class="player-withdraw-action-bar"><input id="id"></div><div class="ant-picker-range"><input><input></div><button type="button">搜 索</button></form><div id="player-withdraw-list"></div>';
+      let activeEndpoint='search';
+      for(const [title,endpoint] of [['全部','search'],['待处理','searchPendingApproval'],['待审核','searchPending2ndApproval'],['支付','searchPendingPayment']]) {
+        const tab=document.createElement('div');tab.setAttribute('role','tab');tab.setAttribute('aria-selected',String(title==='全部'));tab.textContent=title;
+        tab.onclick=()=>{document.querySelectorAll('[role=tab]').forEach(e=>e.setAttribute('aria-selected','false'));tab.setAttribute('aria-selected','true');activeEndpoint=endpoint;};
+        document.querySelector('#player-withdraw-list').append(tab);
+      }
       const formState={date:[momentFixture(),momentFixture()], username:'old-user', status:['PAID'], amountFromStr:'99999'};
       document.querySelector('form').__reactFiber$fixture={memoizedProps:{form:{
         getFieldValue:k=>formState[k], getFieldsValue:()=>({...formState}), submit:()=>{}, setFieldsValue:values=>{Object.assign(formState,values);
@@ -39,9 +45,9 @@ import WebKit
           document.querySelectorAll('.ant-picker-range input').forEach((e,i)=>e.value=values.date[i].format().replaceAll('/','-'));
         }
       }}};
-      document.querySelector('button').onclick = () => fetch('https://orders-test.invalid/tac/api/relay/get/mcs-v3-player-withdraw-search?id='+formState.id+'&merchantCode=m', {method:'GET'});
-      const family='TC',username='fixture',country='',merchant='m',orderStatus='待处理',origin='https://orders-test.invalid',routeIssued=false;
-      let orderID='123';
+      document.querySelector('button').onclick = () => fetch('https://orders-test.invalid/tac/api/relay/get/mcs-v3-player-withdraw-'+activeEndpoint+'?id='+formState.id+'&merchantCode=m', {method:'GET'});
+      const family='TC',username='fixture',country='',merchant='m',origin='https://orders-test.invalid',routeIssued=false;
+      let orderID='123',orderStatus='待处理';
       const originalFetch=window.fetch;
       window.reuseSentinel=12345;
       """# + "\nconst readyRoute = await (async()=> {\(PendingOrderNavigationScript.route)})();\n" + #"""
@@ -51,9 +57,23 @@ import WebKit
       if (!(navigation.kind==='ok' && document.querySelector('#id').value==='123'
         && window.fetch===originalFetch && requests.length===4 && !formState.username && !formState.status && !formState.amountFromStr
         && window.__smsPendingOrdersContext?.id===contextID)) return false;
-      orderID='456'; formState.username='another-stale-user';
+      if(activeEndpoint!=='searchPendingApproval')return false;
+      orderID='456';orderStatus='支付'; formState.username='another-stale-user';
       """# + "\nconst secondNavigation = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
       if(secondNavigation.kind!=='ok'||formState.id!=='456'||formState.username||window.reuseSentinel!==12345||requests.length!==5) return false;
+      if(activeEndpoint!=='searchPendingPayment')return false;
+      orderID='789';orderStatus='待审核';formState.username='stale-again';
+      """# + "\nconst thirdNavigation = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
+      if(thirdNavigation.kind!=='ok'||formState.id!=='789'||formState.username||activeEndpoint!=='searchPending2ndApproval'||window.reuseSentinel!==12345)return false;
+      orderID='123';orderStatus='待处理';
+      """# + "\nconst returnNavigation = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
+      if(returnNavigation.kind!=='ok'||formState.id!=='123'||activeEndpoint!=='searchPendingApproval')return false;
+      // A request from All must never count as a successful pending-tab search.
+      const pendingSearch=document.querySelector('button').onclick;
+      document.querySelector('button').onclick=()=>fetch('https://orders-test.invalid/tac/api/relay/get/mcs-v3-player-withdraw-search?id=123&merchantCode=m');
+      """# + "\nconst wrongTab = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
+      if(wrongTab.kind!=='error')return false;
+      document.querySelector('button').onclick=pendingSearch;
       history.replaceState({},'', '/reports');
       let routeMoves=0;
       document.querySelector('form').__reactFiber$fixture.return={memoizedProps:{location:{pathname:'/reports'},navigator:{createHref:x=>x,push:path=>{routeMoves++;history.replaceState({},'',path)}}}};
@@ -76,13 +96,33 @@ import WebKit
       document.querySelector('.lt-date-range-picker').__reactFiber$fixture={memoizedProps:{className:'lt-date-range-picker',format:'YYYY/MM/DD HH:mm:ss',value:[momentFixture(),momentFixture()],onChange:range=>{dateQuery={start:range[0].valueOf(),finish:range[1].valueOf()}}}};
       document.querySelector('button').onclick=()=>fetch('https://orders-test.invalid/api/withdraw_record/page',{body:JSON.stringify({query:{id:document.querySelector('input').value,dtCreated:dateQuery}})});
       {
-        const family='NPG',username='fixture',country='PH',merchant='',orderID='W123',orderStatus='待审核',origin='https://orders-test.invalid';
+        const family='NPG',username='fixture',country='PH',merchant='',orderID='W123',orderStatus='放款异常',origin='https://orders-test.invalid';
       """# + "\nconst npgNavigation = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
-        if (!(npgNavigation.kind==='ok' && document.querySelector('input').value==='W123' && requests.length===6
+        if (!(npgNavigation.kind==='ok' && document.querySelector('input').value==='W123'
           && !npgState.userName && !npgState.status && !npgState.amountRange && !npgState.dtPaidTime
           && dateQuery.start===Date.UTC(2026,9,4) && dateQuery.finish===Date.UTC(2026,9,10,23,59,59,999))) return false;
       }
       history.replaceState({},'', '/withdraw-audit-record-list');
+      window.fixtureStep='NPG pending audit';
+      document.querySelector('input').id='withdrawOrderId';
+      npgState.autherId='stale-reviewer';npgState.autherIdX='stale-reviewer';
+      document.querySelector('form').__reactFiber$fixture.memoizedProps.form.setFieldsValue=values=>{
+        Object.assign(npgState,values);dateQuery=values.dtCreated;document.querySelector('#withdrawOrderId').value=values.withdrawOrderId;
+      };
+      document.querySelector('button').onclick=()=>fetch('https://orders-test.invalid/api/withdraw_audit_record/page',{body:JSON.stringify({query:npgState})});
+      {
+        const family='NPG',username='fixture',country='PH',merchant='',origin='https://orders-test.invalid',orderStatus='待审核';
+        let orderID='W-AUDIT-1';
+      """# + "\nconst auditFirst = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
+        if(auditFirst.kind!=='ok'||npgState.withdrawOrderId!==orderID||npgState.id||npgState.autherId||npgState.autherIdX||npgState.status!=='PENDING')return false;
+        orderID='W-AUDIT-2';npgState.userName='stale-user';
+      """# + "\nconst auditSecond = await (async()=> {\(PendingOrderNavigationScript.body)})();\n" + #"""
+        if(auditSecond.kind!=='ok'||npgState.withdrawOrderId!==orderID||npgState.userName||npgState.status!=='PENDING'||window.reuseSentinel!==12345)return false;
+        history.replaceState({},'', '/withdraw-record-list');
+        document.querySelector('form').__reactFiber$fixture.return={memoizedProps:{location:{pathname:'/withdraw-record-list'},navigator:{createHref:x=>x,push:path=>{routeMoves++;history.replaceState({},'',path)}}}};
+      """# + "\nconst auditRoute = await (async()=> {\(PendingOrderNavigationScript.route)})();\n" + #"""
+        if(auditRoute.kind!=='routed'||location.pathname!=='/withdraw-audit-record-list'||window.reuseSentinel!==12345)return false;
+      }
       window.fixtureStep='NPG reviewer';
       document.querySelector('input').id='autherIdX';
       npgState.withdrawOrderId='old-withdrawal'; npgState.autherId='old-reviewer'; npgState.status='PENDING';

@@ -26,10 +26,11 @@ export class WithdrawalNavigation {
     this.reports.locked.add(source.id);
     for(const kind of ['pending','reviewers'])this.reports.cancel(kind,source.id);
     const deadline=this.now()+90000;
+    const audit=target.kind==='reviewers'||(target.family==='NPG'&&target.orderStatus==='待审核');
     const args={expectedUsername:source.account||'',allowNPG:source.allowNPG!==false,
-      requiredNPGPermission:target.kind==='reviewers'?'WITHDRAW_AUDIT_RECORD_LIST':'WITHDRAW_RECORD_LIST',
+      requiredNPGPermission:audit?'WITHDRAW_AUDIT_RECORD_LIST':'WITHDRAW_RECORD_LIST',
       startDate:target.start,endDate:target.end,contextID:target.contextID,requestID:navID,
-      reviewerQuery:target.kind==='reviewers',allReviewers:target.all,orderID:target.id,navID};
+      reviewerQuery:target.kind==='reviewers',allReviewers:target.all,orderID:target.id,orderStatus:target.orderStatus,navID};
     try {
       // Wait for cancellation cleanup before sharing this page with a form search.
       while(['pending','reviewers'].some(k=>this.reports.states[k].jobs.has(source.id))) {
@@ -57,7 +58,7 @@ export class WithdrawalNavigation {
       if(context.kind!=='ok')throw new Error(context.message);
       Object.assign(args,context,{routeIssued:false});
       const destination=new URL(source.currentURL);
-      destination.pathname=args.family==='TC'?'/20008':args.reviewerQuery?'/withdraw-audit-record-list':'/withdraw-record-list';
+      destination.pathname=args.family==='TC'?'/20008':audit?'/withdraw-audit-record-list':'/withdraw-record-list';
       destination.search='';
       let reloaded=false;
       for(;;) {

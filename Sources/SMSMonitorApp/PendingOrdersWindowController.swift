@@ -14,6 +14,7 @@ struct PendingOrderRow {
   var reviewerName: String? = nil
   var allReviewers = false
   var isReviewQuery: Bool { reviewerName != nil || allReviewers }
+  var usesNPGAudit: Bool { isReviewQuery || (family == "NPG" && status == "待审核") }
 }
 
 final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,

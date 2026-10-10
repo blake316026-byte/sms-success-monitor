@@ -1196,7 +1196,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     let view = page.webView
     let expected = orderCredentialStore.profile(for: row.platformID)?.username ?? ""
     let args: [String: Any] = ["expectedUsername": expected, "allowNPG": row.family == "NPG", "contextID": row.contextID,
-      "reviewerQuery": row.isReviewQuery, "requiredNPGPermission": row.isReviewQuery ? "WITHDRAW_AUDIT_RECORD_LIST" : "WITHDRAW_RECORD_LIST"]
+      "reviewerQuery": row.isReviewQuery, "requiredNPGPermission": row.usesNPGAudit ? "WITHDRAW_AUDIT_RECORD_LIST" : "WITHDRAW_RECORD_LIST"]
     let navigationID = UUID(); orderNavigationID = navigationID
     view.callAsyncJavaScript(PendingOrdersScript.validate, arguments: args, in: nil, in: .page) { [weak self, weak page] result in
       DispatchQueue.main.async {
@@ -1207,7 +1207,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
           return
         }
         var components = URLComponents(url: currentURL, resolvingAgainstBaseURL: false)!
-        components.path = row.family == "TC" ? "/20008" : row.isReviewQuery ? "/withdraw-audit-record-list" : "/withdraw-record-list"
+        components.path = row.family == "TC" ? "/20008" : row.usesNPGAudit ? "/withdraw-audit-record-list" : "/withdraw-record-list"
         components.query = nil
         guard let destination = components.url else { return }
         self.show(moduleID: row.platformID)
@@ -1266,7 +1266,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       "allowNPG": row.family == "NPG", "family": row.family, "username": context["username"] ?? "",
       "country": context["country"] ?? "", "merchant": context["merchant"] ?? "", "orderID": row.orderID, "contextID": row.contextID,
       "reviewerQuery": row.isReviewQuery, "allReviewers": row.allReviewers,
-      "requiredNPGPermission": row.isReviewQuery ? "WITHDRAW_AUDIT_RECORD_LIST" : "WITHDRAW_RECORD_LIST",
+      "requiredNPGPermission": row.usesNPGAudit ? "WITHDRAW_AUDIT_RECORD_LIST" : "WITHDRAW_RECORD_LIST",
       "startDate": row.startDate, "endDate": row.endDate, "orderStatus": row.status, "origin": context["origin"] ?? ""]
   }
 

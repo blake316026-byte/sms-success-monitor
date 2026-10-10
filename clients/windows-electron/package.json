@@ -1,6 +1,6 @@
 {
   "name": "sms-success-monitor-windows",
-  "version": "0.3.84",
+  "version": "0.3.85",
   "description": "Public platform workbench without monitoring dashboards",
   "main": "src/main.mjs",
   "type": "module",

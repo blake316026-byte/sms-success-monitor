@@ -62,21 +62,28 @@ assert.equal(service.snapshot('reviewers').platforms[0].total,350,'platform tota
 service.updateTotal(service.target('reviewers','one','',true),355);assert.equal(service.snapshot('reviewers').platforms[0].total,355);
 assert.equal(service.target('reviewers','one','',true).start,day(now));
 
-let selected='one',loads=0,searches=[],steps=0,routeReady=true;
+let selected='one',loads=0,searches=[],steps=0,routeReady=true,searchArgs=[],destinations=[];
 const navExecute=async(source,key,args)=>{
   if(key==='probe')return {kind:'ok',identity,family:'NPG'};
   if(key==='prepare')return {kind:'ok',family:'NPG'};
   if(key==='validate')return {kind:'ok',family:'NPG',username:'tester',origin:'https://example.invalid',country:'PH',merchant:''};
   if(key==='route')return {kind:routeReady?'ready':'reload'};
-  if(key==='search'){searches.push(args.orderID);return {kind:'ok',total:99};}
+  if(key==='search'){searches.push(args.orderID);searchArgs.push({...args});return {kind:'ok',total:99};}
 };
 const nav=new WithdrawalNavigation({reports:service,source:id=>options.sources().find(s=>s.id===id),execute:navExecute,
-  show:id=>{selected=id;},selected:()=>selected,load:async()=>{loads++;routeReady=true;},now:()=>now,pause:async()=>{steps++;}});
+  show:id=>{selected=id;},selected:()=>selected,load:async(source,url)=>{loads++;destinations.push(url);routeReady=true;},now:()=>now,pause:async()=>{steps++;}});
 await service.fetch('pending');
 const pending=service.target('pending','one','W1');
+assert.equal(pending.orderStatus,'待审核');
 await nav.open(pending);await nav.open({...pending,id:'W2'});
 assert.deepEqual(searches,['W1','W2']);assert.equal(loads,0,'warm pages never reload');
 routeReady=false;await nav.open(pending);assert.equal(loads,1,'cold fallback loads once');
+assert.equal(new URL(destinations.at(-1)).pathname,'/withdraw-audit-record-list');
+assert.equal(searchArgs.at(-1).requiredNPGPermission,'WITHDRAW_AUDIT_RECORD_LIST');
+assert.equal(searchArgs.at(-1).reviewerQuery,false,'audit-order searches are not reviewer searches');
+routeReady=false;await nav.open({...pending,orderStatus:'放款异常'});
+assert.equal(new URL(destinations.at(-1)).pathname,'/withdraw-record-list');
+assert.equal(searchArgs.at(-1).requiredNPGPermission,'WITHDRAW_RECORD_LIST');
 const stale=nav.open(pending);const latest=nav.open({...pending,id:'LATEST'});
 await assert.rejects(stale,/新的查询/);await latest;assert.equal(searches.at(-1),'LATEST');
 const mismatch={...pending,identity:'wrong'};await assert.rejects(nav.open(mismatch),/商户已变化/);

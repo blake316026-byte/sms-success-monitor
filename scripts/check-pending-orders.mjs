@@ -21,7 +21,7 @@ export function fixture(family = 'NPG') {
       user: { operatorName: 'fixture' }, token: 'token', tabIsLogin: '1', permission: [20011, 20016, 20020], environment: 'S1' })) ss.setItem(k, typeof v === 'object' ? JSON.stringify(v) : v);
     ls.setItem('TOKEN', 'token'); ls.setItem('operatorCustomization', '{"customTimezone":"Etc/GMT-8"}');
   } else {
-    ls.setItem('lt-user', '{"username":"fixture","token":"token","root":false,"resources":["WITHDRAW_RECORD_LIST"]}');
+    ls.setItem('lt-user', '{"username":"fixture","token":"token","root":false,"resources":["WITHDRAW_RECORD_LIST","WITHDRAW_AUDIT_RECORD_LIST"]}');
     ls.setItem('COUNTRY', 'PH');
   }
   const f = { ss, ls, calls, onFetch() {}, respond: null };
@@ -32,7 +32,7 @@ export function fixture(family = 'NPG') {
     if (url.pathname.endsWith('timezone_with_country')) p = { status: 0, model: 'Asia/Manila' };
     else p = f.respond ? f.respond(body, url) : family === 'TC'
       ? { success: true, totalPageCount: 1, value: [{ id: url.pathname.endsWith('searchPendingApproval') ? 101 : url.pathname.endsWith('searchPending2ndApproval') ? 102 : 103, merchantCode: 'm', status: 'NEW' }] }
-      : { status: 0, page: { content: [{ id: 'W-' + body.query.status, status: body.query.status }], totalElements: 1 } };
+      : { status: 0, page: { content: [{ id: 'record-' + body.query.status, withdrawOrderId: 'W-PENDING', status: body.query.status }], totalElements: 1 } };
     return { ok: true, status: 200, json: async () => p };
   };
   const window = { sessionStorage: ss, localStorage: ls, fetch };
@@ -45,7 +45,12 @@ export function fixture(family = 'NPG') {
 }
 let f = fixture(), result = await f.run();
 assert.equal(result.kind, 'ok'); assert.equal(result.orders.length, 2);
-assert.deepEqual(f.calls.slice(1).map(c => c.body.query.status), ['NEW', 'ERROR']);
+assert.deepEqual(f.calls.slice(1).map(c => c.body.query.status), ['PENDING', 'ERROR']);
+assert.deepEqual(f.calls.slice(1).map(c => c.url.pathname), ['/api/withdraw_audit_record/page', '/api/withdraw_record/page']);
+assert.equal(result.orders[0].id, 'W-PENDING', 'use withdrawal order ID, not audit record ID');
+assert.equal(result.orders[1].id, 'record-ERROR');
+assert.equal(f.calls[1].body.query.countryId, 'PH');
+assert.equal(f.calls[1].body.query.invitedCountType, -1);
 assert.equal(f.calls[1].body.query.dtCreated.start, Date.parse('2026-10-03T16:00:00Z'));
 assert.equal(f.calls[1].body.query.dtCreated.finish, Date.parse('2026-10-10T15:59:59.999Z'));
 assert.equal(f.calls[1].options.headers.Auth, 'token');
@@ -70,12 +75,21 @@ for (const family of ['TC', 'NPG']) {
     assert.equal((await f.run()).kind, 'partial');
   }
 }
-f = fixture(); f.respond = body => ({ status: 0, page: { totalElements: 3, content: body.query.pageNo === 1 ? [{ id: body.query.status + '1', status: body.query.status }, { id: body.query.status + '2', status: body.query.status }] : [{ id: body.query.status + '3', status: body.query.status }] } });
+f = fixture(); f.respond = body => ({ status: 0, page: { totalElements: 3, content: (body.query.pageNo === 1 ? [1,2] : [3]).map(i => ({id:body.query.status+i,withdrawOrderId:'W'+i,status:body.query.status})) } });
 result = await f.run(); assert.equal(result.kind, 'ok'); assert.equal(result.orders.length, 6); assert.equal(f.calls.length, 5);
-f = fixture(); f.respond = body => ({ status: 0, page: { totalElements: 5, content: [{ id: 'repeat', status: body.query.status }] } });
+f = fixture(); f.respond = body => ({ status: 0, page: { totalElements: 5, content: [{ id: 'repeat', withdrawOrderId:'repeat-withdrawal', status: body.query.status }] } });
 assert.equal((await f.run()).kind, 'partial');
-f = fixture(); f.respond = body => body.query.status === 'NEW' ? { status: 403 } : { status: 0, page: { totalElements: 1, content: [{ id: 'error-order', status: 'ERROR' }] } };
+f = fixture(); f.respond = body => body.query.status === 'PENDING' ? { status: 403 } : { status: 0, page: { totalElements: 1, content: [{ id: 'error-order', status: 'ERROR' }] } };
 result = await f.run(); assert.equal(result.kind, 'partial'); assert.equal(result.orders.length, 1);
+for (const permission of ['WITHDRAW_RECORD_LIST', 'WITHDRAW_AUDIT_RECORD_LIST']) {
+  f = fixture(); f.ls.setItem('lt-user', JSON.stringify({username:'fixture',token:'token',root:false,resources:[permission,'WITHDRAW_AUDIT_USER']}));
+  result = await f.run(); assert.equal(result.kind,'partial'); assert.equal(result.orders.length,1);
+  assert.equal(f.calls.length,2,'skip only the unauthorized group');
+  assert.equal(f.calls[1].body.query.status,permission==='WITHDRAW_RECORD_LIST'?'ERROR':'PENDING');
+  if(permission==='WITHDRAW_AUDIT_RECORD_LIST')assert.equal(f.calls[1].body.query.invitedCountType,0);
+}
+f=fixture();f.respond=body=>({status:0,page:{totalElements:1,content:[{id:'audit-id',status:body.query.status}]}});
+result=await f.run();assert.equal(result.kind,'partial');assert.match(result.message,/订单号缺失/);
 f = fixture('TC'); f.ss.setItem('permission', '[20011]'); result = await f.run();
 assert.equal(result.kind, 'partial'); assert.equal(f.calls.length, 1); assert.match(result.message, /无此页签权限/);
 f = fixture('TC'); f.respond = () => ({ success: true, totalPageCount: 1, value: [{ id: 9007199254740994 }] });

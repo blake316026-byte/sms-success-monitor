@@ -4,7 +4,8 @@ enum PendingOrderNavigationScript {
       if (location.origin !== origin) fail('原平台地址已变化，未跳转');
       if (window.__smsMonitorMemoryCompacted) return { kind: 'reload' };
       const reviewer = typeof reviewerQuery !== 'undefined' && reviewerQuery;
-      const path = family === 'TC' ? '/20008' : reviewer ? '/withdraw-audit-record-list' : '/withdraw-record-list';
+      const audit = reviewer || (family === 'NPG' && typeof orderStatus === 'string' && orderStatus === '待审核');
+      const path = family === 'TC' ? '/20008' : audit ? '/withdraw-audit-record-list' : '/withdraw-record-list';
       if (location.pathname.replace(/\/$/, '') === path) return { kind: 'ready' };
       const current = capture();
       if (current.family !== family || current.username !== username || current.country !== country || current.merchant !== merchant) fail('账号、国家或商户已变化，未跳转');
@@ -34,21 +35,39 @@ enum PendingOrderNavigationScript {
   static let body = PendingOrdersScript.context + #"""
     try {
       const reviewer = typeof reviewerQuery !== 'undefined' && reviewerQuery;
+      const audit = reviewer || (family === 'NPG' && typeof orderStatus === 'string' && orderStatus === '待审核');
       const wholePlatform = reviewer && typeof allReviewers !== 'undefined' && allReviewers;
       const filterID = wholePlatform ? '' : orderID;
-      if (location.pathname.replace(/\/$/, '') !== (family === 'TC' ? '/20008' : reviewer ? '/withdraw-audit-record-list' : '/withdraw-record-list')) fail('页面已切换，停止搜索订单');
+      if (location.pathname.replace(/\/$/, '') !== (family === 'TC' ? '/20008' : audit ? '/withdraw-audit-record-list' : '/withdraw-record-list')) fail('页面已切换，停止搜索订单');
       const visibleAll = selector => [...document.querySelectorAll(selector)].filter(visible);
-      const field = family === 'TC'
-        ? visibleAll(reviewer ? '.player-withdraw-action-bar input#reviewOperator' : '.player-withdraw-action-bar input#id')[0]
-        : visibleAll(reviewer ? 'input#autherIdX, input[placeholder="审核人ID过滤"], input[placeholder="Auditor Id Filter"]' : 'input[placeholder="ID"]')[0];
-      if (!field) return { kind: 'waiting' };
       const current = capture();
       const identity = JSON.stringify(current);
       if (current.origin !== origin || current.family !== family || current.username !== username || current.country !== country || current.merchant !== merchant) fail('账号、国家或商户已变化，未搜索订单');
+      const pause = () => new Promise(resolve => setTimeout(resolve, 160));
+      const tcTab = reviewer ? ['全部', 'All', 'search', 'all'] : ({
+        '待处理': ['待处理', 'Pending', 'searchPendingApproval', 'pending'],
+        '待审核': ['待审核', 'PendingReview', 'searchPending2ndApproval', 'pending_review'],
+        '支付': ['支付', 'Payment', 'searchPendingPayment', 'paid']
+      })[typeof orderStatus === 'string' ? orderStatus : ''];
+      if (family === 'TC') {
+        if (!tcTab) fail('订单状态无效，请刷新订单');
+        const findTab = () => visibleAll('#player-withdraw-list [role="tab"]').find(e =>
+          e.id.endsWith('-tab-' + tcTab[3]) || tcTab.slice(0, 2).includes(e.textContent.replace(/\s+/g, '')));
+        const tab = findTab();
+        if (!tab) return { kind: 'waiting' };
+        if (tab.getAttribute('aria-selected') !== 'true') {
+          tab.click(); await pause();
+          if (findTab()?.getAttribute('aria-selected') !== 'true') return { kind: 'waiting' };
+        }
+      }
+      const field = family === 'TC'
+        ? visibleAll(reviewer ? '.player-withdraw-action-bar input#reviewOperator' : '.player-withdraw-action-bar input#id')[0]
+        : visibleAll(reviewer ? 'input#autherIdX, input[placeholder="审核人ID过滤"], input[placeholder="Auditor Id Filter"]'
+          : audit ? 'input#withdrawOrderId, input[placeholder="提现订单ID"], input[placeholder="Withdraw Order Id"]' : 'input[placeholder="ID"]')[0];
+      if (!field) return { kind: 'waiting' };
       const root = field.closest('form');
       if (!root) fail('找不到提现搜索表单');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      const pause = () => new Promise(resolve => setTimeout(resolve, 160));
       const fiberFor = element => {
         const key = Object.keys(element).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
         return key && element[key];
@@ -65,12 +84,6 @@ enum PendingOrderNavigationScript {
       }
       if (!form) fail('搜索表单尚未就绪，未修改筛选条件');
       const cleared = Object.fromEntries(Object.keys(form.getFieldsValue(true)).map(k => [k, family === 'NPG' ? null : undefined]));
-      if (family === 'TC') {
-        const titles = ['全部', 'All'];
-        const tab = visibleAll('#player-withdraw-list [role="tab"]').find(e => titles.includes(e.textContent.replace(/\s+/g, '')));
-        if (!tab) fail('未找到全部订单页签');
-        if (tab.getAttribute('aria-selected') !== 'true') { tab.click(); await pause(); }
-      }
       const pickers = [...root.querySelectorAll('.lt-date-range-picker, .ant-picker-range')].filter(visible);
       const dates = pickers[0] ? [...pickers[0].querySelectorAll('input')].filter(visible) : [];
       // Reused pages retain filters. Clear every registered filter in the form
@@ -92,7 +105,8 @@ enum PendingOrderNavigationScript {
         if (!selected) fail('日期组件未就绪，未自动搜索');
         const range = dateRange(selected);
         expectedRange = range.map(v => v.valueOf());
-        form.setFieldsValue({...cleared, ...(reviewer ? {autherId:wholePlatform?null:filterID,autherIdX:filterID,countryId:country} : {id:filterID}),
+        form.setFieldsValue({...cleared, ...(reviewer ? {autherId:wholePlatform?null:filterID,autherIdX:filterID,countryId:country}
+          : audit ? {withdrawOrderId:filterID,status:'PENDING',countryId:country} : {id:filterID}),
           dtCreated: {start: expectedRange[0], finish: expectedRange[1]}});
         await pause();
       } else {
@@ -147,15 +161,17 @@ enum PendingOrderNavigationScript {
         try {
           const parsed = new URL(url, location.origin);
           if (parsed.origin !== location.origin) return;
-          if (family === 'TC' && /^\/tac\/api\/relay\/get\/mcs-v3-player-withdraw-search(?:PendingApproval|Pending2ndApproval|PendingPayment)?$/.test(parsed.pathname)) {
+          if (family === 'TC' && parsed.pathname === '/tac/api/relay/get/mcs-v3-player-withdraw-' + tcTab[2]) {
             if ((parsed.searchParams.get(reviewer ? 'reviewOperator' : 'id') ?? '') === filterID && parsed.searchParams.get('merchantCode') === merchant
               && (!reviewer || (!parsed.searchParams.get('id') && !parsed.searchParams.get('reviewOperatorType') && parsed.searchParams.get('searchDateMode') === 'requestTime'))
               && (!reviewer || (parsed.pathname === '/tac/api/relay/get/mcs-v3-player-withdraw-search'
                 && parsed.searchParams.get('startDate') === serverRange[0] && parsed.searchParams.get('endDate') === serverRange[1]))) matched = true;
           }
-          if (family === 'NPG' && parsed.pathname === (reviewer ? '/api/withdraw_audit_record/page' : '/api/withdraw_record/page')) {
+          if (family === 'NPG' && parsed.pathname === (audit ? '/api/withdraw_audit_record/page' : '/api/withdraw_record/page')) {
             const p = JSON.parse(body);
-            if ((wholePlatform ? !p.query?.autherId && !p.query?.autherIdX && !p.query?.id && p.query?.countryId === country : String(reviewer ? p.query?.autherId : p.query?.id) === filterID)
+            if ((wholePlatform ? !p.query?.autherId && !p.query?.autherIdX && !p.query?.id && p.query?.countryId === country
+              : String(reviewer ? p.query?.autherId : audit ? p.query?.withdrawOrderId : p.query?.id) === filterID)
+              && (!audit || reviewer || (p.query?.status === 'PENDING' && !p.query?.autherId && !p.query?.autherIdX))
               && (!reviewer || (!p.query?.withdrawOrderId && !p.query?.status)) && Number(p.query?.dtCreated?.start) === expectedRange?.[0]
               && Number(p.query?.dtCreated?.finish) === expectedRange?.[1]) matched = true;
           }

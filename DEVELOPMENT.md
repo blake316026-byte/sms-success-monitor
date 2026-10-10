@@ -14,6 +14,10 @@ This branch contains the public, reduced edition. The private/full working copy 
 
 ## Build And Verify
 
+- Pending NPG audit orders use `/api/withdraw_audit_record/page` with `status=PENDING`, country and the site's permission-based `invitedCountType`; their visible/search ID is `withdrawOrderId`, not the audit record ID. Navigation targets `/withdraw-audit-record-list`. Payout exceptions retain `/api/withdraw_record/page`, `status=ERROR` and `/withdraw-record-list`.
+- TC pending-order navigation selects `pending`, `pending_review` or `paid` from the canonical order status, then clears old form filters and searches the exact ID. Confirmation requires the matching pending-query endpoint. Reviewer searches continue to use All.
+- Regression fixtures cover sequential audit order IDs, TC status-tab switching and return, rejection of an All-tab request, clearing stale reviewer filters, per-group NPG permissions and warm-page reuse. Electron host tests also verify the audit versus exception fallback URL.
+
 - macOS: `zsh scripts/test.sh`, then `zsh scripts/package-macos.sh`.
 - Windows: `zsh scripts/package-windows.sh`; packaged runtime checks run on the Windows CI runner.
 - Android: `zsh scripts/package-android.sh` with JDK 17 and an authorized Android SDK (API 35).
