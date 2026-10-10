@@ -103,7 +103,7 @@ final class TianchengLoginController {
       if kind == "authenticated" {
         self.stage = ""
         self.submittedAt = nil
-        self.onState(.browserOnly("天成已登录；短信与财务接口尚未接入，不发送监控请求"))
+        self.onState(.browserOnly("天成已登录"))
         self.schedule(after: 10)
         return
       }

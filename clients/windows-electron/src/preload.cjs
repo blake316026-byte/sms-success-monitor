@@ -15,9 +15,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   addPage: (page) => ipcRenderer.invoke('page:add', page),
   renamePage: (id, name) => ipcRenderer.invoke('page:rename', id, name),
   closePage: (id) => ipcRenderer.invoke('page:close', id),
-  scan: (id) => ipcRenderer.invoke('monitor:scan', id || null),
-  setMonitoringEnabled: (id, enabled) => ipcRenderer.invoke('monitor:set-enabled', id, Boolean(enabled)),
-  setSampleLimit: (value) => ipcRenderer.invoke('settings:set-sample-limit', value),
+  setFinancialMonitoringEnabled: (id, enabled) => ipcRenderer.invoke('monitor:set-finance-enabled', id, Boolean(enabled)),
   changeWorkbenchZoom: (direction) => ipcRenderer.invoke('workbench:zoom', direction),
   setWorkbenchModalOpen: (open) => ipcRenderer.invoke('workbench:modal', Boolean(open)),
   setWorkbenchShellHeight: (height) => ipcRenderer.send('workbench:shell-height', height),
@@ -25,9 +23,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   saveCredentials: (id, profile) => ipcRenderer.invoke('credentials:save', id, profile),
   removeCredentials: (id) => ipcRenderer.invoke('credentials:remove', id),
   showWorkbench: (id) => ipcRenderer.invoke('window:workbench', id || null),
-  showDetail: () => ipcRenderer.invoke('window:detail'),
   quit: () => ipcRenderer.invoke('app:quit'),
-  showWidgetMenu: () => ipcRenderer.invoke('widget:menu'),
   onSnapshot: (callback) => {
     const handler = (_event, snapshot) => callback(snapshot);
     ipcRenderer.on('snapshot:changed', handler);

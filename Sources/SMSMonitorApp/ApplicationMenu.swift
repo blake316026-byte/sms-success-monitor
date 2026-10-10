@@ -17,18 +17,18 @@ enum ApplicationMenu {
 
   private static func applicationMenuItem() -> NSMenuItem {
     let rootItem = NSMenuItem()
-    let menu = NSMenu(title: "短信成功率监控")
+    let menu = NSMenu(title: "后台工作台")
     rootItem.submenu = menu
 
     addItem(
       to: menu,
-      title: "关于短信成功率监控",
+      title: "关于后台工作台",
       action: #selector(NSApplication.orderFrontStandardAboutPanel(_:))
     )
     menu.addItem(.separator())
     addItem(
       to: menu,
-      title: "隐藏短信成功率监控",
+      title: "隐藏后台工作台",
       action: #selector(NSApplication.hide(_:)),
       keyEquivalent: "h"
     )
@@ -47,7 +47,7 @@ enum ApplicationMenu {
     menu.addItem(.separator())
     addItem(
       to: menu,
-      title: "退出短信成功率监控",
+      title: "退出后台工作台",
       action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q"
     )

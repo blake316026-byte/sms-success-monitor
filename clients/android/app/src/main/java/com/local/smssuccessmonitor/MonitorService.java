@@ -146,26 +146,12 @@ public final class MonitorService extends Service {
     private final LinkedHashMap<String, ManagedPage> pages = new LinkedHashMap<>();
     private final Set<Listener> listeners = new LinkedHashSet<>();
     private final Map<String, String> alertSignatures = new HashMap<>();
-    private final Runnable periodicScan = new Runnable() {
-        @Override
-        public void run() {
-            scanAll();
-            mainHandler.postDelayed(this, SCAN_INTERVAL_MS);
-        }
-    };
-
-    private NotificationManager notificationManager;
     private SharedPreferences preferences;
-    private String scanSource;
     private String loginAutomationSource;
     private String persistentHighlightSource;
     private HighlightSettings highlightSettings;
     private LocalCredentialStore credentialStore;
     private LocalAutomationRuntime automationRuntime;
-    private WindowManager windowManager;
-    private GaugeView overlayView;
-    private WindowManager.LayoutParams overlayParams;
-    private boolean overlayEnabled;
     private int sampleLimit;
 
     private static final class ManagedPage {
@@ -196,37 +182,27 @@ public final class MonitorService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         preferences = getSharedPreferences("monitor-preferences", MODE_PRIVATE);
         credentialStore = new LocalCredentialStore(this);
         automationRuntime = new LocalAutomationRuntime(this);
-        overlayEnabled = preferences.getBoolean("overlay-enabled", true);
         sampleLimit = normalizeSampleLimit(
                 preferences.getInt("sample-limit", DEFAULT_SAMPLE_LIMIT)
         );
         highlightSettings = loadHighlightSettings();
-        createNotificationChannels();
-        startForegroundMonitor(buildForegroundNotification(null));
 
         try {
-            scanSource = readAsset("scan.js");
             loginAutomationSource = readAsset("auto-login/login-page.js");
             persistentHighlightSource = readAsset("auto-login/persistent-highlight.js");
             for (ModuleConfig module : ModuleConfig.load(this)) createPage(module);
             refreshOutputs();
-            mainHandler.postDelayed(periodicScan, 5_000L);
         } catch (Exception error) {
-            notificationManager.notify(
-                    FOREGROUND_NOTIFICATION_ID,
-                    buildForegroundNotification("初始化失败：" + error.getMessage())
-            );
+            android.util.Log.e("Workbench", "Initialization failed", error);
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+        return START_NOT_STICKY;
     }
 
     @Override
@@ -236,7 +212,6 @@ public final class MonitorService extends Service {
 
     @Override
     public void onDestroy() {
-        removeOverlay();
         if (automationRuntime != null) automationRuntime.destroy();
         mainHandler.removeCallbacksAndMessages(null);
         for (ManagedPage page : pages.values()) page.webView.destroy();
@@ -285,7 +260,9 @@ public final class MonitorService extends Service {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (!request.isForMainFrame()) return;
-                finishScanError(page, "页面加载失败：" + error.getDescription());
+                page.state.status = "error";
+                page.state.message = "页面加载失败：" + error.getDescription();
+                refreshOutputs();
             }
         });
         webView.loadUrl(module.url);
@@ -544,178 +521,19 @@ public final class MonitorService extends Service {
         for (ManagedPage page : pages.values()) scan(page.state.module.id);
     }
 
+    // Login checks do not issue SMS or financial queries.
     public void scan(String id) {
         ManagedPage page = pages.get(id);
-        if (page == null || page.state.scanning || page.smsPermissionBlocked) return;
-        String currentUrl = page.webView.getUrl();
-        if (currentUrl == null || currentUrl.isEmpty()) return;
-        if (requiresInteractiveAuthentication(currentUrl)) {
-            handleAuthenticationRequired(page, "平台登录已失效。");
-            return;
-        }
-        if (!sameOrigin(page.state.module.url, currentUrl)) {
-            page.state.status = "starting";
-            page.state.message = "正在返回后台入口";
-            page.state.nextScanAt = System.currentTimeMillis() + 10_000L;
-            page.webView.loadUrl(page.state.module.url);
+        if (page == null) return;
+        String url = page.webView.getUrl();
+        if (url == null || url.isEmpty()) return;
+        if (isAuthenticationUrl(url)) {
+            handleAuthenticationRequired(page, "平台需要登录。");
+        } else {
+            page.state.status = "page";
+            page.state.message = "后台页面";
             refreshOutputs();
-            return;
         }
-
-        page.state.scanning = true;
-        int activeSampleLimit = sampleLimit;
-        page.scanSampleLimit = activeSampleLimit;
-        page.state.status = "scanning";
-        page.state.message = "正在读取最新 " + activeSampleLimit + " 条";
-        page.state.nextScanAt = System.currentTimeMillis() + SCAN_INTERVAL_MS;
-        page.scanToken = UUID.randomUUID().toString();
-        page.pollCount = 0;
-        refreshOutputs();
-
-        String token = JSONObject.quote(page.scanToken);
-        LocalCredentialStore.Profile storedProfile = credentialStore.get(page.state.module.id);
-        String fallbackToken = JSONObject.quote(
-                storedProfile == null ? "" : storedProfile.token
-        );
-        String script = "(function(){try{" + scanSource
-                + "window.__smsMonitorScanResult=null;"
-                + "Promise.resolve(globalThis.smsMonitorScan(" + activeSampleLimit + ","
-                + fallbackToken + ")).then(function(result){"
-                + "window.__smsMonitorScanResult=JSON.stringify({token:" + token + ",result:result});"
-                + "}).catch(function(error){window.__smsMonitorScanResult=JSON.stringify({token:" + token
-                + ",result:{kind:'error',message:String(error&&error.message||error)}});});"
-                + "return true;}catch(error){window.__smsMonitorScanResult=JSON.stringify({token:" + token
-                + ",result:{kind:'error',message:String(error&&error.message||error)}});return false;}})()";
-
-        page.webView.evaluateJavascript(script, ignored -> mainHandler.postDelayed(
-                () -> pollScanResult(page), SCAN_POLL_MS
-        ));
-    }
-
-    private void pollScanResult(ManagedPage page) {
-        if (!page.state.scanning || page.scanToken == null) return;
-        page.pollCount += 1;
-        if (page.pollCount > MAX_SCAN_POLLS) {
-            finishScanError(page, "扫描超过 56 秒，请检查网络后重试");
-            return;
-        }
-
-        page.webView.evaluateJavascript("window.__smsMonitorScanResult || null", value -> {
-            try {
-                String payload = decodeJavascriptString(value);
-                if (payload == null || payload.isEmpty()) {
-                    mainHandler.postDelayed(() -> pollScanResult(page), SCAN_POLL_MS);
-                    return;
-                }
-                JSONObject envelope = new JSONObject(payload);
-                if (!page.scanToken.equals(envelope.optString("token"))) {
-                    mainHandler.postDelayed(() -> pollScanResult(page), SCAN_POLL_MS);
-                    return;
-                }
-                page.webView.evaluateJavascript("window.__smsMonitorScanResult=null", null);
-                applyScanResult(page, envelope.getJSONObject("result"));
-            } catch (Exception error) {
-                finishScanError(page, "扫描结果无法识别：" + error.getMessage());
-            }
-        });
-    }
-
-    private void applyScanResult(ManagedPage page, JSONObject result) {
-        page.state.scanning = false;
-        page.scanToken = null;
-        long now = System.currentTimeMillis();
-        String kind = result.optString("kind", "error");
-
-        if ("auth".equals(kind)) {
-            if (result.optBoolean("manualOnly")) page.manualAuthenticationRequired = true;
-            page.state.consecutiveScanFailures = 0;
-            handleAuthenticationRequired(page, result.optString("message", "平台登录已失效。"));
-            return;
-        }
-        if ("permission".equals(kind)) {
-            page.smsPermissionBlocked = true;
-            page.manualAuthenticationRequired = true;
-            page.state.clearMetrics();
-            page.state.status = "error";
-            page.state.message = result.optString("message", "当前账号无短信权限，已停止查询。");
-            page.state.nextScanAt = 0;
-            refreshOutputs();
-            return;
-        }
-        if ("sessionChanged".equals(kind)) {
-            page.state.clearMetrics();
-            page.state.status = "starting";
-            page.state.message = "账号会话已变化，已丢弃旧数据";
-            page.state.nextScanAt = now + SCAN_INTERVAL_MS;
-            refreshOutputs();
-            return;
-        }
-        if (page.scanSampleLimit != sampleLimit) {
-            page.scanSampleLimit = 0;
-            page.state.needsImmediateScan = false;
-            mainHandler.post(() -> scan(page.state.module.id));
-            return;
-        }
-        if (!"ok".equals(kind)) {
-            finishScanError(page, result.optString("message", "短信记录接口扫描失败"));
-            return;
-        }
-
-        JSONArray statuses = result.optJSONArray("statuses");
-        int sampleCount = statuses == null ? 0 : Math.min(statuses.length(), page.scanSampleLimit);
-        int successCount = 0;
-        for (int index = 0; index < sampleCount; index += 1) {
-            if ("SUCCESS".equals(statuses.optString(index).trim().toUpperCase(Locale.ROOT))) {
-                successCount += 1;
-            }
-        }
-        if (sampleCount == 0) {
-            finishScanError(page, "短信记录接口未返回可统计记录");
-            return;
-        }
-
-        page.state.hasMetrics = true;
-        page.state.consecutiveScanFailures = 0;
-        page.state.sampleCount = sampleCount;
-        page.state.successCount = successCount;
-        page.state.nonSuccessCount = sampleCount - successCount;
-        page.state.successRate = (double) successCount / (double) sampleCount;
-        page.state.status = page.state.isAlert() ? "alert" : "healthy";
-        page.state.message = page.state.isAlert() ? "成功率低于 50%" : "成功率正常";
-        page.state.scannedAt = now;
-        page.state.nextScanAt = now + SCAN_INTERVAL_MS;
-        page.scanSampleLimit = 0;
-        refreshOutputs();
-        notifyAlertIfNeeded(page.state);
-    }
-
-    private void finishScanError(ManagedPage page, String message) {
-        if (page.state.scanning && page.scanSampleLimit != 0
-                && page.scanSampleLimit != sampleLimit) {
-            page.state.scanning = false;
-            page.scanToken = null;
-            page.scanSampleLimit = 0;
-            page.state.needsImmediateScan = false;
-            mainHandler.post(() -> scan(page.state.module.id));
-            return;
-        }
-        page.state.scanning = false;
-        page.scanToken = null;
-        page.scanSampleLimit = 0;
-        page.state.consecutiveScanFailures += 1;
-        page.state.status = "error";
-        page.state.message = message;
-        page.state.scannedAt = System.currentTimeMillis();
-        page.state.nextScanAt = page.state.scannedAt + SCAN_INTERVAL_MS;
-        boolean shouldReload = page.state.consecutiveScanFailures >= SCAN_FAILURE_RELOAD_THRESHOLD;
-        if (shouldReload) {
-            page.state.consecutiveScanFailures = 0;
-            page.state.needsImmediateScan = true;
-            page.state.message = message + "；正在自动重载后台连接。";
-        }
-        alertSignatures.remove(page.state.module.id);
-        refreshOutputs();
-        if (shouldReload) mainHandler.post(page.webView::reload);
     }
 
     private void handleAuthenticationRequired(ManagedPage page, String message) {
@@ -1175,214 +993,6 @@ public final class MonitorService extends Service {
         for (Listener listener : new ArrayList<>(listeners)) {
             listener.onMonitorSnapshot(snapshot);
         }
-        notificationManager.notify(
-                FOREGROUND_NOTIFICATION_ID,
-                buildForegroundNotification(snapshot.focus == null ? null : foregroundText(snapshot.focus))
-        );
-        updateOverlay(snapshot);
-    }
-
-    private String foregroundText(ModuleState focus) {
-        if (focus.hasMetrics) {
-            return focus.module.name + " " + focus.percentageText()
-                    + " · 成功 " + focus.successCount + "/" + focus.sampleCount;
-        }
-        return focus.module.name + " · " + focus.message;
-    }
-
-    private void notifyAlertIfNeeded(ModuleState state) {
-        if (!state.isAlert()) {
-            alertSignatures.remove(state.module.id);
-            return;
-        }
-        String signature = state.successCount + "/" + state.sampleCount;
-        if (signature.equals(alertSignatures.get(state.module.id))) return;
-        alertSignatures.put(state.module.id, signature);
-
-        Intent openIntent = new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra("module-id", state.module.id)
-                .putExtra("show-overview", true);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this,
-                state.module.id.hashCode(),
-                openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-        Notification notification = new Notification.Builder(this, ALERT_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_monitor)
-                .setColor(getColor(R.color.alert_red))
-                .setContentTitle(state.module.name + " 短信成功率报警")
-                .setContentText("最新 " + state.sampleCount + " 条成功 " + state.successCount
-                        + " 条，成功率 " + state.percentageText() + "，低于 50%。")
-                .setStyle(new Notification.BigTextStyle().bigText(
-                        state.module.name + "：最新 " + state.sampleCount + " 条短信中成功 "
-                                + state.successCount + " 条，未成功 " + state.nonSuccessCount
-                                + " 条，成功率 " + state.percentageText() + "，低于 50%。"
-                ))
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
-                .setCategory(Notification.CATEGORY_ALARM)
-                .build();
-        try {
-            notificationManager.notify(ALERT_NOTIFICATION_BASE + Math.abs(state.module.id.hashCode() % 500), notification);
-        } catch (SecurityException ignored) {
-            // Android 13+ may have notifications disabled while the overlay remains active.
-        }
-    }
-
-    private void createNotificationChannels() {
-        NotificationChannel monitorChannel = new NotificationChannel(
-                MONITOR_CHANNEL_ID,
-                getString(R.string.monitor_channel),
-                NotificationManager.IMPORTANCE_LOW
-        );
-        monitorChannel.setDescription("保持每分钟短信成功率扫描持续运行");
-        monitorChannel.setShowBadge(false);
-
-        NotificationChannel alertChannel = new NotificationChannel(
-                ALERT_CHANNEL_ID,
-                getString(R.string.alert_channel),
-                NotificationManager.IMPORTANCE_HIGH
-        );
-        alertChannel.setDescription("成功率低于 50% 时报警");
-        alertChannel.enableVibration(true);
-        notificationManager.createNotificationChannel(monitorChannel);
-        notificationManager.createNotificationChannel(alertChannel);
-    }
-
-    private Notification buildForegroundNotification(String text) {
-        Intent intent = new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this,
-                1,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-        return new Notification.Builder(this, MONITOR_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_monitor)
-                .setColor(getColor(R.color.brand_green))
-                .setContentTitle("短信成功率监控运行中")
-                .setContentText(text == null ? "扫描最新 " + sampleLimit + " 条 · 每 1 分钟" : text)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .setCategory(Notification.CATEGORY_SERVICE)
-                .build();
-    }
-
-    private void startForegroundMonitor(Notification notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                    FOREGROUND_NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            );
-        } else {
-            startForeground(FOREGROUND_NOTIFICATION_ID, notification);
-        }
-    }
-
-    public boolean isOverlayEnabled() {
-        return overlayEnabled;
-    }
-
-    public void setOverlayEnabled(boolean enabled) {
-        overlayEnabled = enabled;
-        preferences.edit().putBoolean("overlay-enabled", enabled).apply();
-        updateOverlay(buildSnapshot());
-    }
-
-    private void updateOverlay(MonitorSnapshot snapshot) {
-        if (!overlayEnabled || !Settings.canDrawOverlays(this)) {
-            removeOverlay();
-            return;
-        }
-        if (overlayView == null) createOverlay();
-        if (overlayView != null) {
-            overlayView.setMonitorState(
-                    snapshot.focus,
-                    snapshot.alertCount,
-                    snapshot.authenticationCount
-            );
-        }
-    }
-
-    private void createOverlay() {
-        overlayView = new GaugeView(this);
-        overlayParams = new WindowManager.LayoutParams(
-                dp(228),
-                dp(236),
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                android.graphics.PixelFormat.TRANSLUCENT
-        );
-        overlayParams.gravity = Gravity.TOP | Gravity.START;
-        overlayParams.x = preferences.getInt("overlay-x", dp(12));
-        overlayParams.y = preferences.getInt("overlay-y", dp(96));
-        configureOverlayTouch();
-        try {
-            windowManager.addView(overlayView, overlayParams);
-        } catch (RuntimeException error) {
-            overlayView = null;
-            overlayParams = null;
-        }
-    }
-
-    private void configureOverlayTouch() {
-        final float[] startTouch = new float[2];
-        final int[] startPosition = new int[2];
-        final boolean[] dragged = new boolean[1];
-        overlayView.setOnTouchListener((view, event) -> {
-            if (overlayParams == null) return false;
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                startTouch[0] = event.getRawX();
-                startTouch[1] = event.getRawY();
-                startPosition[0] = overlayParams.x;
-                startPosition[1] = overlayParams.y;
-                dragged[0] = false;
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_MOVE) {
-                float deltaX = event.getRawX() - startTouch[0];
-                float deltaY = event.getRawY() - startTouch[1];
-                if (Math.abs(deltaX) > dp(5) || Math.abs(deltaY) > dp(5)) dragged[0] = true;
-                overlayParams.x = Math.max(0, startPosition[0] + Math.round(deltaX));
-                overlayParams.y = Math.max(0, startPosition[1] + Math.round(deltaY));
-                windowManager.updateViewLayout(overlayView, overlayParams);
-                return true;
-            }
-            if (event.getAction() == MotionEvent.ACTION_UP) {
-                preferences.edit()
-                        .putInt("overlay-x", overlayParams.x)
-                        .putInt("overlay-y", overlayParams.y)
-                        .apply();
-                if (!dragged[0]) {
-                    view.performClick();
-                    openDashboard();
-                }
-                return true;
-            }
-            return false;
-        });
-    }
-
-    private void openDashboard() {
-        Intent intent = new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                .putExtra("show-overview", true);
-        startActivity(intent);
-    }
-
-    private void removeOverlay() {
-        if (overlayView == null) return;
-        try {
-            windowManager.removeView(overlayView);
-        } catch (RuntimeException ignored) {
-        }
-        overlayView = null;
-        overlayParams = null;
     }
 
     private boolean isAuthenticationUrl(String value) {

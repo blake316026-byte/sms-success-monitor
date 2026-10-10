@@ -183,6 +183,8 @@ enum ScanScript {
       return null;
     };
     let lastAuthenticationMessage = '客户端登录态已失效，请重新登录。';
+    let lastHTTPStatus = 0;
+    let lastAuthCode = 0;
     for (const candidate of tokenCandidates) {
       const headers = {
         Accept: 'application/json',
@@ -231,6 +233,8 @@ enum ScanScript {
           return { kind: 'permission', message: '当前账号无短信记录查看权限，已停止短信查询。' };
         }
         if (response.status === 401) {
+          lastHTTPStatus = 401;
+          lastAuthCode = 0;
           lastAuthenticationMessage = `平台返回 HTTP ${response.status}，请重新登录。`;
           candidateRejected = true;
           break;
@@ -254,6 +258,13 @@ enum ScanScript {
         const apiStatus = Number(payload && payload.status);
         if (apiStatus !== 0) {
           if ([1010, 1011, 1012, 1013, 1014].includes(apiStatus)) {
+            if (apiStatus !== 1012) {
+              return { kind: 'auth', manualOnly: false, sessionUsername,
+                httpStatus: response.status, authCode: apiStatus,
+                message: payload.message || `平台要求补充验证 (${apiStatus})。` };
+            }
+            lastHTTPStatus = response.status;
+            lastAuthCode = apiStatus;
             lastAuthenticationMessage = payload.message || `登录状态异常 (${apiStatus})。`;
             candidateRejected = true;
             break;
@@ -292,6 +303,7 @@ enum ScanScript {
       };
     }
 
-    return { kind: 'auth', manualOnly: false, sessionUsername, message: lastAuthenticationMessage };
+    return { kind: 'auth', manualOnly: false, sessionUsername,
+      httpStatus: lastHTTPStatus, authCode: lastAuthCode, message: lastAuthenticationMessage };
     """#
 }

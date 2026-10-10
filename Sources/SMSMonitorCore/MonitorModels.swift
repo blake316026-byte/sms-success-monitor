@@ -1,10 +1,12 @@
 import Foundation
 
 public struct DailyFinancialMetrics: Equatable, Sendable {
+  public let countryID: String
   public let rechargeAmount: Double
   public let withdrawAmount: Double
 
-  public init(rechargeAmount: Double, withdrawAmount: Double) {
+  public init(countryID: String, rechargeAmount: Double, withdrawAmount: Double) {
+    self.countryID = countryID
     self.rechargeAmount = rechargeAmount
     self.withdrawAmount = withdrawAmount
   }
@@ -17,6 +19,30 @@ public struct DailyFinancialMetrics: Equatable, Sendable {
     guard rechargeAmount.isFinite, rechargeAmount != 0 else { return nil }
     let ratio = differenceAmount / rechargeAmount
     return ratio.isFinite ? ratio : nil
+  }
+}
+
+public struct CountryFinancialTotal: Equatable, Sendable {
+  public let countryID: String
+  public let platformCount: Int
+  public let metrics: DailyFinancialMetrics
+}
+
+public enum FinancialCountrySummary {
+  public static func totals(_ metrics: [DailyFinancialMetrics]) -> [CountryFinancialTotal] {
+    let grouped = Dictionary(grouping: metrics.filter { !$0.countryID.isEmpty }, by: \.countryID)
+    return grouped.keys.sorted().compactMap { countryID in
+      guard let values = grouped[countryID] else { return nil }
+      return CountryFinancialTotal(
+        countryID: countryID,
+        platformCount: values.count,
+        metrics: DailyFinancialMetrics(
+          countryID: countryID,
+          rechargeAmount: values.reduce(0) { $0 + $1.rechargeAmount },
+          withdrawAmount: values.reduce(0) { $0 + $1.withdrawAmount }
+        )
+      )
+    }
   }
 }
 
@@ -138,142 +164,8 @@ public struct MonitorConfiguration: Equatable, Sendable {
     self.alertThreshold = alertThreshold
   }
 
-  public static let bills02 = MonitorConfiguration(
-    id: "bills02-otp",
-    displayName: "BIllS02-OTP",
-    targetURL: URL(
-      string:
-        "https://bills02-otp.local.sms-monitor.invalid/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
+  public static let allModules: [MonitorConfiguration] = []
 
-  public static let bills = MonitorConfiguration(
-    id: "bills",
-    displayName: "BIllS",
-    targetURL: URL(
-      string:
-        "https://bills.local.sms-monitor.invalid/app-user-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000001")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let bills3 = MonitorConfiguration(
-    id: "bills3",
-    displayName: "BIllS3",
-    targetURL: URL(
-      string:
-        "https://bills3.local.sms-monitor.invalid/recharge-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000003")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let bills4 = MonitorConfiguration(
-    id: "bills4",
-    displayName: "BIllS4",
-    targetURL: URL(
-      string:
-        "https://bills4.local.sms-monitor.invalid/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000004")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let cg01 = MonitorConfiguration(
-    id: "cg01",
-    displayName: "cg01",
-    targetURL: URL(
-      string: "https://cg01.local.sms-monitor.invalid/ck-dashboard#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000101")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let cg02 = MonitorConfiguration(
-    id: "cg02",
-    displayName: "cg02",
-    targetURL: URL(
-      string: "https://cg02.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000102")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let cg03 = MonitorConfiguration(
-    id: "cg03-nine01",
-    displayName: "cg03（nine01）",
-    targetURL: URL(
-      string:
-        "https://cg03-nine01.local.sms-monitor.invalid/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000103")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let cg04 = MonitorConfiguration(
-    id: "cg04",
-    displayName: "cg04",
-    targetURL: URL(
-      string: "https://cg04.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000104")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let bs01 = MonitorConfiguration(
-    id: "bs01",
-    displayName: "bs01",
-    targetURL: URL(
-      string: "https://bs01.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000201")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let ok01 = MonitorConfiguration(
-    id: "ok01",
-    displayName: "OK01",
-    targetURL: URL(
-      string: "https://ok01.local.sms-monitor.invalid/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
-    )!,
-    profileIdentifier: UUID(uuidString: "53D12001-4A6B-4C00-9000-000000000301")!,
-    sampleLimit: 200,
-    scanInterval: 60,
-    alertThreshold: 0.50
-  )
-
-  public static let allModules: [MonitorConfiguration] = [
-    .bills02,
-    .bills,
-    .bills3,
-    .bills4,
-    .cg01,
-    .cg02,
-    .cg03,
-    .cg04,
-    .bs01,
-    .ok01,
-  ]
 }
 
 public struct ScanMetrics: Equatable, Sendable {

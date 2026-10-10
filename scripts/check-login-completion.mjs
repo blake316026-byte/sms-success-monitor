@@ -13,14 +13,17 @@ const scan = section('  func scanNow()', '  func updateSampleLimit');
 assert.match(scan, /if credentialLoginPending \{\s*confirmAutoLoginCompletion\(\)/);
 const methods = [
   section('  private func scheduleAutoLoginOutcomeCheck(', '  private func retryAutoLogin('),
-  section('  private func completeAutoLogin(', '  private func attemptAuthenticatedPageRecovery('),
+  section('  private func completeAutoLogin(', '  private var needsAuthenticatedPageRecovery'),
+  section('  private func handleAPIAuthenticationRequired(', '  private func resetAccountIdentityRecovery('),
+  section('  private static func compactedPageBaseURL(', '  private static func compactedPageHTML('),
   didFinish,
-].join('\n').replaceAll('private func ', 'func ').replaceAll('WKWebView', 'Page').replaceAll('WKNavigation', 'NSObject');
+].join('\n').replaceAll('private static func ', 'static func ').replaceAll('private func ', 'func ').replaceAll('WKWebView', 'Page').replaceAll('WKNavigation', 'NSObject');
 
 // Compile the production transition methods against deterministic collaborators.
 // No real credentials, HTTP calls, browser stores or platform accounts are used.
 const harness = `
 import Foundation
+import OSLog
 final class Page {
   var url: URL? = URL(string: "https://fixture.invalid/")
   var isLoading = false
@@ -41,8 +44,9 @@ final class Automation {
   }
   func refreshCaptcha(in page: Page) {}
 }
-enum State { case authenticationRequired(String), starting(String) }
+enum State { case authenticationRequired(String), starting(String), error(String, Date) }
 final class Controller {
+  static let authenticationLogger = Logger(subsystem: "sms-monitor-test", category: "Authentication")
   static let autoLoginCooldown: TimeInterval = 300
   let configuration = (id: "fixture", targetURL: URL(string: "https://fixture.invalid/dashboard")!)
   let credentialStore = Store(), loginAutomation = Automation(), webView = Page()
@@ -54,6 +58,8 @@ final class Controller {
   var authenticatedPageRecoveryID: UUID?
   var isScanning = false, isRefreshingFinancial = false, needsImmediateScan = false
   var isMemoryCompacted = false
+  var isRestoringCompactedPage = false, apiAuthenticationValidationAttempted = false
+  var latestDailyFinancialMetrics: String?
   var monitoringEnabled = true, browserOnlyPage = false, platformIdentified = true
   var tianchengLogin: NSObject? = nil
   var scans = 0, logins = 0, financialStarts = 0, pageRecoveries = 0
@@ -66,6 +72,10 @@ final class Controller {
   func attemptAuthenticatedPageRecovery() { pageRecoveries += 1 }
   func reconcileAuthenticatedBusinessPageIfNeeded() { pageRecoveries += 1 }
   func resetAccountIdentityRecovery() {}
+  func prepareAuthenticationRecovery(from payload: [String: Any]) {}
+  func cancelNextScan() {}
+  func scheduleNextScanAfterCurrentRun() {}
+  func reloadPlatformPage() { webView.loads += 1 }
   func persistCurrentToken() {}
   func ensureFinancialRefreshScheduled() { financialStarts += 1 }
   func emit(_ state: State, nextScanAt: Date?) {}
@@ -81,8 +91,11 @@ func check(_ value: Bool, _ message: String) {
   print("PASS: " + message)
 }
 let c = Controller()
+c.isRestoringCompactedPage = true
+c.apiAuthenticationValidationAttempted = true
 let epoch = c.authenticationEpoch
 c.webView(c.webView, didFinish: nil)
+check(!c.isRestoringCompactedPage, "completed navigation releases restoration guard")
 check(c.credentialLoginPending && c.autoLoginInProgress && c.autoLoginStage == "totp", "root navigation preserves pending recovery and TOTP stage")
 check(c.scans == 0 && c.financialStarts == 0, "root navigation starts no protected query")
 c.autoLoginOutcomeWorkItem?.perform()
@@ -98,6 +111,7 @@ check(c.credentialLoginPending && c.financialStarts == 0, "business route withou
 c.loginAutomation.token = "fixture-token"
 c.confirmAutoLoginCompletion()
 check(!c.credentialLoginPending && !c.autoLoginInProgress && c.autoLoginStage.isEmpty, "confirmed session atomically clears recovery before scans")
+check(!c.apiAuthenticationValidationAttempted, "a confirmed new session renews the validation budget")
 check(c.authenticationEpoch != epoch && c.financialStarts == 1 && c.webView.loads == 0, "confirmation invalidates old callbacks without navigating to login")
 let stale = Controller()
 stale.webView.url = URL(string: "https://fixture.invalid/dashboard")
@@ -115,6 +129,25 @@ staleNativeState.manualAuthenticationRequired = true
 staleNativeState.webView.url = URL(string: "https://fixture.invalid/dashboard")
 staleNativeState.webView(staleNativeState.webView, didFinish: nil)
 check(staleNativeState.pageRecoveries == 1 && staleNativeState.scans == 0, "authenticated routes probe stale native login state before scanning")
+let api = Controller()
+api.webView.url = URL(string: "https://fixture.invalid/dashboard")
+for code in [0, 1010, 1011, 1013, 1014] {
+  for _ in 0..<3 {
+    api.handleAPIAuthenticationRequired(payload: ["authCode": code, "httpStatus": 200], message: "challenge")
+  }
+}
+check(api.webView.loads == 0 && api.logins == 0, "supplementary challenges and absent tokens never reload an authenticated page")
+for code in [1012, 1012, 1013, 1012] {
+  api.handleAPIAuthenticationRequired(payload: ["authCode": code, "httpStatus": 200], message: "expired")
+}
+api.handleAPIAuthenticationRequired(payload: ["httpStatus": 401], message: "unauthorized")
+check(api.webView.loads == 1 && api.logins == 0, "explicit session rejection reloads at most once until a new session is confirmed")
+api.webView.url = URL(string: "https://fixture.invalid/login")
+api.handleAPIAuthenticationRequired(payload: [:], message: "login page")
+check(api.logins == 1, "a real login page can still initiate authentication")
+let url = URL(string: "https://fixture.invalid/report?unused=1#CC=countrY-Tkk-fixture")!
+let shell = Controller.compactedPageBaseURL(for: url)
+check(shell.fragment == url.fragment && shell.host == url.host && shell.path == "/.sms-monitor-memory-shell", "memory shell preserves country and verification context at the same origin")
 `;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-login-completion-'));
 try {

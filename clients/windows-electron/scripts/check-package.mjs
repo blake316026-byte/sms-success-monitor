@@ -8,8 +8,6 @@ for (const file of [
   'src/main.mjs',
   'src/preload.cjs',
   'src/ui/workbench.html',
-  'src/ui/widget.html',
-  'src/ui/detail.html',
   '../shared/auto-login/runtime.html',
   '../shared/auto-login/runtime.js',
   '../shared/auto-login/login-page.js',
@@ -27,10 +25,6 @@ const preloadSource = fs.readFileSync(path.join(root, 'src/preload.cjs'), 'utf8'
 const workbenchSource = fs.readFileSync(path.join(root, 'src/ui/workbench.html'), 'utf8');
 const workbenchScript = fs.readFileSync(path.join(root, 'src/ui/workbench.js'), 'utf8');
 const workbenchStyles = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
-assert.match(mainSource, /settings:set-sample-limit/, 'main process exposes local sample settings');
-assert.match(mainSource, /monitor-settings\.json/, 'sample settings persist in the local user directory');
-assert.match(preloadSource, /setSampleLimit/, 'preload exposes the sample setting command');
-assert.match(workbenchSource, /id="sample-limit"/, 'workbench renders the sample count input');
 assert.match(mainSource, /workbench:zoom/, 'main process exposes workbench zoom controls');
 assert.match(mainSource, /workbenchZoomFactor/, 'workbench zoom persists in local settings');
 assert.match(preloadSource, /changeWorkbenchZoom/, 'preload exposes workbench zoom commands');
@@ -74,16 +68,9 @@ assert.match(mainSource, /applyPersistentHighlightsToAllPages/, 'saved terms app
 assert.match(mainSource, /did-finish-load[\s\S]*applyPersistentHighlights/, 'highlights return after navigation');
 assert.match(preloadSource, /saveHighlightSettings/, 'preload exposes persistent highlight settings');
 assert.match(mainSource, /function ensurePageState/, 'custom pages receive local auto-login state');
-assert.match(
-  mainSource,
-  /const moduleList = \[\.\.\.pages\.values\(\)\]\.map/,
-  'custom pages are included in the monitoring overview'
-);
 assert.match(mainSource, /function scanAllPages/, 'all-page scanning includes custom pages');
-assert.match(mainSource, /financialRefreshIntervalMs = 20_000/, 'Windows refreshes finance independently every 20 seconds');
 assert.match(mainSource, /financePermissionBlocked/, 'Windows stops finance requests after a permission denial');
 assert.match(mainSource, /smsPermissionBlocked/, 'Windows stops SMS requests after a permission denial');
-assert.match(mainSource, /dailyFinancialTotals/, 'Windows aggregates available financial totals');
 assert.match(mainSource, /reloadIgnoringCache/, 'manual refresh reloads the selected platform without cache');
 assert.match(mainSource, /waitForPageReload/, 'manual refresh waits for page loading events');
 assert.match(mainSource, /await page\.view\.webContents\.loadURL/, 'manual refresh falls back to a forced URL load');
@@ -120,3 +107,11 @@ assert.doesNotMatch(
   'custom pages can be scanned directly from the workbench'
 );
 console.log('Windows Electron package structure checks passed');
+
+for (const removed of ['widget.html', 'widget.js', 'detail.html', 'detail.js']) {
+  assert.equal(fs.existsSync(path.join(root, 'src/ui', removed)), false);
+}
+assert.doesNotMatch(mainSource, /createWidgetWindow|createDetailWindow|window:detail|widget:menu|dailyFinancialTotals/);
+assert.doesNotMatch(preloadSource, /showDetail|showWidgetMenu|setMonitoringEnabled|setSampleLimit/);
+assert.doesNotMatch(workbenchSource, /id="(?:scan|detail|sample-limit)"/);
+assert.doesNotMatch(workbenchStyles, /\.widget|\.detail-|country-totals/);

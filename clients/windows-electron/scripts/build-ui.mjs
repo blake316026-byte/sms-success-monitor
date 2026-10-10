@@ -11,9 +11,7 @@ await fs.mkdir(outputDirectory, { recursive: true });
 
 await build({
   entryPoints: [
-    path.join(root, 'src/ui/workbench.js'),
-    path.join(root, 'src/ui/widget.js'),
-    path.join(root, 'src/ui/detail.js')
+    path.join(root, 'src/ui/workbench.js')
   ],
   bundle: true,
   outdir: outputDirectory,
@@ -24,7 +22,7 @@ await build({
   sourcemap: false
 });
 
-for (const file of ['workbench.html', 'widget.html', 'detail.html', 'styles.css']) {
+for (const file of ['workbench.html', 'styles.css']) {
   await fs.copyFile(path.join(root, 'src/ui', file), path.join(outputDirectory, file));
 }
 await fs.copyFile(

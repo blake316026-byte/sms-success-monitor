@@ -1,7 +1,7 @@
 {
   "name": "sms-success-monitor-windows",
-  "version": "0.3.68",
-  "description": "Windows client for multi-platform SMS success-rate monitoring",
+  "version": "0.3.83",
+  "description": "Public platform workbench without monitoring dashboards",
   "main": "src/main.mjs",
   "type": "module",
   "private": true,

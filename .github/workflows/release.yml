@@ -1,20 +1,16 @@
-name: Publish client release
-
+name: Build public clients
 on:
   push:
-    tags:
-      - "v*"
+    branches: ["release/public-lite-*"]
+    tags: ["v*"]
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
-  group: publish-client-release
+  group: public-client-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  build-windows:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,13 +19,11 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: clients/windows-electron/package-lock.json
-      - name: Install dependencies
-        run: npm ci --prefix clients/windows-electron
-      - name: Run shared checks
-        run: npm test --prefix clients/windows-electron
-      - name: Package Windows client
-        run: npm run package:windows --prefix clients/windows-electron
-      - name: Verify packaged Windows DPAPI, OCR, TOTP, zoom and page find runtime
+      - run: npm ci --prefix clients/windows-electron
+      - run: node scripts/check-public-edition.mjs
+      - run: npm test --prefix clients/windows-electron
+      - run: npm run package:windows --prefix clients/windows-electron
+      - name: Verify packaged Windows runtime
         timeout-minutes: 3
         shell: pwsh
         run: |
@@ -42,86 +36,35 @@ jobs:
           $process = Start-Process -FilePath $exePath -Wait -PassThru
           if (Test-Path $resultPath) { Get-Content $resultPath }
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+          if (-not (Test-Path $resultPath)) { throw "Missing runtime check result" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-client
           path: dist/windows/SMS-Success-Monitor-Windows-x64.zip
           if-no-files-found: error
-
-  publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build-windows
+  android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/setup-java@v4
         with:
-          name: windows-client
-          path: release-assets
-      - name: Add verified macOS and Android clients
+          distribution: temurin
+          java-version: 17
+      - name: Build and lint reduced Android client
+        working-directory: clients/android
+        run: ./gradlew :app:lintDebug :app:assembleDebug
+      - name: Verify packaged manifest
         run: |
-          cp release-seed/SMS-Success-Monitor-macOS-universal.zip release-assets/
-          cp release-seed/SMS-Success-Monitor-Android.apk release-assets/
-      - name: Generate checksums
-        working-directory: release-assets
-        run: sha256sum SMS-Success-Monitor-* > SHA256SUMS.txt
-      - name: Write release notes
-        run: |
-          if [ -f "releases/${GITHUB_REF_NAME}.md" ]; then
-            cp "releases/${GITHUB_REF_NAME}.md" release-notes.md
-            exit 0
-          fi
-          cat > release-notes.md <<'NOTES'
-          ## 三端客户端下载
-
-          - **macOS**：Universal 2，同时支持 Apple Silicon 和 Intel Mac
-          - **Windows**：64 位 Windows 10/11，完整解压 ZIP 后运行
-          - **Android**：Android 8.0 及以上，安装 APK 后授权通知和悬浮窗
-
-          每个平台默认每分钟扫描最新 200 条短信，用户可在客户端把全局样本数设置为 10–500 条；设置只保存在当前设备，保存后立即按新值重扫。只有 `SUCCESS` 计为成功；成功率低于 50% 报警，多个报警时展示最低值，未登录平台不覆盖有效监控结果。
-
-          同一后台连续两次扫描异常时，客户端会自动重载该后台连接并立即重试，不清除登录状态，也不影响其他后台。
-
-          **v0.3.2 自动登录**：用户可在每个后台的钥匙图标中，把账号、密码和可选 Google 密钥保存到设备本地加密存储。Token 失效后，客户端在本地识别图片验证码、生成 Google 动态码并自动获取新 Token；所有凭据与 Token 均不上传数据库。
-
-          **v0.3.3 样本设置**：macOS、Windows 和 Android 均可人工设置样本条数，客户端会自动翻页取得完整样本，并在修改后立即重新扫描全部已登录后台。
-
-          **v0.3.4 Windows 工作台缩放**：Windows 后台页面支持 50%–200% 缩放，可使用工作台工具栏、`Ctrl +`、`Ctrl -`、`Ctrl 0` 或 `Ctrl + 鼠标滚轮`；缩放比例只保存在当前设备。
-
-          **v0.3.5 工作台网页查找**：Windows 使用 `Ctrl-F`、macOS 使用 `Command-F` 查找当前选中的后台网页内容，可切换上一个和下一个匹配项；切换后台标签后按当前关键词继续查找。
-
-          **v0.3.6 登录与页面管理**：修复图片验证码与 Google 动态码自动提交，macOS 后台钥匙串访问不再反复阻塞工作台；macOS 和 Windows 自定义页面支持重命名与删除。
-
-          **v0.3.7 自定义页面自动登录**：macOS 和 Windows 新增的独立后台页面现在也可配置账号、密码和 Google 密钥，并在 Token 失效后自动登录。macOS 配置改为应用专用 AES-GCM 加密文件，保存后立即回读校验，并已完全移除旧钥匙串访问，避免系统授权弹窗。旧钥匙串中的配置不会继续读取，需要在新版中重新保存一次。
-
-          **v0.3.8 自定义页面监控**：macOS 和 Windows 工作台新增的后台页面会自动加入监控总览并按全局样本数扫描；页面重命名、地址修改和删除会实时同步到总览。macOS 总览和工作台标题会显示实际后台数量。
-
-          **v0.3.9 Windows 弹窗修复**：修复 Windows 工作台中后台网页覆盖“新增监控后台”和“自动登录设置”弹窗的问题。打开弹窗时会临时隐藏当前后台网页，关闭弹窗后立即恢复，页面创建和自动登录配置可正常操作。
-
-          **v0.3.10 macOS 长扫描恢复**：修复获取 300–500 条记录超过一分钟后，下一轮定时器被提前消耗并永久保留旧成功率的问题。扫描完成后会按实际耗时重新排期，单轮超过 3 分钟自动重载，结果超过 4 分钟未更新会标记异常并主动重扫，不再把过期百分比显示为正常。
-
-          **v0.3.11 自动登录重试**：图片验证码与 Google 验证码改为独立计数。图片验证码识别或提交失败后自动刷新并继续尝试，最多 10 次；Google 验证码最多尝试 5 次。分别达到上限后才暂停自动登录并提示人工处理。
-
-          **v0.3.12 Token 有效期复用**：修复客户端仅因页面落在 `/login` 就重复自动登录的问题。客户端现在会优先使用页面 Token 或本机加密保存的 Token 调用只读短信记录接口；只有无 Token、HTTP 401/403 或平台明确返回认证失效码时才重新登录。
-
-          **v0.3.42 Windows 刷新状态机修复**：刷新按钮在成功和失败后都会恢复可用；主进程等待 `did-start-loading` 与 `did-stop-loading` 真实事件才判定成功，未触发或超时时强制重新加载当前网址。刷新后立即重查短信和财务，并保留权限熔断的人工重试语义。公开客户端不包含真实后台链接、账号、密码、Token、Cookie 或 Google 密钥。
-
-          **v0.3.50 macOS 平台排序修复**：恢复可换行平台导航的拖动排序，支持跨第二、第三排移动；调整后的顺序保存在用户本机，重启客户端后继续保留。
-
-          **v0.3.51 Token 会话恢复修复**：客户端重启后先验证本机加密保存的 Token；Token 仍有效时自动补建或更新网页会话，不再重复执行账号、图片验证码和 Google 验证码登录。只有 Token 确实失效或网页会话恢复失败时才重新登录。
-
-          这些是内部签名版本。macOS 和 Windows 首次启动可能显示来源提示；Android 需要允许该来源安装应用。
-          NOTES
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          release-assets/SMS-Success-Monitor-macOS-universal.zip
-          release-assets/SMS-Success-Monitor-Windows-x64.zip
-          release-assets/SMS-Success-Monitor-Android.apk
-          release-assets/SHA256SUMS.txt
-          --repo "${GITHUB_REPOSITORY}"
-          --verify-tag
-          --title "SMS Success Monitor ${GITHUB_REF_NAME}"
-          --notes-file release-notes.md
+          APK=clients/android/app/build/outputs/apk/debug/app-debug.apk
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" > /tmp/badging.txt
+          cat /tmp/badging.txt
+          grep -q "package: name='com.local.smssuccessmonitor.publicworkbench'.*versionCode='104'.*versionName='0.3.83'" /tmp/badging.txt
+          ! grep -E "SYSTEM_ALERT_WINDOW|POST_NOTIFICATIONS|FOREGROUND_SERVICE|RECEIVE_BOOT_COMPLETED" /tmp/badging.txt
+          mkdir -p dist/android
+          cp "$APK" dist/android/SMS-Success-Monitor-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-client
+          path: dist/android/SMS-Success-Monitor-Android.apk
+          if-no-files-found: error

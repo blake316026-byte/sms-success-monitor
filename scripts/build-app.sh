@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
 ROOT_DIR="${SCRIPT_DIR:h}"
-APP_NAME="SMS Success Monitor.app"
+APP_NAME="SMS Platform Workbench.app"
 APP_DIR="${ROOT_DIR}/dist/${APP_NAME}"
 ARM_BUILD_DIR="${ROOT_DIR}/.build-arm64"
 X86_BUILD_DIR="${ROOT_DIR}/.build-x86_64"
@@ -32,6 +32,6 @@ codesign \
   --force \
   --deep \
   --sign - \
-  --requirements '=designated => identifier "com.local.sms-success-monitor"' \
+  --requirements '=designated => identifier "com.local.sms-success-monitor.public"' \
   "${APP_DIR}" >/dev/null
 echo "${APP_DIR}"

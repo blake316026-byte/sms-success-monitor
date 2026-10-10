@@ -64,12 +64,7 @@ public final class MainActivity extends Activity implements MonitorService.Liste
     private ImageButton forwardButton;
     private TextView headerStatus;
     private TextView bottomStatus;
-    private TextView overlayButton;
-    private Dialog overviewDialog;
-    private LinearLayout overviewContent;
     private MonitorService.MonitorSnapshot lastSnapshot;
-    private boolean pendingOverlayEnable;
-    private boolean pendingOverview;
 
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -80,22 +75,13 @@ public final class MainActivity extends Activity implements MonitorService.Liste
             chooseInitialModule();
             attachSelectedPage();
             updateBrowserControls();
-            maybePromptOverlayPermission();
-            if (pendingOverlayEnable && Settings.canDrawOverlays(MainActivity.this)) {
-                monitorService.setOverlayEnabled(true);
-                pendingOverlayEnable = false;
-            }
-            if (pendingOverview) {
-                pendingOverview = false;
-                showOverview();
-            }
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
             bound = false;
             monitorService = null;
-            bottomStatus.setText("监控服务连接已断开");
+            bottomStatus.setText("页面服务连接已断开");
         }
     };
 
@@ -105,10 +91,8 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         buildInterface();
         consumeIntent(getIntent());
-        requestNotificationPermission();
 
         Intent serviceIntent = new Intent(this, MonitorService.class);
-        startForegroundService(serviceIntent);
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
     }
 
@@ -119,20 +103,6 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         consumeIntent(intent);
         if (bound) {
             attachSelectedPage();
-            if (pendingOverview) {
-                pendingOverview = false;
-                showOverview();
-            }
-        }
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (pendingOverlayEnable && bound && Settings.canDrawOverlays(this)) {
-            monitorService.setOverlayEnabled(true);
-            pendingOverlayEnable = false;
-            updateOverlayButton();
         }
     }
 
@@ -154,10 +124,6 @@ public final class MainActivity extends Activity implements MonitorService.Liste
 
     @Override
     public void onBackPressed() {
-        if (overviewDialog != null && overviewDialog.isShowing()) {
-            overviewDialog.dismiss();
-            return;
-        }
         if (bound && selectedModuleId != null && monitorService.canGoBack(selectedModuleId)) {
             monitorService.goBack(selectedModuleId);
             return;
@@ -172,7 +138,6 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         root.addView(buildHeader(), matchWidth(dp(48)));
         root.addView(buildTabs(), matchWidth(dp(46)));
         root.addView(buildNavigationBar(), matchWidth(dp(50)));
-        root.addView(buildActionBar(), matchWidth(dp(42)));
 
         webContainer = new FrameLayout(this);
         webContainer.setBackgroundColor(Color.WHITE);
@@ -188,7 +153,7 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         bottomStatus.setTextSize(12);
         bottomStatus.setTextColor(COLOR_MUTED);
         bottomStatus.setSingleLine(true);
-        bottomStatus.setText("正在连接监控服务...");
+        bottomStatus.setText("正在连接页面服务...");
         bottomStatus.setBackgroundColor(Color.WHITE);
         root.addView(bottomStatus, matchWidth(dp(34)));
         setContentView(root);
@@ -202,7 +167,7 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         header.setBackgroundColor(COLOR_INK);
 
         TextView title = new TextView(this);
-        title.setText("短信后台工作台");
+        title.setText("后台工作台");
         title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setTextColor(Color.WHITE);
@@ -266,10 +231,6 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         highlights.setOnClickListener(view -> showHighlightSettings());
         navigation.addView(highlights, square(dp(38)));
 
-        ImageButton sampleLimit = iconButton(android.R.drawable.ic_menu_sort_by_size, "设置样本条数");
-        sampleLimit.setOnClickListener(view -> showSampleLimitSettings());
-        navigation.addView(sampleLimit, square(dp(38)));
-
         addressBar = new EditText(this);
         addressBar.setSingleLine(true);
         addressBar.setTextSize(12);
@@ -297,41 +258,10 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         return navigation;
     }
 
-    private View buildActionBar() {
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        actions.setPadding(dp(7), dp(3), dp(7), dp(3));
-        actions.setBackgroundColor(Color.WHITE);
-
-        TextView scanCurrent = actionButton("扫描当前", android.R.drawable.ic_popup_sync);
-        scanCurrent.setOnClickListener(view -> {
-            if (bound) monitorService.scan(selectedModuleId);
-        });
-        actions.addView(scanCurrent, actionParams());
-
-        TextView scanAll = actionButton("扫描全部", android.R.drawable.ic_menu_rotate);
-        scanAll.setOnClickListener(view -> {
-            if (bound) monitorService.scanAll();
-        });
-        actions.addView(scanAll, actionParams());
-
-        TextView overview = actionButton("监控总览", android.R.drawable.ic_menu_agenda);
-        overview.setOnClickListener(view -> showOverview());
-        actions.addView(overview, actionParams());
-
-        overlayButton = actionButton("悬浮窗", android.R.drawable.ic_menu_view);
-        overlayButton.setOnClickListener(view -> toggleOverlay());
-        actions.addView(overlayButton, actionParams());
-        return actions;
-    }
-
     private void consumeIntent(Intent intent) {
         if (intent == null) return;
         String moduleId = intent.getStringExtra("module-id");
         if (moduleId != null && !moduleId.isEmpty()) selectedModuleId = moduleId;
-        pendingOverview = pendingOverview || intent.getBooleanExtra("show-overview", false);
-        intent.removeExtra("show-overview");
     }
 
     private void chooseInitialModule() {
@@ -361,28 +291,9 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         renderTabs(snapshot);
 
         ModuleState selected = snapshot.find(selectedModuleId);
-        if (selected != null) {
-            String status = selected.hasMetrics
-                    ? selected.percentageText() + " · 成功 " + selected.successCount + "/" + selected.sampleCount
-                    : selected.message;
-            bottomStatus.setText(selected.module.name + " · " + status);
-            bottomStatus.setTextColor(selected.isAlert() ? COLOR_RED
-                    : "auth".equals(selected.status) ? COLOR_AMBER : COLOR_MUTED);
-        }
-
-        if (snapshot.alertCount > 0) {
-            headerStatus.setText("报警 " + snapshot.alertCount);
-            headerStatus.setTextColor(Color.rgb(255, 103, 125));
-        } else if (snapshot.healthyCount > 0) {
-            headerStatus.setText("正常 " + snapshot.healthyCount + " · 待登录 " + snapshot.authenticationCount);
-            headerStatus.setTextColor(Color.rgb(65, 218, 158));
-        } else {
-            headerStatus.setText("待登录 " + snapshot.authenticationCount);
-            headerStatus.setTextColor(Color.rgb(242, 178, 60));
-        }
+        if (selected != null) bottomStatus.setText(selected.module.name + " · " + selected.message);
+        headerStatus.setText(snapshot.modules.size() + " 个后台");
         updateBrowserControls();
-        updateOverlayButton();
-        if (overviewDialog != null && overviewDialog.isShowing()) populateOverview(snapshot);
     }
 
     private void renderTabs(MonitorService.MonitorSnapshot snapshot) {
@@ -427,40 +338,9 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         }
     }
 
-    private void showOverview() {
-        if (!bound || lastSnapshot == null) {
-            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
-            pendingOverview = true;
-            return;
-        }
-        if (overviewDialog != null && overviewDialog.isShowing()) {
-            overviewDialog.dismiss();
-        }
-
-        overviewContent = new LinearLayout(this);
-        overviewContent.setOrientation(LinearLayout.VERTICAL);
-        overviewContent.setPadding(dp(18), dp(8), dp(18), dp(8));
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.addView(overviewContent);
-
-        overviewDialog = new AlertDialog.Builder(this)
-                .setTitle("短信监控总览")
-                .setView(scrollView)
-                .setPositiveButton("扫描全部", (dialog, which) -> monitorService.scanAll())
-                .setNeutralButton("悬浮窗", (dialog, which) -> toggleOverlay())
-                .setNegativeButton("关闭", null)
-                .create();
-        overviewDialog.setOnDismissListener(dialog -> {
-            overviewDialog = null;
-            overviewContent = null;
-        });
-        populateOverview(lastSnapshot);
-        overviewDialog.show();
-    }
-
     private void showLoginSettings() {
         if (!bound || selectedModuleId == null || lastSnapshot == null) {
-            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "页面服务仍在连接", Toast.LENGTH_SHORT).show();
             return;
         }
         ModuleState state = lastSnapshot.find(selectedModuleId);
@@ -500,7 +380,7 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         form.addView(clearTotp, matchWidth(dp(38)));
 
         CheckBox enabled = new CheckBox(this);
-        enabled.setText("Token 失效时自动登录并恢复监控");
+        enabled.setText("Token 失效时自动登录");
         enabled.setChecked(summary.configured ? summary.autoLoginEnabled : true);
         form.addView(enabled, matchWidth(dp(38)));
 
@@ -546,7 +426,7 @@ public final class MainActivity extends Activity implements MonitorService.Liste
 
     private void showHighlightSettings() {
         if (!bound) {
-            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "页面服务仍在连接", Toast.LENGTH_SHORT).show();
             return;
         }
         MonitorService.HighlightSettings settings = monitorService.getHighlightSettings();
@@ -655,156 +535,6 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         dialog.show();
     }
 
-    private void showSampleLimitSettings() {
-        if (!bound) {
-            Toast.makeText(this, "监控服务仍在连接", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setSelectAllOnFocus(true);
-        input.setText(String.valueOf(monitorService.getSampleLimit()));
-        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-        input.setPadding(dp(20), 0, dp(20), 0);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("设置监控样本条数")
-                .setMessage("全部已登录后台使用同一设置，可填写 10–500 条。保存后立即重新扫描。")
-                .setView(input)
-                .setPositiveButton("保存并重扫", null)
-                .setNegativeButton("取消", null)
-                .create();
-        dialog.setOnShowListener(ignored -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-                int value;
-                try {
-                    value = Integer.parseInt(input.getText().toString().trim());
-                } catch (NumberFormatException error) {
-                    input.setError("请输入整数");
-                    return;
-                }
-                String error = monitorService.setSampleLimit(value);
-                if (!error.isEmpty()) {
-                    input.setError(error);
-                    return;
-                }
-                dialog.dismiss();
-            });
-        });
-        dialog.show();
-        input.requestFocus();
-    }
-
-    private void populateOverview(MonitorService.MonitorSnapshot snapshot) {
-        if (overviewContent == null) return;
-        overviewContent.removeAllViews();
-
-        TextView summary = new TextView(this);
-        summary.setText("样本 " + snapshot.sampleLimit + " 条   报警 " + snapshot.alertCount + "   正常 " + snapshot.healthyCount
-                + "   待登录 " + snapshot.authenticationCount + "   异常 " + snapshot.errorCount);
-        summary.setTextSize(14);
-        summary.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        summary.setTextColor(snapshot.alertCount > 0 ? COLOR_RED : COLOR_INK);
-        summary.setPadding(0, 0, 0, dp(12));
-        overviewContent.addView(summary);
-
-        LinearLayout heading = overviewRow();
-        heading.addView(overviewCell("后台", 1.45f, true));
-        heading.addView(overviewCell("状态", 0.75f, true));
-        heading.addView(overviewCell("成功率", 0.75f, true));
-        heading.addView(overviewCell("成功/样本", 1f, true));
-        overviewContent.addView(heading, matchWidth(dp(34)));
-
-        for (ModuleState state : snapshot.modules) {
-            LinearLayout row = overviewRow();
-            row.setBackground(rounded(
-                    state.module.id.equals(selectedModuleId) ? Color.rgb(232, 242, 253) : Color.WHITE,
-                    COLOR_BORDER,
-                    3
-            ));
-            row.setOnClickListener(view -> {
-                selectModule(state.module.id);
-                if (overviewDialog != null) overviewDialog.dismiss();
-            });
-            TextView name = overviewCell(state.module.name, 1.45f, false);
-            name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            row.addView(name);
-            TextView status = overviewCell(statusLabel(state), 0.75f, false);
-            status.setTextColor(statusColor(state));
-            row.addView(status);
-            TextView rate = overviewCell(state.percentageText(), 0.75f, false);
-            rate.setTextColor(state.isAlert() ? COLOR_RED : COLOR_INK);
-            row.addView(rate);
-            row.addView(overviewCell(state.hasMetrics
-                    ? state.successCount + "/" + state.sampleCount : "--/--", 1f, false));
-            LinearLayout.LayoutParams rowParams = matchWidth(dp(42));
-            rowParams.setMargins(0, 0, 0, dp(4));
-            overviewContent.addView(row, rowParams);
-        }
-
-        ModuleState focus = snapshot.focus;
-        TextView footer = new TextView(this);
-        footer.setPadding(0, dp(10), 0, dp(8));
-        footer.setTextSize(12);
-        footer.setTextColor(COLOR_MUTED);
-        if (focus == null) footer.setText("等待平台连接");
-        else if (focus.hasMetrics) footer.setText("当前展示最低值：" + focus.module.name + " "
-                + focus.percentageText() + " · 最近扫描 " + monitorService.formatTime(focus.scannedAt));
-        else footer.setText("尚无已登录平台数据，点击对应后台完成登录。\n未登录平台不会覆盖已有监控值。");
-        overviewContent.addView(footer);
-    }
-
-    private void toggleOverlay() {
-        if (!bound) return;
-        if (!Settings.canDrawOverlays(this)) {
-            pendingOverlayEnable = true;
-            Intent intent = new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())
-            );
-            startActivity(intent);
-            return;
-        }
-        monitorService.setOverlayEnabled(!monitorService.isOverlayEnabled());
-        updateOverlayButton();
-    }
-
-    private void updateOverlayButton() {
-        if (overlayButton == null) return;
-        boolean enabled = bound && Settings.canDrawOverlays(this) && monitorService.isOverlayEnabled();
-        overlayButton.setText(enabled ? "悬浮已开" : "悬浮窗");
-        overlayButton.setTextColor(enabled ? COLOR_GREEN : COLOR_INK);
-    }
-
-    private void maybePromptOverlayPermission() {
-        if (Settings.canDrawOverlays(this)) {
-            if (monitorService.isOverlayEnabled()) monitorService.setOverlayEnabled(true);
-            return;
-        }
-        SharedPreferences preferences = getSharedPreferences("monitor-preferences", MODE_PRIVATE);
-        if (preferences.getBoolean("overlay-prompted", false)) return;
-        preferences.edit().putBoolean("overlay-prompted", true).apply();
-        new AlertDialog.Builder(this)
-                .setTitle("开启悬浮监控")
-                .setMessage("授权后，成功率和报警会持续悬浮在其他应用上层。首次只需设置一次。")
-                .setPositiveButton("去授权", (dialog, which) -> {
-                    pendingOverlayEnable = true;
-                    startActivity(new Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName())
-                    ));
-                })
-                .setNegativeButton("稍后", null)
-                .show();
-    }
-
-    private void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1001);
-        }
-    }
-
     private ImageButton iconButton(int drawable, String description) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(drawable);
@@ -829,26 +559,6 @@ public final class MainActivity extends Activity implements MonitorService.Liste
         button.setBackground(rounded(Color.WHITE, COLOR_BORDER, 5));
         button.setPadding(dp(5), 0, dp(5), 0);
         return button;
-    }
-
-    private LinearLayout overviewRow() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        return row;
-    }
-
-    private TextView overviewCell(String text, float weight, boolean heading) {
-        TextView cell = new TextView(this);
-        cell.setText(text);
-        cell.setTextSize(heading ? 11 : 12);
-        cell.setTextColor(heading ? COLOR_MUTED : COLOR_INK);
-        cell.setGravity(Gravity.CENTER_VERTICAL);
-        cell.setSingleLine(true);
-        cell.setPadding(dp(6), 0, dp(4), 0);
-        if (heading) cell.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        cell.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight));
-        return cell;
     }
 
     private int statusColor(ModuleState state) {

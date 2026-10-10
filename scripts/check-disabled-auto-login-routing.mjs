@@ -30,19 +30,19 @@ assert.match(
 );
 assert.match(
   section('func scanNow()', 'func updateSampleLimit'),
-  /guard isStarted, monitoringEnabled[\s\S]*requiresInteractiveAuthentication\(currentURL\)[\s\S]*handleAuthenticationRequired[\s\S]*ScanScript\.body/
+  /guard isStarted, monitoringEnabled[\s\S]*if !smsMonitoringEnabled[\s\S]*handleAuthenticationRequired[\s\S]*guard !isScanning[\s\S]*ScanScript\.body/
 );
 assert.match(
   section('private func scheduleFinancialRefresh', 'private func finishFinancialRefresh'),
-  /guard isStarted, monitoringEnabled[\s\S]*guard monitoringEnabled, !browserOnlyPage[\s\S]*FinanceScript\.body/
+  /guard isStarted, monitoringEnabled, financialMonitoringEnabled[\s\S]*guard monitoringEnabled, financialMonitoringEnabled[\s\S]*FinanceScript\.body[\s\S]*financialRequestID == requestID/
 );
 assert.match(
   section('private func applyActivePage', 'private func updatePage'),
-  /disabledModuleIDs\.contains\(monitorID\)[\s\S]*startAuthenticationOnly\(\)[\s\S]*stopAuthenticationOnly\(\)/
+  /disabledModuleIDs\.contains\(monitorID\)[\s\S]*disabledFinancialModuleIDs\.contains\(monitorID\)[\s\S]*startAuthenticationOnly\(\)[\s\S]*stopAuthenticationOnly\(\)/
 );
 assert.match(
   section('func setMonitoringEnabled', 'private func persistDisabledModuleIDs'),
-  /monitor\.stop\(\)[\s\S]*selectedCredentialID == moduleID[\s\S]*startAuthenticationOnly\(\)/
+  /setFinancialMonitoringEnabled[\s\S]*disabledModuleIDs[\s\S]*disabledFinancialModuleIDs[\s\S]*monitor\.updateMonitoringModes[\s\S]*!smsEnabled && !financeEnabled[\s\S]*startAuthenticationOnly\(\)/
 );
 assert.match(
   section('func webView(_ webView', 'didFailProvisionalNavigation'),
@@ -53,4 +53,17 @@ assert.match(
   /guard monitoringEnabled/
 );
 
-console.log('PASS: a selected disabled page may auto-login without running SMS, finance or alerts');
+const windows = fs.readFileSync(
+  new URL('../clients/windows-electron/src/main.mjs', import.meta.url), 'utf8'
+);
+assert.match(windows, /pausedFinanceIds = new Set\([\s\S]*?stored\?\.pausedFinanceIds[\s\S]*?pausedMonitorIds/);
+assert.match(windows, /async function scanModule[\s\S]*?!state\.monitoringEnabled/);
+assert.match(windows, /async function refreshFinancialModule[\s\S]*?!state\.financeEnabled[\s\S]*?financeGeneration !== generation/);
+assert.match(windows, /monitor:set-finance-enabled[\s\S]*?state\.financeGeneration \+= 1[\s\S]*?state\.dailyFinancial = null/);
+assert.match(windows, /monitor:set-enabled[\s\S]*?state\.monitoringEnabled = nextEnabled/);
+const detail = fs.readFileSync(
+  new URL('../clients/windows-electron/src/ui/detail.html', import.meta.url), 'utf8'
+);
+assert.match(detail, /id="monitor-enabled"[\s\S]*?id="finance-enabled"/);
+
+console.log('PASS: SMS and finance run independently; a fully disabled selected page may auto-login');

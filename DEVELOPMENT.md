@@ -1,85 +1,24 @@
-# SMS Success Monitor — 开发与维护真源
+# Public Workbench Development
 
-本文是 SMS Success Monitor 的开发、维护、跨窗口接手和技术决策真源。`README.md` 面向使用者，本文面向主管、开发者和后续 Codex 窗口。
+This branch contains the public, reduced edition. The private/full working copy and installed application are maintained separately and must not be overwritten by a public release.
 
-## 2026-09-23 已登录页面仍显示需登录
+## Boundaries
 
-- macOS 候选版本 v0.3.71 build 78。共享 Mac 的 v0.3.70 现场显示 `BIllS3` 已在 `/guide/promotion-guide`，标签和总览仍为“需要登录”；点击标签后没有自行恢复。该页面独立 WebKit 存储包含 `lt-user` Token，本机保存账号与存储账号一致，且没有持久注销标记。网页可见和本地 Token 不等于服务端已接受短信接口认证，须以恢复后的扫描结果判断。
-- 状态恢复原先只由扫描定时器和完整文档导航触发。明确退出会取消扫描；NPG 同文档登录跳转不一定触发完整导航，导致原生“需登录”状态可能停留。现在在页面 URL、加载结束和标签激活时重新核对业务页会话；若原生已解除阻断但总览仍显示“需登录”，会安排新一轮扫描取得接口的真实结果。
-- 隐藏页内存回收时会替换 WebView，新 URL 监听随新 WebView 重新绑定；内存回收过渡页不得触发会话恢复。真实注销、账号冲突、账号不一致和无 Token 继续阻断。真实 WebKit 回归覆盖同文档跳转、旧 Token 注销阻断及隐藏页恢复。
-- v0.3.71 build 78 已安装到共享 Mac，签名和版本核对通过。选中 `BIllS3` 后，页面位于 `/v-report/3878C493EB934C22817480D595ABAFC9`，标签先显示“正常 77%”，下一轮更新为“正常 75.7%”，确认候选版持续完成真实短信扫描。安装需要重启客户端，因此这条现场结果不单独证明旧进程中遗漏通知的精确状态切换；该切换由同文档 WebKit 回归覆盖。
+- No fleet overview, country financial totals, monitor widget, alarm notification or monitor-mode controls.
+- No periodic SMS or financial collection. The existing session, login and page-lifecycle helpers remain for workbench access.
+- macOS retains pending withdrawals and withdrawal reviewer queries, including navigation, pagination, filtered server totals, daily cache and configurable refresh.
+- Windows and Android retain their existing workbench capabilities. They do not yet implement the macOS order aggregation windows.
+- Application identifiers and data directories are separate from the full edition. Users configure their own platform URLs and sign in; no private data is imported automatically.
+- Android uses a bound page service only. No overlay permission, boot receiver or monitor foreground service.
+- Historical tags/releases are not rewritten or removed. Only this version and the current download links are reduced.
 
-## 2026-09-18 已登录页面误显示需登录
+## Build And Verify
 
-- macOS 候选版本为 v0.3.70 build 77；本次只修复原生登录状态与网页当前会话不同步的问题，不改变短信、财务或权限接口。
-- 共享 Mac 的 cg07 现场证据为：页面位于 `/ck-dashboard`，独立 WebKit 存储存在 `lt-user`，且不存在 `__smsMonitorSignedOut`；客户端仍因内存中的 `manualAuthenticationRequired` 停止扫描。因此不是三方退出，也不是页面缺少 Token，而是登录完成通知遗漏后原生状态没有恢复。
-- 新实现对“原生仍需登录但页面已在业务路由”的情况执行零网络、只读会话探测。仅当没有注销标记、账号唯一、存在页面 Token，且配置账号存在时与其完全一致，才清除错误状态并恢复扫描；真实注销、账号冲突、账号不一致或无 Token 均继续阻断。
-- 回归覆盖已登录恢复、注销标记阻断、内存注销标记阻断、多账号冲突、账号不一致及无 Token；业务接口仍只会在恢复验证完成后调用。
-- v0.3.70 build 77 安装到共享 Mac 后，cg07 仍位于 `/ck-dashboard`，标签状态已由“需登录”恢复为“正常 74.7%”。该现场结果确认候选版本能够恢复真实扫描；遗漏登录通知造成的精确状态切换由确定性回归覆盖，未通过主动退出账号制造现场数据。
-
-## 2026-09-14 隐藏页面切回空白修复
-
-- macOS 候选版本为 v0.3.69 build 76；本次只修复隐藏页面内存回收后的恢复，不改变短信、财务、权限或自动登录规则。
-- 旧实现使用业务页面的完整 URL 作为轻量回收壳的 `baseURL`。切回时再次加载同一 URL，WebKit 可能将其判为同文档导航并保留空白壳；页面激活状态又在恢复之后更新，旧回收任务还可能在恢复回调期间再次回收当前页。
-- 新实现让轻量壳使用同域不同路径以保留 `sessionStorage` 安全域，恢复时强制发生跨文档加载；页面激活和隐藏计时状态在恢复前更新，避免恢复与回收竞争。
-- 新增真实 `WKWebView` 回归，验证轻量壳切回业务 URL 后服务端页面内容实际加载，而不只核对源码结构。
-- 完整项目测试、Universal 构建、签名和本地自动化自检通过。共享 MacBook Air 安装 v0.3.69 后，日志确认 `BIllS4` 先完成隐藏回收，再在实际点击时执行跨文档恢复；地址栏恢复原业务 URL，网页辅助功能读取到 `BIllS4-PH` 及“报表、工作面板、支付”等真实页面内容，且未再发生恢复后立即回收。
-
-## 2026-09-14 页面会话恢复与账号隔离
-
-- 发布目标为 macOS v0.3.68 build 75、Windows v0.3.68；Android 继续提供已验证的 v0.3.61。
-- 旧实现会长期保留网页主动退出标记，客户端重启后即使页面已经产生新 Token，监控仍可能误判为“需登录”。新实现记录被注销 Token 的不可逆指纹：同一 Token 继续禁止使用，页面出现新 Token 时清除旧标记并恢复扫描。
-- 短信和财务查询改为枚举页面当前账号的全部不同 Token；同账号 Token 逐个验证，避免首个旧 Token 覆盖有效新 Token。发现不同账号身份时立即停止自动监控，不使用本机加密保存 Token 回退查询。
-- 权限预检对页面中的显式权限记录采用保守合并；会话快照在查询期间发生变化时丢弃结果，避免跨会话展示旧数据。
-- 完整项目测试、macOS Universal 构建、签名及真实 WKWebView 本地自动化自检通过。共享 MacBook Air 冷启动 v0.3.68 后，`BIllS02` 从“需登录”恢复为“正常”，短信统计为成功 181/300、未成功 119，全部后台“需登录 0”。
-
-## 2026-09-12 多后台 WebKit 内存回收
-
-- macOS 候选版本为 v0.3.67 build 74；本次只调整隐藏网页的生命周期，不改变账号隔离、短信或财务接口、样本统计和告警规则。
-- 原实现为每个后台永久保留一个完整 `WKWebView`。隐藏页虽然暂停媒体和动画，页面 DOM、脚本及渲染进程仍常驻；旧的两小时刷新只重新加载页面，不能释放旧 WebKit 进程。
-- 新实现仅在页面隐藏至少 30 秒且当前没有登录、短信或财务请求时回收完整 WebView。已开启监控的平台必须先有新鲜成功扫描；等待人工登录、已停用或仅浏览页面可直接回收。Cookie、独立数据存储及 `sessionStorage` 保留，选择标签时恢复原 URL；天成登录控制器在会话快照期间暂停并在页面恢复时重新绑定。
-- 本机 34 个后台实测加载峰值为主进程约 220 MB、WebKit 合计约 3.23 GB；系统日志记录 13 个隐藏后台完成回收后，WebKit 合计先降至 2.30 GB，继续稳定到约 1.38 GB，主进程约 216 MB，合计下降约 54%。旧 WebKit 进程日志确认 `pageCount=0` 后允许终止，新轻量页面维持每个约 19–26 MB。
-- 完整项目测试、macOS Universal 生产构建、签名、真实 WKWebView OCR/TOTP/网页查找/持久高亮自检通过。系统锁屏前已验证真实回收和持续进程稳定；锁屏后无法执行点回标签的鼠标验收，恢复路径由专项回归覆盖，不能将其描述为已完成人工 UI 点击验收。
-
-## 2026-09-09 多行平台导航拖动优化
-
-- macOS 候选版本为 v0.3.66 build 73；本次仅调整多行平台导航排序，不改变页面登录、监控查询或账号数据。
-- 原实现每跨过一个平台就立即重排真实标签、保存布局并重建全部按钮；监控状态刷新也会重建按钮。平台较多且导航换行时，这些同步操作会打断长距离拖动。
-- 新实现复用现有按钮，拖动中只更新轻量排序预览，松手后一次性提交真实页面顺序并保存；取消拖动会恢复原顺序，导航边缘的拖动容差也已扩大。
-- 完整项目测试和 macOS Universal 打包自检通过。Mini 已安装 v0.3.66 build 73，实测将 `S1MX` 从第三行末位拖至第一行第二位后再拖回，跨行排序均一次完成；重启后恢复的原顺序仍正确保存。
-
-## 2026-09-08 fpljsoft 新增后台自动登录
-
-- 发布目标为 macOS v0.3.65 build 72；Windows 继续提供 v0.3.64，Android 继续提供已验证的 v0.3.61。
-- “后台账号 29”凭据文件中存在正确的页面 ID、账号和密码，自动登录已启用，但 `earmsh.fpljsoft.com` 未包含在 `PlatformRoutingPolicy` 的 NPG 域名范围内，页面因此被误判为仅浏览模式并跳过自动登录。
-- 将 `fpljsoft.com` 纳入已确认的 NPG 后台路由，同时保留未知域名默认仅浏览、不发送短信或财务查询的边界。
-- 核心回归新增 `earmsh.fpljsoft.com` 路由用例；完整测试、Universal 构建、签名和打包自检通过。
-- 旧 Mac 安装 build 72 后选择并刷新“后台账号 29”，页面自动进入 `silver02` 后台主界面；加密配置回读确认新 Token 已保存。测试未修改账号权限或业务数据。
-
-## 2026-09-07 持久关键词高亮
-
-- 发布目标为 macOS v0.3.64 build 71、Windows v0.3.64；Android 源码已接入但当前环境未接受 Android SDK 许可、未完成 APK 编译，Release 继续提供已验证的 v0.3.61 APK，不能描述为 Android v0.3.64。
-- 工具栏新增“自动高亮”，用户可保存启用状态、每行一个的关键词、颜色和完整词匹配；设置仅保存在本机并应用到全部后台页面。
-- 共享高亮运行时使用 CSS Highlight API，不包装或改写业务 DOM；忽略输入框、脚本、隐藏和可编辑内容。MutationObserver 在 SPA 或表格动态更新后重新计算高亮，并限制为 200 个关键词、单项 100 字符和每页 10000 个匹配。
-- macOS 打包自检在真实 WKWebView 中验证初始文字和动态新增文字；完整项目测试、Universal 构建和签名完整性检查通过。Windows x64 包完成 UI 构建、设置边界测试、包结构检查并确认携带共享高亮脚本，未在真实 Windows 主机运行验收。
-- 同一版本包含可见后台优先启动登录修复：已保存账号的当前页面不再等待全部后台错峰启动后才进入自动登录。
-- 发布完成必须同时核对公开 `v0.3.64` 标签、Release 三个附件、远端附件摘要和 `SHA256SUMS.txt`，不能以本机安装或本地压缩包代替 GitHub 发布证据。
-
-## 2026-09-04 登录循环修复验证
-
-- 本次发布目标为 macOS v0.3.61 build 68、Windows v0.3.61、Android v0.3.61 versionCode 61；发布结果以 GitHub v0.3.61 Release 和校验清单为准，不以本机安装成功作为发布证据。
-- 旧版 v0.3.60 的 cg04 在主动注销后可复现循环：12:16:50 提交 TOTP，12:16:51 导航到 `/`，12:16:52 再回 `/login`；后续再次提交账号密码。
-- 控制器缺陷：`credentialLoginPending` 置位后，`didFinish` 在加载首页提前清掉自动登录状态并取消结果确认，但未清掉认证恢复标记；后续扫描因此再次打开登录页。
-- 新逻辑：加载首页和 `/ga-auth` 不等于认证完成；业务页面必须存在当前配置账号对应的 Token，统一完成确认时清掉恢复标记并更新 `authenticationEpoch`，防止旧回调修改新状态。加载超时暂停，不能继续提交账号密码。
-- `scripts/check-login-completion.mjs` 抽取实际 Swift 方法编译执行，无真实凭据、网络或账户操作；覆盖加载首页、二次验证、缺少会话、恢复标记清除、旧回调、超时暂停。完整 `scripts/test.sh` 和 Universal 打包自检通过。
-- 新版现场：12:18:15 cg04 记录 `login confirmed at /ck-dashboard; recovery flag cleared`，12:18:19、12:18:37、12:19:37 扫描返回；cg12 于 12:19:53 同样完成登录确认。
-- 验证边界：上述为新版启动登录及短期连续扫描；新版主动注销后的恢复、刷新测试暂因桌面工具无法访问实际窗口而未完成，不能宣称长期或全平台彻底解决。
-
-## 2026-09-05 macOS 网页查找高亮
-
-- macOS v0.3.62 build 69 已完成本机验证并进入 GitHub 发布流程；最终发布状态以公开 `v0.3.62` 标签、Release 附件和 SHA256 校验清单为准。
-- `PageFindScript` 使用浏览器 CSS Highlight API 标亮当前页面全部匹配字符；普通匹配为黄色，当前匹配为橙色并带下划线，不包装或改写业务页面 DOM。
-- 查找栏显示“当前序号/总数”，输入新关键词从首项开始，上一个、下一个和 Shift-Enter 支持循环导航，Esc 或清空关键词会删除高亮。
-- 若旧版 WebKit 不支持 CSS Highlight API，自动回退到 `WKWebView.find`，保留基本定位能力。
-- macOS 打包自检会在真实 `WKWebView` 中核对大小写不敏感的三处高亮和第二项导航；Windows 继续使用 Chromium `findInPage` 的原生全部匹配高亮。
-- GitHub v0.3.62 的 macOS 包经现场复核为 ad-hoc 内部签名（无 Team ID、无公证票据），Gatekeeper 对隔离下载包返回 `rejected`。在配置 Apple Developer ID 和公证凭据前，使用者需在“系统设置”→“隐私与安全性”中人工确认“仍要打开”；不要把本地 `codesign --verify` 通过描述为 Apple 公证通过。
+- macOS: `zsh scripts/test.sh`, then `zsh scripts/package-macos.sh`.
+- Windows: `zsh scripts/package-windows.sh`; packaged runtime checks run on the Windows CI runner.
+- Android: `zsh scripts/package-android.sh` with JDK 17 and an authorized Android SDK (API 35).
+- `node scripts/check-public-edition.mjs` checks removed windows, IPC, polling and independent storage.
+- Release CI builds and checks Windows/Android from the candidate source. macOS is built locally and its packaged runtime and signature are verified before publication.
+- Never reuse an old full-edition seed or attach an older Windows/Android package.
+- Do not include local credentials, cookies, module overrides, query caches, screenshots, operational logs or internal validation notes in Git.
+- After all checks pass, tag the tested commit, upload the three packages and SHA256SUMS, then verify the published asset hashes and latest Release.

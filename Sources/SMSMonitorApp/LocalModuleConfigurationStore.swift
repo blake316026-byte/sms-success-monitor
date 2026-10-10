@@ -15,7 +15,7 @@ enum LocalModuleConfigurationStore {
     ).first ?? FileManager.default.homeDirectoryForCurrentUser
 
     return baseDirectory
-      .appendingPathComponent("SMS Success Monitor", isDirectory: true)
+      .appendingPathComponent("SMS Platform Workbench", isDirectory: true)
       .appendingPathComponent("modules-v1.json", isDirectory: false)
   }()
 

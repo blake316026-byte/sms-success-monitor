@@ -13,9 +13,12 @@ final class MemoryCompactionCheck: NSObject, WKNavigationDelegate, WKURLSchemeHa
     configuration.setURLSchemeHandler(self, forURLScheme: "sms-memory-test")
     page = WKWebView(frame: .zero, configuration: configuration)
     page.navigationDelegate = self
+    let snapshot = Data(#"[["fixture-session","fixture-value"]]"#.utf8).base64EncodedString()
     page.loadHTMLString(
-      "<html><body id='shell'></body></html>",
-      baseURL: URL(string: "sms-memory-test://platform/.sms-monitor-memory-shell")!
+      ProductionMemoryPage.compactedPageHTML(sessionStorageBase64: snapshot),
+      baseURL: ProductionMemoryPage.compactedPageBaseURL(
+        for: URL(string: "sms-memory-test://platform/report#CC=fixture")!
+      )
     )
     DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
       self.finish(false, "WebKit timeout")
@@ -55,15 +58,21 @@ final class MemoryCompactionCheck: NSObject, WKNavigationDelegate, WKURLSchemeHa
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     if phase == 0 {
       phase = 1
-      page.load(URLRequest(url: URL(string: "sms-memory-test://platform/report#CC=fixture")!))
+      page.evaluateJavaScript("location.hash + ':' + sessionStorage.getItem('fixture-session')") { value, error in
+        guard error == nil, value as? String == "#CC=fixture:fixture-value" else {
+          self.finish(false, "production shell lost country/verification context or session storage: \(String(describing: value)) \(String(describing: error))")
+          return
+        }
+        self.page.load(URLRequest(url: URL(string: "sms-memory-test://platform/report#CC=fixture")!))
+      }
       return
     }
 
-    page.evaluateJavaScript("document.body.id + ':' + document.body.textContent") { value, _ in
+    page.evaluateJavaScript("document.body.id + ':' + document.body.textContent + ':' + location.hash + ':' + sessionStorage.getItem('fixture-session')") { value, _ in
       let body = value as? String
       self.finish(
-        self.reportRequests == 1 && body == "business:restored business page",
-        "compacted shell restores a real cross-document business page"
+        self.reportRequests == 1 && body == "business:restored business page:#CC=fixture:fixture-value",
+        "production memory shell preserves session and verification context across a real business-page restoration"
       )
     }
   }

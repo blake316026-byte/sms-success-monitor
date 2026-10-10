@@ -625,6 +625,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   var onSelectedPageChanged: ((String?) -> Void)?
 
   private enum ToolbarIdentifier {
+    static let pendingOrders = NSToolbarItem.Identifier("SMSMonitorPendingOrders")
+    static let withdrawalReviewers = NSToolbarItem.Identifier("SMSMonitorWithdrawalReviewers")
     static let toolbar = NSToolbar.Identifier("SMSMonitorPlatformToolbar")
     static let back = NSToolbarItem.Identifier("SMSMonitorPlatformBack")
     static let forward = NSToolbarItem.Identifier("SMSMonitorPlatformForward")
@@ -645,6 +647,28 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   private static let persistentHighlightKey = "SMSMonitorPersistentHighlight.v1"
 
   private let defaultInitialURL: URL
+  private let orderCredentialStore: LocalCredentialStore
+  private lazy var ordersController: PendingOrdersWindowController = {
+    let controller = PendingOrdersWindowController()
+    controller.sources = { [weak self] in self?.pageDescriptors() ?? [] }
+    controller.expectedUsername = { [weak self] id in self?.orderCredentialStore.profile(for: id)?.username ?? "" }
+    controller.allowsNPG = { page in
+      page.displayName.lowercased() != "okbet" && PlatformRoutingPolicy.shouldUseNPGMonitoring(configurationID: page.credentialID, targetURL: page.startURL)
+    }
+    controller.openOrder = { [weak self] row in self?.openPendingOrder(row) }
+    return controller
+  }()
+  private var orderNavigationID = UUID()
+  private lazy var reviewersController: WithdrawalReviewersWindowController = {
+    let controller = WithdrawalReviewersWindowController()
+    controller.sources = { [weak self] in self?.pageDescriptors() ?? [] }
+    controller.expectedUsername = { [weak self] id in self?.orderCredentialStore.profile(for: id)?.username ?? "" }
+    controller.allowsNPG = { page in
+      page.displayName.lowercased() != "okbet" && PlatformRoutingPolicy.shouldUseNPGMonitoring(configurationID: page.credentialID, targetURL: page.startURL)
+    }
+    controller.openReviewer = { [weak self] row in self?.openPendingOrder(row) }
+    return controller
+  }()
   private var sampleLimit: Int
   private let tabController = WorkspaceTabViewController()
   private lazy var workspaceContainer = WorkspaceContainerController(tabs: tabController)
@@ -670,10 +694,11 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   init(
     sampleLimit: Int,
     monitoredPages: [MonitoredPlatformPage],
-    credentialStore _: LocalCredentialStore
+    credentialStore: LocalCredentialStore
   ) {
-    precondition(!monitoredPages.isEmpty)
-    self.defaultInitialURL = monitoredPages[0].configuration.targetURL
+    self.defaultInitialURL = monitoredPages.first?.configuration.targetURL
+      ?? URL(string: "https://example.invalid/login")!
+    self.orderCredentialStore = credentialStore
     self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1260, height: 800),
@@ -746,6 +771,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   func stopAll() {
+    ordersController.close()
     for page in pages {
       page.webView.stopLoading()
     }
@@ -798,7 +824,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       self?.movePage(from: source, to: target)
     }
     window.contentViewController = workspaceContainer
-    window.title = "短信后台工作台"
+    window.title = "后台工作台"
     updateWindowSubtitle()
     window.minSize = NSSize(width: 620, height: 520)
     window.isReleasedWhenClosed = false
@@ -822,7 +848,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private func updateWindowSubtitle() {
     window.subtitle =
-      "\(pages.count) 个监控后台 · 样本 \(sampleLimit) 条 · 不同标签使用独立登录会话"
+      "\(pages.count) 个后台 · 独立登录会话"
   }
 
   private static func loadPersistentHighlightSettings() -> PersistentHighlightSettings {
@@ -1104,19 +1130,19 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     case .browserOnly:
       return "已登录，仅浏览"
     case .disabled:
-      return "监控已停用"
+      return "后台页面"
     case .starting:
       return "等待连接"
     case .scanning:
-      return "正在扫描"
-    case .healthy(let metrics, _):
-      return "正常 \(metrics.percentageText)"
-    case .alert(let metrics, _):
-      return "报警 \(metrics.percentageText)"
+      return "正在连接"
+    case .healthy:
+      return "已连接"
+    case .alert:
+      return "已连接"
     case .authenticationRequired:
       return "需要登录"
     case .error:
-      return "扫描异常"
+      return "连接异常"
     }
   }
 
@@ -1143,6 +1169,180 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   @objc private func goBack() {
     selectedPage?.webView.goBack()
+  }
+
+  @objc private func showPendingOrders() { ordersController.present() }
+  @objc private func showWithdrawalReviewers() { reviewersController.present() }
+
+  private func finishOrderNavigation(_ row: PendingOrderRow, message: String) {
+    if row.isReviewQuery { reviewersController.finishNavigation(message: message) }
+    else { ordersController.finishNavigation(message: message) }
+  }
+
+  private func openPendingOrder(_ row: PendingOrderRow) {
+    if row.isReviewQuery && row.contextID.isEmpty {
+      let navigationID = UUID(); orderNavigationID = navigationID
+      show(moduleID: row.platformID)
+      preparePlatformReviews(row, navigationID: navigationID, deadline: Date().addingTimeInterval(90),
+        expectedAccount: orderCredentialStore.profile(for: row.platformID)?.username ?? "")
+      return
+    }
+    guard let page = pages.first(where: { $0.credentialID == row.platformID }),
+      let currentURL = page.webView.url, currentURL.host == page.startURL.host,
+      currentURL.scheme == page.startURL.scheme else {
+      finishOrderNavigation(row, message: "原平台页面已变化，请重新获取")
+      return
+    }
+    let view = page.webView
+    let expected = orderCredentialStore.profile(for: row.platformID)?.username ?? ""
+    let args: [String: Any] = ["expectedUsername": expected, "allowNPG": row.family == "NPG", "contextID": row.contextID,
+      "reviewerQuery": row.isReviewQuery, "requiredNPGPermission": row.isReviewQuery ? "WITHDRAW_AUDIT_RECORD_LIST" : "WITHDRAW_RECORD_LIST"]
+    let navigationID = UUID(); orderNavigationID = navigationID
+    view.callAsyncJavaScript(PendingOrdersScript.validate, arguments: args, in: nil, in: .page) { [weak self, weak page] result in
+      DispatchQueue.main.async {
+        guard let self, let page, self.orderNavigationID == navigationID, page.webView === view else { return }
+        let payload = (try? result.get()) as? [String: Any]
+        guard let context = payload, context["kind"] as? String == "ok" else {
+          self.finishOrderNavigation(row, message: payload?["message"] as? String ?? "会话已变化，请重新获取")
+          return
+        }
+        var components = URLComponents(url: currentURL, resolvingAgainstBaseURL: false)!
+        components.path = row.family == "TC" ? "/20008" : row.isReviewQuery ? "/withdraw-audit-record-list" : "/withdraw-record-list"
+        components.query = nil
+        guard let destination = components.url else { return }
+        self.show(moduleID: row.platformID)
+        self.routePendingOrder(row, context: context, view: view, destination: destination,
+          navigationID: navigationID, deadline: Date().addingTimeInterval(35))
+      }
+    }
+  }
+
+  private func preparePlatformReviews(_ row: PendingOrderRow, navigationID: UUID, deadline: Date, expectedAccount: String) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+      guard let self, self.orderNavigationID == navigationID else { return }
+      guard let page = self.pages.first(where: { $0.credentialID == row.platformID }),
+        self.selectedCredentialID == row.platformID, Date() < deadline,
+        (self.orderCredentialStore.profile(for: row.platformID)?.username ?? "") == expectedAccount else {
+        self.finishOrderNavigation(row, message: "平台加载中断或超时，请打开对应平台后重试"); return
+      }
+      let view = page.webView
+      if view.isLoading || view.url == nil {
+        self.preparePlatformReviews(row, navigationID: navigationID, deadline: deadline, expectedAccount: expectedAccount); return
+      }
+      guard view.url?.host == page.startURL.host, view.url?.scheme == page.startURL.scheme else {
+        self.finishOrderNavigation(row, message: "平台地址已变化，未自动搜索"); return
+      }
+      let args: [String: Any] = ["expectedUsername": self.orderCredentialStore.profile(for: row.platformID)?.username ?? "",
+        "allowNPG": page.pageName.lowercased() != "okbet" && PlatformRoutingPolicy.shouldUseNPGMonitoring(configurationID: row.platformID, targetURL: page.startURL),
+        "requiredNPGPermission": "WITHDRAW_AUDIT_RECORD_LIST", "requestID": navigationID.uuidString,
+        "startDate": row.startDate, "endDate": row.endDate]
+      view.callAsyncJavaScript(WithdrawalReviewersScript.navigationContext, arguments: args, in: nil, in: .page) { [weak self, weak page] result in
+        DispatchQueue.main.async {
+          guard let self, let page, self.orderNavigationID == navigationID else { return }
+          guard self.selectedCredentialID == row.platformID else {
+            self.finishOrderNavigation(row, message: "平台已切换，停止搜索"); return
+          }
+          if page.webView !== view || view.isLoading {
+            self.preparePlatformReviews(row, navigationID: navigationID, deadline: deadline, expectedAccount: expectedAccount); return
+          }
+          let payload = (try? result.get()) as? [String: Any]
+          guard payload?["kind"] as? String == "ok", let family = payload?["family"] as? String else {
+            let message = payload?["message"] as? String ?? "页面尚未加载"
+            if ["页面尚未加载", "页面验证", "未就绪"].contains(where: { message.contains($0) }) {
+              self.preparePlatformReviews(row, navigationID: navigationID, deadline: deadline, expectedAccount: expectedAccount); return
+            }
+            self.finishOrderNavigation(row, message: payload?["message"] as? String ?? "平台尚未就绪，请完成登录后重试"); return
+          }
+          self.openPendingOrder(PendingOrderRow(platformID: row.platformID, platform: row.platform, orderID: row.orderID, status: "",
+            contextID: navigationID.uuidString, family: family, startDate: row.startDate, endDate: row.endDate,
+            reviewerName: row.reviewerName, allReviewers: row.allReviewers))
+        }
+      }
+    }
+  }
+
+  private func pendingOrderArguments(_ row: PendingOrderRow, context: [String: Any]) -> [String: Any] {
+    ["expectedUsername": orderCredentialStore.profile(for: row.platformID)?.username ?? "",
+      "allowNPG": row.family == "NPG", "family": row.family, "username": context["username"] ?? "",
+      "country": context["country"] ?? "", "merchant": context["merchant"] ?? "", "orderID": row.orderID, "contextID": row.contextID,
+      "reviewerQuery": row.isReviewQuery, "allReviewers": row.allReviewers,
+      "requiredNPGPermission": row.isReviewQuery ? "WITHDRAW_AUDIT_RECORD_LIST" : "WITHDRAW_RECORD_LIST",
+      "startDate": row.startDate, "endDate": row.endDate, "orderStatus": row.status, "origin": context["origin"] ?? ""]
+  }
+
+  private func routePendingOrder(_ row: PendingOrderRow, context: [String: Any], view: WKWebView,
+    destination: URL, navigationID: UUID, deadline: Date, routeIssued: Bool = false, fallbackUsed: Bool = false)
+  {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak view] in
+      guard let self, let view, self.orderNavigationID == navigationID else { return }
+      guard self.selectedCredentialID == row.platformID,
+        self.pages.contains(where: { $0.credentialID == row.platformID && $0.webView === view }), Date() < deadline else {
+        self.finishOrderNavigation(row, message: "跳转中断或超时，请检查原平台后重试")
+        return
+      }
+      if view.isLoading {
+        self.routePendingOrder(row, context: context, view: view, destination: destination,
+          navigationID: navigationID, deadline: deadline, routeIssued: routeIssued, fallbackUsed: fallbackUsed)
+        return
+      }
+      var args = self.pendingOrderArguments(row, context: context); args["routeIssued"] = routeIssued
+      view.callAsyncJavaScript(PendingOrderNavigationScript.route, arguments: args, in: nil, in: .page) { [weak self] result in
+        DispatchQueue.main.async {
+          guard let self, self.orderNavigationID == navigationID else { return }
+          let payload = (try? result.get()) as? [String: Any]
+          switch payload?["kind"] as? String {
+          case "ready":
+            self.searchPendingOrder(row, context: context, view: view, navigationID: navigationID, deadline: deadline)
+          case "routed", "waiting":
+            self.routePendingOrder(row, context: context, view: view, destination: destination,
+              navigationID: navigationID, deadline: deadline, routeIssued: true, fallbackUsed: fallbackUsed)
+          case "reload" where !fallbackUsed:
+            view.load(URLRequest(url: destination))
+            self.routePendingOrder(row, context: context, view: view, destination: destination,
+              navigationID: navigationID, deadline: deadline, routeIssued: true, fallbackUsed: true)
+          default:
+            self.finishOrderNavigation(row, message: payload?["message"] as? String ?? "页面尚未就绪，请稍后重试")
+          }
+        }
+      }
+    }
+  }
+
+  private func searchPendingOrder(_ row: PendingOrderRow, context: [String: Any], view: WKWebView,
+    navigationID: UUID, deadline: Date)
+  {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak view] in
+      guard let self, let view, self.orderNavigationID == navigationID else { return }
+      guard self.selectedCredentialID == row.platformID,
+        self.pages.contains(where: { $0.credentialID == row.platformID && $0.webView === view }), Date() < deadline else {
+        self.finishOrderNavigation(row, message: "跳转中断或超时，请检查原平台后重试")
+        return
+      }
+      if view.isLoading {
+        self.searchPendingOrder(row, context: context, view: view, navigationID: navigationID, deadline: deadline)
+        return
+      }
+      let args = self.pendingOrderArguments(row, context: context)
+      view.callAsyncJavaScript(PendingOrderNavigationScript.body, arguments: args, in: nil, in: .page) { [weak self] result in
+        DispatchQueue.main.async {
+          guard let self, self.orderNavigationID == navigationID else { return }
+          let payload = (try? result.get()) as? [String: Any]
+          if payload?["kind"] as? String == "waiting" {
+            self.searchPendingOrder(row, context: context, view: view, navigationID: navigationID, deadline: deadline)
+          } else {
+            if row.isReviewQuery, payload?["kind"] as? String == "ok", let count = payload?["total"] as? Int,
+              let page = self.pages.first(where: { $0.credentialID == row.platformID && $0.webView === view }),
+              self.selectedCredentialID == row.platformID {
+              self.reviewersController.applyNavigationTotal(row, count: count, account: args["expectedUsername"] as? String ?? "", sourceURL: page.startURL)
+            }
+            self.finishOrderNavigation(row, message: payload?["kind"] as? String == "ok"
+              ? row.allReviewers ? "已在 \(row.platform) 查询今天的记录（不限审核人员）"
+                : row.reviewerName.map { "已在 \(row.platform) 查询 \($0) 的提现订单" } ?? "已在 \(row.platform) 搜索订单 \(row.orderID)"
+              : payload?["message"] as? String ?? "未能自动搜索，请在原平台检查")
+          }
+        }
+      }
+    }
   }
 
   @objc private func goForward() {
@@ -1415,8 +1615,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   @objc private func addNewPage() {
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = "新增监控后台页面"
-    alert.informativeText = "新页面使用独立登录会话，并自动加入短信成功率监控总览。"
+    alert.messageText = "新增后台页面"
+    alert.informativeText = "新页面使用独立登录会话。"
     alert.addButton(withTitle: "创建页面")
     alert.addButton(withTitle: "取消")
 
@@ -1533,6 +1733,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
     [
+      ToolbarIdentifier.pendingOrders,
+      ToolbarIdentifier.withdrawalReviewers,
       ToolbarIdentifier.back,
       ToolbarIdentifier.forward,
       ToolbarIdentifier.reload,
@@ -1541,7 +1743,6 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       ToolbarIdentifier.address,
       ToolbarIdentifier.find,
       ToolbarIdentifier.persistentHighlight,
-      ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
@@ -1551,6 +1752,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
     [
+      ToolbarIdentifier.pendingOrders,
+      ToolbarIdentifier.withdrawalReviewers,
       ToolbarIdentifier.back,
       ToolbarIdentifier.forward,
       ToolbarIdentifier.reload,
@@ -1559,7 +1762,6 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       .flexibleSpace,
       ToolbarIdentifier.find,
       ToolbarIdentifier.persistentHighlight,
-      ToolbarIdentifier.sampleLimit,
       ToolbarIdentifier.autoLogin,
       ToolbarIdentifier.addPage,
       ToolbarIdentifier.closePage,
@@ -1573,6 +1775,22 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     willBeInsertedIntoToolbar flag: Bool
   ) -> NSToolbarItem? {
     switch itemIdentifier {
+    case ToolbarIdentifier.withdrawalReviewers:
+      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+      item.label = "提现审核人员查询"
+      let button = NSButton(title: "提现审核人员查询", target: self, action: #selector(showWithdrawalReviewers))
+      button.image = NSImage(systemSymbolName: "person.text.rectangle", accessibilityDescription: "提现审核人员查询")
+      button.imagePosition = .imageLeading; button.bezelStyle = .texturedRounded
+      item.view = button; item.visibilityPriority = .high
+      return item
+    case ToolbarIdentifier.pendingOrders:
+      let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+      item.label = "全平台待处理订单"
+      let button = NSButton(title: "全平台待处理订单", target: self, action: #selector(showPendingOrders))
+      button.image = NSImage(systemSymbolName: "list.bullet.rectangle", accessibilityDescription: "全平台待处理订单")
+      button.imagePosition = .imageLeading; button.bezelStyle = .texturedRounded
+      item.view = button; item.visibilityPriority = .high
+      return item
     case ToolbarIdentifier.back:
       let item = toolbarButton(
         identifier: itemIdentifier,
@@ -1702,23 +1920,12 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       updatePersistentHighlightToolTip()
       return item
 
-    case ToolbarIdentifier.sampleLimit:
-      let item = toolbarButton(
-        identifier: itemIdentifier,
-        label: "样本条数",
-        symbol: "number.circle",
-        toolTip: "设置全部后台的监控样本条数（当前 \(sampleLimit) 条）",
-        action: #selector(configureSampleLimit)
-      )
-      sampleLimitItem = item
-      return item
-
     case ToolbarIdentifier.addPage:
       return toolbarButton(
         identifier: itemIdentifier,
         label: "新增页面",
         symbol: "plus",
-        toolTip: "新增监控后台页面",
+        toolTip: "新增后台页面",
         action: #selector(addNewPage)
       )
 

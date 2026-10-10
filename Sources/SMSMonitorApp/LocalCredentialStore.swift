@@ -30,7 +30,7 @@ final class LocalCredentialStore {
       for: .applicationSupportDirectory,
       in: .userDomainMask
     ).first ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-    directoryURL = base.appendingPathComponent("SMS Success Monitor", isDirectory: true)
+    directoryURL = base.appendingPathComponent("SMS Platform Workbench", isDirectory: true)
     keyURL = directoryURL.appendingPathComponent("credentials-v3.key")
     profilesURL = directoryURL.appendingPathComponent("credentials-v3.dat")
   }

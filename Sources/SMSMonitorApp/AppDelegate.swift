@@ -3,21 +3,17 @@ import Darwin
 import SMSMonitorCore
 import WebKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
+final class AppDelegate: NSObject, NSApplicationDelegate {
   private let configurations: [MonitorConfiguration]
-  private var widgetController: StatusWidgetController!
   private var monitorController: MonitorController!
-  private var alertNotifier: AlertNotifier!
   private var localAutomationCheckRuntime: LocalAutomationRuntime?
   private var localFindCheckWebView: WKWebView?
-  private var currentSnapshot: FleetMonitorSnapshot
 
   override init() {
     let configurations = LocalModuleConfigurationStore.loadConfigurations(
       fallback: MonitorConfiguration.allModules
     )
     self.configurations = configurations
-    self.currentSnapshot = FleetMonitorSnapshot.initial(configurations: configurations)
     super.init()
   }
 
@@ -26,24 +22,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
       runLocalAutomationCheck()
       return
     }
-    alertNotifier = AlertNotifier()
     monitorController = MonitorController(configurations: configurations)
     ApplicationMenu.setFindTarget(self)
-    widgetController = StatusWidgetController(
-      configurations: configurations,
-      sampleLimit: monitorController.sampleLimit
-    )
-
-    widgetController.actions = self
-    monitorController.onStateChange = { [weak self] snapshot, changedModuleID in
-      self?.handle(snapshot: snapshot, changedModuleID: changedModuleID)
-    }
-    monitorController.onSampleLimitChange = { [weak self] sampleLimit in
-      self?.widgetController.updateSampleLimit(sampleLimit)
-    }
-
-    widgetController.show()
     monitorController.start()
+  }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    monitorController?.showPlatformWindow()
+    return true
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -54,56 +40,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusWidgetActions {
     monitorController?.stop()
   }
 
-  func statusWidgetRequestedScan(moduleID: String?) {
-    monitorController.scanNow(moduleID: moduleID)
-  }
-
-  func statusWidgetRequestedPlatformWindow(moduleID: String?) {
-    monitorController.showPlatformWindow(moduleID: moduleID)
-  }
-
-  func statusWidgetRequestedMonitoringChange(moduleID: String, enabled: Bool) {
-    monitorController.setMonitoringEnabled(enabled, moduleID: moduleID)
-  }
-
-  func statusWidgetRequestedMute() {
-    alertNotifier.muteForTenMinutes()
-    refreshWidget()
-  }
-
-  func statusWidgetRequestedQuit() {
-    NSApp.terminate(nil)
-  }
-
   @objc func findInCurrentBackend(_ sender: Any?) {
     monitorController?.focusFind()
   }
 
-  private func handle(snapshot: FleetMonitorSnapshot, changedModuleID: String?) {
-    currentSnapshot = snapshot
-
-    if let changedModuleID,
-      let focus = snapshot.focus,
-      focus.configuration.id == changedModuleID,
-      case .alert(let metrics, _) = focus.state,
-      ProcessInfo.processInfo.environment["SMS_MONITOR_TEST_SCENARIO"] == nil
-    {
-      alertNotifier.notify(configuration: focus.configuration, metrics: metrics)
-    } else if snapshot.alertCount == 0 {
-      alertNotifier.clearAlert()
-    }
-
-    refreshWidget()
-  }
-
-  private func refreshWidget() {
-    widgetController.update(
-      snapshot: currentSnapshot,
-      muteDescription: alertNotifier.muteDescription
-    )
-  }
-
   private func runLocalAutomationCheck() {
+    let publicWorkspace = PlatformWorkspaceController(
+      sampleLimit: 200, monitoredPages: [], credentialStore: LocalCredentialStore()
+    )
+    let toolbar = publicWorkspace.window.toolbar!
+    let items = publicWorkspace.toolbarAllowedItemIdentifiers(toolbar).map(\.rawValue)
+    guard items.contains("SMSMonitorPendingOrders"),
+      items.contains("SMSMonitorWithdrawalReviewers"),
+      !items.contains("SMSMonitorPlatformSampleLimit")
+    else {
+      fputs("Public workspace entry points are incorrect\n", stderr)
+      exit(1)
+    }
+    publicWorkspace.window.close()
+    guard WithdrawalReviewersWindowController.verifyLayoutAndManualFetch() else {
+      fputs("Withdrawal reviewers manual fetch or layout is incorrect\n", stderr)
+      exit(1)
+    }
+    guard PendingOrdersWindowController.verifyLayoutAndFiltering() else {
+      fputs("Pending orders layout or filtering is incorrect\n", stderr)
+      exit(1)
+    }
     let credentialStore = LocalCredentialStore()
     let testModuleID = "__local-automation-self-test__"
     let testProfile = LocalLoginProfile(

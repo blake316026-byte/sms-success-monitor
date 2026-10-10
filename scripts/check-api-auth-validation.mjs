@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -23,8 +24,37 @@ const windowsHandler = windows.slice(
 assert.match(windowsHandler, /manualOnly[\s\S]*handleAuthenticationRequired/);
 assert.match(windowsHandler, /apiAuthenticationValidationAttempted[\s\S]*webContents\.reload\(\)/);
 assert.doesNotMatch(windowsHandler, /loadURL\(loginURLFor/);
-assert.match(windows, /result\.kind === 'auth'[\s\S]*handleAPIAuthenticationRequired/);
-assert.match(windows, /result\?\.kind === 'auth'[\s\S]*handleAPIAuthenticationRequired/);
+
+const state = { monitoringEnabled: true };
+let url = 'https://fixture.invalid/dashboard';
+let reloads = 0, logins = 0;
+const context = vm.createContext({
+  moduleStates: new Map([['fixture', state]]),
+  pages: new Map([['fixture', { view: { webContents: {
+    getURL: () => url, reload: () => reloads++
+  } } }]]),
+  requiresInteractiveAuthentication: value => new URL(value).pathname === '/login',
+  handleAuthenticationRequired: () => logins++,
+  updateModule: (_, update) => Object.assign(state, update),
+  SCAN_INTERVAL_MS: 60000,
+});
+vm.runInContext(windowsHandler, context);
+for (const authCode of [0, 1010, 1011, 1013, 1014, 1013]) {
+  context.handleAPIAuthenticationRequired('fixture', { authCode, httpStatus: 200 }, 'challenge');
+}
+assert.equal(reloads, 0);
+assert.equal(logins, 0);
+for (const result of [{ authCode: 1012 }, { httpStatus: 401 }, { authCode: 1012 }]) {
+  context.handleAPIAuthenticationRequired('fixture', result, 'rejected');
+}
+assert.equal(reloads, 1, 'session rejection validates once, not once per polling channel');
+assert.equal(logins, 0);
+url = 'https://fixture.invalid/login';
+context.handleAPIAuthenticationRequired('fixture', {}, 'login');
+assert.equal(logins, 1);
+const macScan = mac.slice(mac.indexOf('private func finishScan'), mac.indexOf('private func finishFinancialRefresh'));
+assert.doesNotMatch(macScan, /apiAuthenticationValidationAttempted = false/,
+  'successful SMS scans cannot rearm finance-triggered reloads');
 
 const runtime = read('Sources/SMSMonitorApp/LocalAutomationRuntime.swift');
 assert.match(runtime, /queuedCalls\.append[\s\S]*runNextCall\(\)/);

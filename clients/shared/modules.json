@@ -1,52 +1,52 @@
 [
   {
-    "id": "bills02-otp",
-    "name": "BIllS02-OTP",
-    "url": "https://bills02-otp.local.sms-monitor.invalid/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-1",
+    "name": "后台 1",
+    "url": "https://workspace-1.example.invalid/login"
   },
   {
-    "id": "bills",
-    "name": "BIllS",
-    "url": "https://bills.local.sms-monitor.invalid/app-user-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-2",
+    "name": "后台 2",
+    "url": "https://workspace-2.example.invalid/login"
   },
   {
-    "id": "bills3",
-    "name": "BIllS3",
-    "url": "https://bills3.local.sms-monitor.invalid/recharge-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-3",
+    "name": "后台 3",
+    "url": "https://workspace-3.example.invalid/login"
   },
   {
-    "id": "bills4",
-    "name": "BIllS4",
-    "url": "https://bills4.local.sms-monitor.invalid/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-4",
+    "name": "后台 4",
+    "url": "https://workspace-4.example.invalid/login"
   },
   {
-    "id": "cg01",
-    "name": "cg01",
-    "url": "https://cg01.local.sms-monitor.invalid/ck-dashboard#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-5",
+    "name": "后台 5",
+    "url": "https://workspace-5.example.invalid/login"
   },
   {
-    "id": "cg02",
-    "name": "cg02",
-    "url": "https://cg02.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-6",
+    "name": "后台 6",
+    "url": "https://workspace-6.example.invalid/login"
   },
   {
-    "id": "cg03-nine01",
-    "name": "cg03（nine01）",
-    "url": "https://cg03-nine01.local.sms-monitor.invalid/v-report/3878C493EB934C22817480D595ABAFC9#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-7",
+    "name": "后台 7",
+    "url": "https://workspace-7.example.invalid/login"
   },
   {
-    "id": "cg04",
-    "name": "cg04",
-    "url": "https://cg04.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-8",
+    "name": "后台 8",
+    "url": "https://workspace-8.example.invalid/login"
   },
   {
-    "id": "bs01",
-    "name": "bs01",
-    "url": "https://bs01.local.sms-monitor.invalid/login#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-9",
+    "name": "后台 9",
+    "url": "https://workspace-9.example.invalid/login"
   },
   {
-    "id": "ok01",
-    "name": "OK01",
-    "url": "https://ok01.local.sms-monitor.invalid/sms-record-list#CC=eyJDT1VOVFJZIjoiUEgifQ=="
+    "id": "workspace-10",
+    "name": "后台 10",
+    "url": "https://workspace-10.example.invalid/login"
   }
 ]

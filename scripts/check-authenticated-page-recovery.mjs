@@ -39,7 +39,7 @@ assert.equal(run([['lt-user', user('blake', '')]]).kind, 'missingToken');
 
 const controller = read('Sources/SMSMonitorApp/MonitorController.swift');
 const recovery = controller.slice(
-  controller.indexOf('private func attemptAuthenticatedPageRecovery()'),
+  controller.indexOf('private var needsAuthenticatedPageRecovery'),
   controller.indexOf('private func persistCurrentToken()')
 );
 assert.match(recovery, /manualAuthenticationRequired[\s\S]*!requiresInteractiveAuthentication/);
@@ -51,7 +51,8 @@ assert.match(controller, /webView\.observe\(\\\.url[\s\S]*reconcileAuthenticated
 assert.match(controller, /webView\.observe\(\\\.isLoading[\s\S]*reconcileAuthenticatedBusinessPageIfNeeded\(\)/);
 assert.match(controller, /webView = replacement\s+observePageNavigation\(\)/);
 assert.match(controller, /func setPageActive\([\s\S]*restoreCompactedPageIfNeeded\(\)[\s\S]*reconcileAuthenticatedBusinessPageIfNeeded\(\)/);
-assert.match(controller, /case \.authenticationRequired = latestEmittedState,[\s\S]*scheduleNextScan\(after: 0\)/);
+assert.match(recovery, /case \.authenticationRequired = latestEmittedState/);
+assert.match(recovery, /loginCompletionDeadline = nil[\s\S]*autoLoginCooldownUntil = nil/);
 assert.match(recovery, /currentURL\.path != "\/\.sms-monitor-memory-shell"/);
 
 console.log('PASS: authenticated business routes recheck stale state on navigation, load and tab selection');

@@ -84,22 +84,6 @@ enum FinanceScript {
         ? { rechargeAmount, withdrawAmount }
         : null;
     };
-    const readDashboardTodayAmounts = (payload) => {
-      const candidates = [
-        payload && payload.model && payload.model.today,
-        payload && payload.data && payload.data.today,
-        payload && payload.today
-      ];
-      for (const candidate of candidates) {
-        const rechargeAmount = Number(candidate && candidate.rechargeSuccAmount);
-        const withdrawAmount = Number(candidate && candidate.withdrawSuccAmount);
-        if (candidate && Number.isFinite(rechargeAmount) && Number.isFinite(withdrawAmount)) {
-          return { rechargeAmount, withdrawAmount };
-        }
-      }
-      return null;
-    };
-
     const usernameOf = (value) => String(
       value && typeof value === 'object'
         ? value.username || value.account || value.loginName || ''
@@ -123,30 +107,33 @@ enum FinanceScript {
       return { kind: 'auth', manualOnly: false, sessionUsername, message: '页面登录态已失效，请重新登录。' };
     }
     const initialSession = storedUsers.snapshot;
-    const sessionChanged = () => signedOut() || readStoredUsers().snapshot !== initialSession;
+    const sessionChanged = () => signedOut() || readStoredUsers().snapshot !== initialSession
+      || country !== String(readUrlCache().COUNTRY || readStoredValue('COUNTRY') || (isOKBET ? 'PH' : '')).trim().toUpperCase();
 
     const urlCache = readUrlCache();
-    const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY') || 'PH');
     const language = String(readStoredValue('locale') || 'zh-cn');
     const tkk = urlCache.Tkk || readStoredValue('Tkk');
-    const dashboardEndpoint = new URL('/api/dashboard4bix/realtime', window.location.origin).href;
-    const okbetEndpoint = new URL('/api/realtime_record/with_country', window.location.origin).href;
     const normalizedPlatformID = String(platformID || '').trim().toLowerCase();
     const normalizedPlatformName = String(platformName || '').trim().toLowerCase();
     const isOKBET = normalizedPlatformID === 'ok01'
       || normalizedPlatformName === 'okbet'
       || normalizedPlatformName === 'ok01';
+    const country = String(urlCache.COUNTRY || readStoredValue('COUNTRY')
+      || (isOKBET ? 'PH' : '')).trim().toUpperCase();
 
-    // NPG's report menu requires REPORT and CK_DASHBOARD, not payment summaries.
+    // Match the two payment-record summary controls, not the report dashboard.
     const permissionUsers = storedUsers.users.filter((candidate) => Array.isArray(candidate.resources) || typeof candidate.root === 'boolean');
     if (!isOKBET && permissionUsers.length > 0) {
       const allowed = (resource) => permissionUsers.every((candidate) => candidate.root === true || (Array.isArray(candidate.resources) && candidate.resources.some((grant) => (
         typeof grant === 'string' && (grant === resource
           || (grant.endsWith('_') && resource.startsWith(grant)))
       ))));
-      if (!allowed('REPORT') || !allowed('CK_DASHBOARD')) {
-        return { kind: 'permission', message: '当前账号未授权报表看板（REPORT / CK_DASHBOARD），已停止财务查询。' };
+      if (!allowed('RECHARGE_RECORD_SUMMARY') || !allowed('WITHDRAW_RECORD_SUMMARY')) {
+        return { kind: 'permission', message: '当前账号未授权充值或提现记录汇总，已停止财务查询。' };
       }
+    }
+    if (!/^[A-Z]{2,3}$/.test(country)) {
+      return { kind: 'error', message: '无法确认当前选择的国家，已停止财务汇总。' };
     }
     const isAuthenticationFailure = (response, payload) => {
       if (response.status === 401) return true;
@@ -154,6 +141,36 @@ enum FinanceScript {
       return [1010, 1011, 1012, 1013, 1014].includes(status);
     };
 
+    // Resolve calendar boundaries in the platform's country timezone, never the host timezone.
+    const countryDayRange = (timeZone, now) => {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone, calendar: 'gregory', numberingSystem: 'latn',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+      const dayKey = (timestamp) => {
+        const parts = Object.fromEntries(formatter.formatToParts(new Date(timestamp)).map(part => [part.type, part.value]));
+        return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)) / 86400000;
+      };
+      const today = dayKey(now);
+      // Find the first instant of each date, including midnight/DST transitions.
+      const boundary = (day) => {
+        let low = day * 86400000 - 36 * 3600000;
+        let high = day * 86400000 + 36 * 3600000;
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2);
+          if (dayKey(middle) < day) low = middle + 1;
+          else high = middle;
+        }
+        return low;
+      };
+      return {
+        date: new Date(today * 86400000).toISOString().slice(0, 10),
+        start: boundary(today), finish: boundary(today + 1) - 1
+      };
+    };
+
+    let lastHTTPStatus = 0;
+    let lastAuthCode = 0;
     for (const token of tokenCandidates) {
       const headers = {
         Accept: 'application/json',
@@ -165,50 +182,105 @@ enum FinanceScript {
       if (tkk) headers.Tkk = String(tkk);
       if (isOKBET && country.toUpperCase() === 'PH') headers.SYSTIMEZONE = 'Asia/Manila';
 
-      try {
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 20000);
-        const response = await window.fetch(isOKBET ? okbetEndpoint : dashboardEndpoint, {
-          method: 'POST', credentials: 'include', headers,
-          body: JSON.stringify(isOKBET ? { dayOffset: 0, countryId: country } : {}),
-          signal: controller.signal
-        });
-        window.clearTimeout(timeout);
-        if (sessionChanged()) return { kind: 'sessionChanged' };
-        let payload = null;
-        try {
-          payload = await response.json();
-        } catch (_) {}
-        if (sessionChanged()) return { kind: 'sessionChanged' };
-        if (response.status === 403 || Number(payload?.status ?? payload?.code) === 403
-          || /无权限|没有权限|权限不足|拒绝访问|forbidden|permission|access denied|unauthorized/i.test(String(payload?.message || ''))) {
-          return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
-        }
-        if (isAuthenticationFailure(response, payload)) continue;
-        if (!response.ok) {
-          return { kind: 'error', message: `今日统计接口返回 HTTP ${response.status}。` };
-        }
-        if (!isSuccessfulPayload(payload)) {
-          const message = String(payload && payload.message || '');
-          if (/无权限|没有权限|forbidden|permission|unauthorized/i.test(message)) {
+     const amounts = {};
+      const cachedZone = window.__smsMonitorCountryTimezones?.[country];
+      let timeZone = !isOKBET && cachedZone?.session === initialSession && cachedZone.expires > Date.now()
+        ? cachedZone.timeZone : null;
+      let queryRange = null;
+      const requests = isOKBET
+        ? [{ path: '/api/realtime_record/with_country', body: { dayOffset: 0, countryId: country } }]
+        : [
+            ...(!timeZone ? [{ path: '/api/auth/timezone_with_country', body: { countryId: country }, timezone: true }] : []),
+            { path: '/api/recharge_record/summary_query', field: 'rechargeAmount' },
+            { path: '/api/withdraw_record/summary_query', field: 'withdrawAmount' }
+          ];
+     let expired = false;
+      for (const request of requests) {
+       try {
+          if (request.field) {
+            queryRange ??= countryDayRange(timeZone, Date.now());
+            request.body = { status: 'PAID', dtCreated: { start: queryRange.start, finish: queryRange.finish } };
+          }
+         const controller = new AbortController();
+          const timeout = window.setTimeout(() => controller.abort(), 20000);
+          let response;
+          try {
+            response = await window.fetch(new URL(request.path, window.location.origin).href, {
+              method: 'POST', credentials: 'include', headers,
+              body: JSON.stringify(request.body), signal: controller.signal
+            });
+          } finally {
+            window.clearTimeout(timeout);
+          }
+          if (sessionChanged()) return { kind: 'sessionChanged' };
+          let payload = null;
+          try {
+            payload = await response.json();
+          } catch (_) {}
+          if (sessionChanged()) return { kind: 'sessionChanged' };
+          if (response.status === 403 || Number(payload?.status ?? payload?.code) === 403
+            || /无权限|没有权限|权限不足|拒绝访问|forbidden|permission|access denied|unauthorized/i.test(String(payload?.message || ''))) {
             return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
           }
-          return { kind: 'error', message: payload && payload.message || '今日统计接口状态异常。' };
+          if (isAuthenticationFailure(response, payload)) {
+            lastHTTPStatus = response.status;
+            lastAuthCode = Number(payload?.status ?? payload?.code) || 0;
+            if (response.status !== 401 && lastAuthCode !== 1012) {
+              return { kind: 'auth', manualOnly: false, sessionUsername,
+                httpStatus: lastHTTPStatus, authCode: lastAuthCode,
+                message: payload?.message || `平台要求补充验证 (${lastAuthCode})。` };
+            }
+            expired = true;
+            break;
+          }
+          if (!response.ok) {
+            return { kind: 'error', message: `今日统计接口返回 HTTP ${response.status}。` };
+          }
+          if (!isSuccessfulPayload(payload)) {
+            const message = String(payload && payload.message || '');
+            if (/无权限|没有权限|forbidden|permission|unauthorized/i.test(message)) {
+              return { kind: 'permission', message: '当前账号无财务数据查看权限，已停止财务查询。' };
+            }
+            return { kind: 'error', message: payload && payload.message || '今日统计接口状态异常。' };
+          }
+          if (request.timezone) {
+            if (typeof payload?.model !== 'string' || !payload.model.trim()) {
+              return { kind: 'error', message: '无法确认后台国家时区，已停止今日金额查询。' };
+            }
+            timeZone = payload.model.trim();
+            try { new Intl.DateTimeFormat('en', { timeZone }).format(); }
+            catch (_) { return { kind: 'error', message: '后台返回了无效时区，已停止今日金额查询。' }; }
+            window.__smsMonitorCountryTimezones ??= {};
+            window.__smsMonitorCountryTimezones[country] = {
+              timeZone, session: initialSession, expires: Date.now() + 300000
+            };
+            continue;
+          }
+          if (isOKBET) {
+            const metrics = readOKBETTodayAmounts(payload, country);
+            if (!metrics) return { kind: 'error', message: '今日统计接口缺少充值或提现金额。' };
+            Object.assign(amounts, metrics);
+          } else {
+            if (payload?.total == null || payload.total === '') {
+              return { kind: 'error', message: '充值或提现记录汇总缺少总金额。' };
+            }
+            amounts[request.field] = Number(payload.total);
+          }
+        } catch (error) {
+          return {
+            kind: 'error',
+            message: error && error.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。'
+          };
         }
-        const metrics = isOKBET
-          ? readOKBETTodayAmounts(payload, country)
-          : readDashboardTodayAmounts(payload);
-        if (!metrics) {
-          return { kind: 'error', message: '今日统计接口缺少充值或提现金额。' };
-        }
-        return { kind: 'ok', dailyFinancial: metrics };
-      } catch (error) {
-        return {
-          kind: 'error',
-          message: error && error.name === 'AbortError' ? '今日统计请求超过 20 秒。' : '无法连接今日统计接口。'
-        };
       }
+      if (expired) continue;
+      if (!Number.isFinite(amounts.rechargeAmount) || !Number.isFinite(amounts.withdrawAmount)) {
+        return { kind: 'error', message: '今日统计接口缺少充值或提现金额。' };
+      }
+      return { kind: 'ok', dailyFinancial: { countryId: country, ...amounts },
+        queryContext: isOKBET ? null : { countryId: country, timeZone, status: 'PAID', ...queryRange } };
     }
-    return { kind: 'auth', manualOnly: false, sessionUsername, message: '今日统计登录态已失效，请重新登录。' };
+    return { kind: 'auth', manualOnly: false, sessionUsername,
+      httpStatus: lastHTTPStatus, authCode: lastAuthCode, message: '今日统计登录态已失效，请重新登录。' };
     """#
 }

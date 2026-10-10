@@ -69,7 +69,6 @@ const closeButton = document.querySelector('#close-page');
 const renameButton = document.querySelector('#rename-page');
 const credentialsButton = document.querySelector('#credentials');
 const highlightsButton = document.querySelector('#highlights');
-const sampleLimitInput = document.querySelector('#sample-limit');
 const zoomOutButton = document.querySelector('#zoom-out');
 const zoomResetButton = document.querySelector('#zoom-reset');
 const zoomInButton = document.querySelector('#zoom-in');
@@ -177,11 +176,6 @@ function render() {
     }
     reloadButton.classList.remove('loading');
   }
-  if (document.activeElement !== sampleLimitInput) {
-    sampleLimitInput.value = String(snapshot.sampleLimit);
-    sampleLimitInput.min = String(snapshot.minimumSampleLimit);
-    sampleLimitInput.max = String(snapshot.maximumSampleLimit);
-  }
   zoomResetButton.textContent = `${snapshot.workbenchZoomPercent}%`;
   zoomOutButton.disabled = snapshot.workbenchZoomPercent <= snapshot.minimumWorkbenchZoomPercent;
   zoomInButton.disabled = snapshot.workbenchZoomPercent >= snapshot.maximumWorkbenchZoomPercent;
@@ -268,17 +262,6 @@ clearCacheButton.addEventListener('click', async () => {
   clearCacheButton.disabled = false;
   window.alert(result?.message || (result?.ok ? '网页缓存已清除' : '清除缓存失败'));
 });
-sampleLimitInput.addEventListener('change', async () => {
-  const result = await window.smsApi.setSampleLimit(sampleLimitInput.value);
-  if (!result.ok) {
-    sampleLimitInput.setCustomValidity(result.message);
-    sampleLimitInput.reportValidity();
-    sampleLimitInput.value = String(snapshot.sampleLimit);
-    return;
-  }
-  sampleLimitInput.setCustomValidity('');
-  sampleLimitInput.value = String(result.sampleLimit);
-});
 async function changeZoom(direction) {
   for (const button of [zoomOutButton, zoomResetButton, zoomInButton]) button.disabled = true;
   const result = await window.smsApi.changeWorkbenchZoom(direction).catch((error) => ({
@@ -296,11 +279,6 @@ async function changeZoom(direction) {
 zoomOutButton.addEventListener('click', () => changeZoom('out'));
 zoomResetButton.addEventListener('click', () => changeZoom('reset'));
 zoomInButton.addEventListener('click', () => changeZoom('in'));
-document.querySelector('#scan').addEventListener('click', () => {
-  const selected = snapshot?.pages.find((page) => page.id === snapshot.selectedPageId);
-  if (selected) window.smsApi.scan(selected.id);
-});
-document.querySelector('#detail').addEventListener('click', () => window.smsApi.showDetail());
 document.querySelector('#find').addEventListener('click', openFind);
 highlightsButton.addEventListener('click', async () => {
   const result = await window.smsApi.getHighlightSettings();

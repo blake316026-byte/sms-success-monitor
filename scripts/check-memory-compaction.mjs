@@ -55,8 +55,13 @@ assert.match(compaction, /suspendedTianchengLogin\?\.stop\(\)[\s\S]*suspendedTia
   'Tiancheng polling must be serialized with session capture and resumed on failure');
 assert.match(compaction, /let replacement = WKWebView[\s\S]*webView = replacement/,
   'memory compaction must replace the heavy WebView process');
-assert.match(compaction, /components\.path = "\/\.sms-monitor-memory-shell"[\s\S]*components\.query = nil[\s\S]*components\.fragment = nil/,
+assert.match(compaction, /components\.path = "\/\.sms-monitor-memory-shell"[\s\S]*components\.query = nil/,
   'the lightweight page must use a distinct same-origin URL');
+assert.doesNotMatch(compaction, /components\.fragment = nil/,
+  'memory shell must retain the country and verification context');
+assert.match(compaction, /!isRestoringCompactedPage, !webView\.isLoading/);
+assert.match(compaction, /previous\.url == currentURL[\s\S]*authenticationEpoch == epoch[\s\S]*inactiveSince == capturedInactiveSince/,
+  'asynchronous snapshots must not replace a newly navigated or authenticated page');
 assert.match(compaction, /let shellBaseURL = Self\.compactedPageBaseURL\(for: currentURL\)[\s\S]*loadHTMLString\([\s\S]*baseURL: shellBaseURL/,
   'the lightweight page must not impersonate the exact business page URL');
 assert.match(compaction, /restoreCompactedPageIfNeeded[\s\S]*webView\.load\(URLRequest\(url: restoreURL\)\)/,

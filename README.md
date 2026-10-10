@@ -1,29 +1,28 @@
-# SMS Success Monitor
+# SMS Platform Workbench
 
-独立的短信成功率监控客户端，支持 macOS、Windows 和 Android。
+**v0.3.83 公开精简版**
 
-开发、维护、技术决策与跨窗口交接统一以 [`DEVELOPMENT.md`](DEVELOPMENT.md) 为真源。
+三端均已移除“全部后台/国家总计”、监控浮窗及报警展示，不再定时采集短信和充提统计。
 
-## 立即下载
+## 下载
 
-<p align="center">
-  <a href="https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-macOS-universal.zip"><strong>下载 macOS 版</strong></a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Windows-x64.zip"><strong>下载 Windows 版</strong></a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Android.apk"><strong>下载 Android 版</strong></a>
-</p>
+- [macOS（Apple Silicon / Intel）](https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-macOS-universal.zip)
+- [Windows x64](https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Windows-x64.zip)
+- [Android](https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Android.apk)
 
-macOS 包同时支持 Apple Silicon 和 Intel Mac。Windows 包支持 64 位 Windows 10/11。Android 包支持 Android 8.0 及以上版本。
+## 功能范围
 
-### macOS 首次打开
+| 功能 | macOS | Windows | Android |
+| --- | --- | --- | --- |
+| 后台工作台、本地登录配置、网页高亮 | 支持 | 支持 | 支持 |
+| 全平台待处理订单 | 支持 | 尚未移植 | 尚未移植 |
+| 提现审核人员查询 | 支持 | 尚未移植 | 尚未移植 |
+| 监控总览、国家总计、监控浮窗 | 已移除 | 已移除 | 已移除 |
 
-当前 macOS 包使用内部临时签名，尚未使用 Apple Developer ID 签名和公证。从 GitHub 下载后若提示“Apple 无法验证”，请确认下载来源为本仓库，然后：
+平台地址、登录资料和业务数据由使用者在本机配置、查询。本仓库和安装包不包含真实后台配置或业务查询缓存。精简版使用独立应用标识和数据目录，不自动读取或覆盖完整版资料。macOS 应用名称为 **SMS Platform Workbench**，可以与完整版并存。
 
-1. 将应用放入“应用程序”文件夹并尝试打开一次，在提示中点击“完成”。
-2. 打开“系统设置”→“隐私与安全性”，向下滚动到“安全性”。
-3. 在 SMS Success Monitor 提示旁点击“仍要打开”，输入本机登录密码后再次确认“打开”。
+macOS 最低版本 13；Windows 10/11 x64；Android 8.0 及以上。macOS 为临时签名、未经 Apple 公证；请核对下载来源及 Release 校验值，在系统“隐私与安全性”中允许打开。Android 使用测试签名，首次安装需允许该下载来源。
 
-该例外保存后，以后可以正常双击启动。正式消除此提示需要使用 Apple Developer ID 签名并通过 Apple 公证。
+历史 Release 仍保留原功能，不属于本次精简版。请下载 **v0.3.83 或后续明确标注的公开精简版**。
 
-本版：**macOS v0.3.71 build 78、Windows v0.3.68**；Android 下载继续使用已验证的 v0.3.61。macOS 在后台同页登录跳转、标签切换和隐藏页面恢复后会重新核对会话，修复已登录却持续显示“需登录”的问题。GitHub 下载以已发布 Release 为准。详见[本版更新说明](releases/v0.3.71.md)。
+[更新说明](releases/v0.3.83.md) · [开发说明](DEVELOPMENT.md)

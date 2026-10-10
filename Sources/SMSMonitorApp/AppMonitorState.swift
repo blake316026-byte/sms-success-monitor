@@ -66,17 +66,23 @@ struct ModuleMonitorSnapshot {
   let state: AppMonitorState
   let nextScanAt: Date?
   let dailyFinancialMetrics: DailyFinancialMetrics?
+  let smsMonitoringEnabled: Bool
+  let financialMonitoringEnabled: Bool
 
   init(
     configuration: MonitorConfiguration,
     state: AppMonitorState,
     nextScanAt: Date?,
-    dailyFinancialMetrics: DailyFinancialMetrics? = nil
+    dailyFinancialMetrics: DailyFinancialMetrics? = nil,
+    smsMonitoringEnabled: Bool = true,
+    financialMonitoringEnabled: Bool = true
   ) {
     self.configuration = configuration
     self.state = state
     self.nextScanAt = nextScanAt
     self.dailyFinancialMetrics = dailyFinancialMetrics
+    self.smsMonitoringEnabled = smsMonitoringEnabled
+    self.financialMonitoringEnabled = financialMonitoringEnabled
   }
 }
 
@@ -140,11 +146,11 @@ struct FleetMonitorSnapshot {
   }
 
   var disabledCount: Int {
-    modules.count(where: { $0.state.isDisabled })
+    modules.count(where: { !$0.smsMonitoringEnabled && !$0.financialMonitoringEnabled })
   }
 
   var enabledCount: Int {
-    modules.count - disabledCount
+    modules.count(where: \.smsMonitoringEnabled)
   }
 
   var financialCoverageCount: Int {
@@ -152,11 +158,11 @@ struct FleetMonitorSnapshot {
   }
 
   var dailyFinancialTotals: DailyFinancialMetrics? {
-    let available = modules.compactMap(\.dailyFinancialMetrics)
-    guard !available.isEmpty else { return nil }
-    return DailyFinancialMetrics(
-      rechargeAmount: available.reduce(0) { $0 + $1.rechargeAmount },
-      withdrawAmount: available.reduce(0) { $0 + $1.withdrawAmount }
-    )
+    let totals = countryFinancialTotals
+    return totals.count == 1 ? totals[0].metrics : nil
+  }
+
+  var countryFinancialTotals: [CountryFinancialTotal] {
+    FinancialCountrySummary.totals(modules.compactMap(\.dailyFinancialMetrics))
   }
 }

@@ -20,6 +20,7 @@ class Storage {
 }
 const success = {
   status: 0, page: { content: [{ id: 1, status: 'SUCCESS' }], totalElements: 1 },
+  total: 100,
   model: { today: { rechargeSuccAmount: 100, withdrawSuccAmount: 10 } },
   list: [{ countryId: 'PH', type: 'COUNTRY_DAY', timeType: 'DAY', columns: { rechargeAmount: 100, withdrawAmount: 10 } }],
 };
@@ -28,9 +29,15 @@ function setup(fetch, user = { username: 'payrobot', token: 'restricted-token' }
   globalThis.window = {
     localStorage: new Storage(), sessionStorage: new Storage(),
     location: { origin: 'https://test.invalid', hash: '' },
-    atob, setTimeout, clearTimeout, fetch,
+    atob, setTimeout, clearTimeout,
+    fetch: (url, options) => url.endsWith('/api/auth/timezone_with_country')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 0, model: 'Asia/Manila' }) })
+      : fetch(url, options),
   };
-  if (user) window.localStorage.setItem('gamebox-admin-lt-user', JSON.stringify(user));
+  if (user) {
+    window.localStorage.setItem('gamebox-admin-lt-user', JSON.stringify(user));
+    window.localStorage.setItem('gamebox-admin-COUNTRY', JSON.stringify('PH'));
+  }
 }
 
 for (const [name, run, args] of adapters) {
@@ -49,6 +56,8 @@ for (const [name, run, args] of adapters) {
     assert.deepEqual(calls, ['restricted-token'], `${name}: no old account retry`);
     if (expected === 'auth') {
       assert.equal(result.manualOnly, false, name);
+      assert.equal(result.httpStatus, http, `${name}: preserves HTTP rejection evidence`);
+      assert.equal(result.authCode, Number(payload.status) || 0, `${name}: preserves API rejection evidence`);
       assert.equal(result.sessionUsername, 'payrobot', `${name}: carries only the current account identity`);
     }
     assert.equal(JSON.parse(window.localStorage.getItem('gamebox-admin-lt-user')).token, 'restricted-token');
@@ -61,6 +70,20 @@ for (const [name, run, args] of adapters) {
     assert.equal(result.kind, 'auth', name);
     assert.equal(result.manualOnly, conflict, name);
     assert.equal(result.sessionUsername, conflict ? '' : 'payrobot', name);
+  }
+
+  for (const code of [1010, 1011, 1013, 1014]) {
+    const calls = [];
+    setup(async (_url, options) => {
+      calls.push(options.headers.Auth);
+      return response(200, { status: code, message: 'supplementary verification' });
+    }, { username: 'payrobot', token: 'older-token' });
+    window.sessionStorage.setItem('gamebox-admin-lt-user', JSON.stringify({ username: 'payrobot', token: 'current-token' }));
+    const result = await run(...args);
+    assert.equal(result.kind, 'auth', name);
+    assert.equal(result.authCode, code, name);
+    assert.equal(result.httpStatus, 200, name);
+    assert.deepEqual(calls, ['current-token'], `${name}: supplementary verification must not retry an older session`);
   }
 
   {
@@ -100,28 +123,33 @@ for (const [name, run, args] of adapters) {
 
 // Permission names and prefix matching are taken from NPG's shipped menu/checkAuth.
 for (const [name, run, originalArgs] of adapters) {
+  const finance = name.includes('finance');
   const args = originalArgs.map((arg) => arg === 'ok01' ? 'test' : arg === 'okbet' ? 'test' : arg);
-  for (const resources of [[], ['PAY', 'RECHARGE_RECORD_SUMMARY', 'WITHDRAW_RECORD_SUMMARY'], ['_SYSTEM_'], ['SMS_RECORD', 'CK_DASHBOARD_EXTRA'], null]) {
+  const denied = finance
+    ? [[], ['PAY'], ['REPORT', 'CK_DASHBOARD'], ['RECHARGE_RECORD_SUMMARY'], ['WITHDRAW_RECORD_SUMMARY'], null]
+    : [[], ['PAY', 'RECHARGE_RECORD_SUMMARY', 'WITHDRAW_RECORD_SUMMARY'], ['_SYSTEM_'], ['SMS_RECORD', 'CK_DASHBOARD_EXTRA'], null];
+  for (const resources of denied) {
     let calls = 0;
     setup(async () => { calls++; return response(200); }, { username: 'restricted', token: 'current', root: false, resources });
     assert.equal((await run(...args)).kind, 'permission', `${name}: reject missing grants`);
     assert.equal(calls, 0, `${name}: preflight must not send any request`);
   }
-  for (const user of [
-    { root: true },
-    { root: false, resources: ['SMS_RECORD_LIST', 'REPORT', 'CK_DASHBOARD'] },
-    { root: false, resources: ['SMS_', 'REPORT', 'CK_'] },
-  ]) {
+  const permitted = finance
+    ? [
+        { root: true },
+        { root: false, resources: ['RECHARGE_RECORD_SUMMARY', 'WITHDRAW_RECORD_SUMMARY'] },
+        { root: false, resources: ['RECHARGE_RECORD_', 'WITHDRAW_RECORD_'] },
+      ]
+    : [
+        { root: true },
+        { root: false, resources: ['SMS_RECORD_LIST', 'REPORT', 'CK_DASHBOARD'] },
+        { root: false, resources: ['SMS_', 'REPORT', 'CK_'] },
+      ];
+  for (const user of permitted) {
     let calls = 0;
     setup(async () => { calls++; return response(200); }, { username: 'permitted', token: 'current', ...user });
     assert.equal((await run(...args)).kind, 'ok', `${name}: respect explicit grants`);
-    assert.equal(calls, 1);
-  }
-  if (name.includes('finance')) {
-    for (const resources of [['REPORT'], ['CK_DASHBOARD']]) {
-      setup(() => { throw new Error('partial report permission must not fetch'); }, { username: 'restricted', token: 'current', root: false, resources });
-      assert.equal((await run(...args)).kind, 'permission');
-    }
+    assert.equal(calls, finance ? 2 : 1);
   }
   console.log(`PASS: ${name} NPG preflight denies restricted accounts without querying`);
 }

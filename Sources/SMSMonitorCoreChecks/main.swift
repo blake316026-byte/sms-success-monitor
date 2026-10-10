@@ -177,22 +177,7 @@ check(
 )
 
 let configuredModules = MonitorConfiguration.allModules
-check(configuredModules.count == 10, "configures all ten monitored platforms")
-check(
-  configuredModules.map(\.displayName) == [
-    "BIllS02-OTP",
-    "BIllS",
-    "BIllS3",
-    "BIllS4",
-    "cg01",
-    "cg02",
-    "cg03（nine01）",
-    "cg04",
-    "bs01",
-    "OK01",
-  ],
-  "preserves the configured backend names"
-)
+check(configuredModules.isEmpty, "public workbench ships no configured platforms")
 check(
   Set(configuredModules.map(\.id)).count == configuredModules.count,
   "uses unique module identifiers"
@@ -230,6 +215,20 @@ check(
   "monitors the custom OKBET platform domain"
 )
 check(
+  PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "custom-pisoking",
+    targetURL: URL(string: "https://c2-gyk2yh.npgqwe.com/login")!
+  ),
+  "monitors the verified PisoKing host"
+)
+check(
+  !PlatformRoutingPolicy.shouldUseNPGMonitoring(
+    configurationID: "custom-unverified-npgqwe",
+    targetURL: URL(string: "https://other.npgqwe.com/login")!
+  ),
+  "keeps other npgqwe hosts in browser-only mode"
+)
+check(
   !PlatformRoutingPolicy.shouldUseNPGMonitoring(
     configurationID: "custom-tcg",
     targetURL: URL(string: "http://unmonitored.example/login")!
@@ -237,8 +236,8 @@ check(
   "keeps unknown custom domains in browser-only mode"
 )
 check(
-  configuredModules.compactMap(\.profileIdentifier).count == 9,
-  "keeps the existing primary session and isolates nine added sessions"
+  configuredModules.compactMap(\.profileIdentifier).isEmpty,
+  "ships no private browser profile identifiers"
 )
 
 let aggregateCandidates = [
@@ -285,6 +284,7 @@ check(
 )
 
 let dailyFinancial = DailyFinancialMetrics(
+  countryID: "PH",
   rechargeAmount: 712_323.4,
   withdrawAmount: 409_663.9
 )
@@ -297,8 +297,32 @@ check(
   "calculates today deposit-withdraw difference ratio from recharge amount"
 )
 check(
-  DailyFinancialMetrics(rechargeAmount: 0, withdrawAmount: 100).differenceRatio == nil,
+  DailyFinancialMetrics(countryID: "PH", rechargeAmount: 0, withdrawAmount: 100).differenceRatio == nil,
   "does not calculate a deposit-withdraw ratio when recharge amount is zero"
+)
+let byCountry = FinancialCountrySummary.totals([
+  DailyFinancialMetrics(countryID: "US", rechargeAmount: 30, withdrawAmount: 10),
+  DailyFinancialMetrics(countryID: "PH", rechargeAmount: 100, withdrawAmount: 40),
+  DailyFinancialMetrics(countryID: "PH", rechargeAmount: 20, withdrawAmount: 5),
+])
+let unmappedCurrencyTotals = FinancialCountrySummary.totals([
+  DailyFinancialMetrics(countryID: "PH", rechargeAmount: 100, withdrawAmount: 40),
+  DailyFinancialMetrics(countryID: "CURRENCY:SCU", rechargeAmount: 1_790_829, withdrawAmount: 1_410_916),
+])
+check(
+  unmappedCurrencyTotals.count == 2
+    && unmappedCurrencyTotals.first { $0.countryID == "PH" }?.metrics.rechargeAmount == 100,
+  "unconfirmed Tiancheng currencies never inflate Philippines totals"
+)
+check(
+  byCountry.count == 2 && byCountry[0].countryID == "PH"
+    && byCountry[0].platformCount == 2
+    && byCountry[0].metrics.rechargeAmount == 120
+    && byCountry[0].metrics.withdrawAmount == 45
+    && byCountry[0].metrics.differenceAmount == 75
+    && byCountry[1].countryID == "US"
+    && byCountry[1].metrics.differenceAmount == 20,
+  "groups paid-record totals by country without mixing currencies"
 )
 
 if failures > 0 {

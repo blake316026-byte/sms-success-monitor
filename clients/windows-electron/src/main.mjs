@@ -48,9 +48,8 @@ const clientRoot = path.resolve(currentDirectory, '..');
 const sharedRoot = app.isPackaged
   ? path.join(process.resourcesPath, 'shared')
   : path.resolve(clientRoot, '../shared');
+app.setPath('userData', path.join(app.getPath('appData'), 'SMS Platform Workbench'));
 const modules = JSON.parse(fs.readFileSync(path.join(sharedRoot, 'modules.json'), 'utf8'));
-const scanSource = fs.readFileSync(path.join(sharedRoot, 'scan.js'), 'utf8');
-const financeSource = fs.readFileSync(path.join(sharedRoot, 'finance.js'), 'utf8');
 const loginAutomationSource = fs.readFileSync(
   path.join(sharedRoot, 'auto-login/login-page.js'),
   'utf8'
@@ -67,9 +66,7 @@ const pages = new Map();
 const moduleStates = new Map();
 const downloadSessions = new WeakSet();
 let workbenchWindow;
-let widgetWindow;
-let detailWindow;
-let selectedPageId = modules[0].id;
+let selectedPageId = modules[0]?.id || null;
 let attachedView;
 let quitting = false;
 let customPagesPath;
@@ -81,6 +78,7 @@ let workbenchZoomFactor = DEFAULT_WORKBENCH_ZOOM_FACTOR;
 let persistentHighlightSettings = { ...DEFAULT_PERSISTENT_HIGHLIGHT_SETTINGS };
 let disabledModuleIds = new Set();
 let pausedMonitorIds = new Set();
+let pausedFinanceIds = new Set();
 let moduleDisplayNames = {};
 let localAutomationServer;
 let localAutomationWindow;
@@ -100,6 +98,7 @@ for (const module of modules) {
     dailyFinancial: null,
     financeMessage: '等待首次财务查询',
     financeRefreshing: false,
+    financeGeneration: 0,
     smsPermissionBlocked: false,
     financePermissionBlocked: false,
     scannedAt: null,
@@ -305,6 +304,38 @@ async function performPackagedLocalAutomationCheck() {
   if (captcha !== 'nRVr' || totp !== '287082' || totpUri !== '287082') {
     throw new Error('Packaged local OCR or TOTP self-test returned an unexpected result');
   }
+  await verifyPublicWorkbench();
+}
+
+async function verifyPublicWorkbench() {
+  const id = '__public-workbench-test__';
+  const view = createRemotePage({ id, name: 'Local test', url: 'data:text/html,<p>Local page</p>', monitored: false });
+  selectedPageId = id;
+  registerIPC();
+  createApplicationMenu();
+  createWorkbenchWindow();
+  const errors = [];
+  workbenchWindow.webContents.on('console-message', (_event, details) => {
+    if (details?.level === 'error') errors.push(details.message);
+  });
+  await new Promise(resolve => workbenchWindow.webContents.once('did-finish-load', resolve));
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const valid = await workbenchWindow.webContents.executeJavaScript(`(() => {
+    const api = window.smsApi;
+    return !!document.querySelector('#add') && !!document.querySelector('#credentials')
+      && document.querySelectorAll('.tab-button').length === 1
+      && !document.querySelector('#detail, #scan, #sample-limit')
+      && !api.showDetail && !api.showWidgetMenu && !api.setMonitoringEnabled;
+  })()`);
+  const menus = JSON.stringify(Menu.getApplicationMenu().items.map(item => ({
+    label: item.label, children: item.submenu?.items.map(child => child.label)
+  })));
+  if (!valid || errors.length || /监控总览|国家总计|扫描全部/.test(menus)
+      || scanTimer || financeTimer) throw new Error('Public workbench UI or renderer check failed: ' + errors.join('; '));
+  workbenchWindow.contentView.removeChildView(view);
+  view.webContents.close();
+  pages.delete(id);
+  console.log('PASS: public workbench renderer, retained controls, menu and removed IPC');
 }
 
 async function runPackagedLocalAutomationCheck() {
@@ -380,6 +411,10 @@ async function loadMonitorSettings() {
     pausedMonitorIds = new Set(
       Array.isArray(stored?.pausedMonitorIds) ? stored.pausedMonitorIds : []
     );
+    pausedFinanceIds = new Set(
+      Array.isArray(stored?.pausedFinanceIds)
+        ? stored.pausedFinanceIds : [...pausedMonitorIds]
+    );
     moduleDisplayNames = Object.fromEntries(
       Object.entries(stored?.moduleDisplayNames || {}).filter(([id, name]) =>
         modules.some((module) => module.id === id) && String(name).trim()
@@ -391,6 +426,7 @@ async function loadMonitorSettings() {
     persistentHighlightSettings = { ...DEFAULT_PERSISTENT_HIGHLIGHT_SETTINGS };
     disabledModuleIds = new Set();
     pausedMonitorIds = new Set();
+    pausedFinanceIds = new Set();
     moduleDisplayNames = {};
   }
 }
@@ -406,6 +442,7 @@ async function saveMonitorSettings() {
       persistentHighlightSettings,
       disabledModuleIds: [...disabledModuleIds],
       pausedMonitorIds: [...pausedMonitorIds],
+      pausedFinanceIds: [...pausedFinanceIds],
       moduleDisplayNames
     }, null, 2)}\n`,
     { mode: 0o600 }
@@ -541,11 +578,14 @@ async function changeWorkbenchZoom(direction) {
 function ensurePageState(page) {
   if (moduleStates.has(page.id)) return moduleStates.get(page.id);
   const monitoringEnabled = !pausedMonitorIds.has(page.id);
+  const financeEnabled = !pausedFinanceIds.has(page.id);
   const state = {
     ...page,
     monitoringEnabled,
+    financeEnabled,
     status: monitoringEnabled ? 'starting' : 'disabled',
-    message: monitoringEnabled ? '等待连接' : '已停止短信和财务查询',
+    message: monitoringEnabled ? '等待连接'
+      : financeEnabled ? '仅查询今日充值与提现' : '已停止短信和财务查询',
     metrics: null,
     dailyFinancial: null,
     financeMessage: '等待首次财务查询',
@@ -594,7 +634,7 @@ function createRemotePage(page) {
     applyPageZoom({ id: page.id, view });
     void applyPersistentHighlights({ id: page.id, view });
     handlePageFinished(page.id);
-    if (moduleStates.get(page.id)?.monitoringEnabled) {
+    if (moduleStates.get(page.id)?.financeEnabled) {
       setTimeout(() => refreshFinancialModule(page.id), 900);
     }
   });
@@ -671,7 +711,7 @@ async function handlePageFinished(id) {
   const page = pages.get(id);
   if (!page) return;
   const state = moduleStates.get(id);
-  if (!state?.monitoringEnabled) return;
+  if (!state || (!state.monitoringEnabled && !state.financeEnabled)) return;
   const currentURL = page.view.webContents.getURL();
   if (requiresInteractiveAuthentication(currentURL)) {
     handleAuthenticationRequired(id, '平台需要重新登录。');
@@ -679,6 +719,10 @@ async function handlePageFinished(id) {
   }
   if (!isConfiguredOrigin(state, currentURL)) return;
   if (new URL(currentURL).pathname === '/login') {
+    if (!state.monitoringEnabled) {
+      handleAuthenticationRequired(id, '平台需要重新登录。');
+      return;
+    }
     if (!state.autoLoginInProgress && state.needsImmediateScan) {
       state.needsImmediateScan = false;
       setTimeout(() => scanModule(id), 900);
@@ -694,7 +738,8 @@ async function handlePageFinished(id) {
     return;
   }
   state.needsImmediateScan = false;
-  setTimeout(() => scanModule(id), 900);
+  if (state.monitoringEnabled) setTimeout(() => scanModule(id), 900);
+  else broadcastSnapshot();
 }
 
 function updateModule(id, changes, changedId = id) {
@@ -833,6 +878,7 @@ async function completeAutoLogin(id, token = '') {
     return;
   }
   setTimeout(() => scanModule(id), 900);
+  if (state.financeEnabled) setTimeout(() => refreshFinancialModule(id), 900);
 }
 
 function scheduleAutoLoginOutcomeCheck(id) {
@@ -1021,7 +1067,7 @@ async function attemptAutoLogin(id, currentURL) {
 function handleAuthenticationRequired(id, message) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page || !state.monitoringEnabled) return;
+  if (!state || !page || (!state.monitoringEnabled && !state.financeEnabled)) return;
   state.scanning = false;
   state.consecutiveScanFailures = 0;
   state.needsImmediateScan = true;
@@ -1056,7 +1102,7 @@ function handleAuthenticationRequired(id, message) {
 function handleAPIAuthenticationRequired(id, result, fallbackMessage) {
   const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page || !state.monitoringEnabled) return;
+  if (!state || !page || (!state.monitoringEnabled && !state.financeEnabled)) return;
   const message = result?.message || fallbackMessage;
   const currentURL = page.view.webContents.getURL();
 
@@ -1066,7 +1112,8 @@ function handleAPIAuthenticationRequired(id, result, fallbackMessage) {
     return;
   }
 
-  if (!state.apiAuthenticationValidationAttempted) {
+  const sessionRejected = result?.httpStatus === 401 || result?.authCode === 1012;
+  if (sessionRejected && !state.apiAuthenticationValidationAttempted) {
     state.apiAuthenticationValidationAttempted = true;
     state.needsImmediateScan = true;
     updateModule(id, {
@@ -1082,7 +1129,7 @@ function handleAPIAuthenticationRequired(id, result, fallbackMessage) {
 
   updateModule(id, {
     status: 'error',
-    message: `${message} 网页仍保持登录，客户端不会反复退出登录；稍后重试接口。`,
+    message: `${message} 已保留当前网页会话，请检查对应页面的验证提示。`,
     metrics: null,
     dailyFinancial: null,
     scannedAt: Date.now(),
@@ -1118,161 +1165,24 @@ function handleScanFailure(id, message) {
 }
 
 async function scanModule(id) {
-  const state = moduleStates.get(id);
   const page = pages.get(id);
-  if (!state || !page || !state.monitoringEnabled || state.scanning || state.smsPermissionBlocked) return;
-  const currentURL = page.view.webContents.getURL();
-  if (!currentURL) return;
-  if (requiresInteractiveAuthentication(currentURL)) {
-    handleAuthenticationRequired(id, '平台登录已失效。');
-    return;
-  }
-  if (!isConfiguredOrigin(state, currentURL)) {
-    page.view.webContents.loadURL(state.url);
-    updateModule(id, {
-      status: 'starting',
-      message: '正在返回后台入口',
-      nextScanAt: Date.now() + 10_000
-    });
-    return;
-  }
-
-  state.scanning = true;
-  const activeSampleLimit = sampleLimit;
-  state.status = 'scanning';
-  state.message = `正在读取最新 ${activeSampleLimit} 条`;
-  state.nextScanAt = Date.now() + SCAN_INTERVAL_MS;
-  broadcastSnapshot(id);
-
-  try {
-    const fallbackToken = String(profileFor(id)?.token || '');
-    const result = await page.view.webContents.executeJavaScript(
-      `(async () => { ${scanSource}\nreturn await globalThis.smsMonitorScan(${activeSampleLimit}, ${JSON.stringify(fallbackToken)}); })()`,
-      true
-    );
-    if (!state.monitoringEnabled) return;
-    state.scanning = false;
-    if (activeSampleLimit !== sampleLimit) {
-      state.needsImmediateScan = false;
-      setTimeout(() => scanModule(id), 0);
-      return;
-    }
-    if (!result || typeof result !== 'object') {
-      throw new Error('扫描结果无法识别');
-    }
-    if (result.kind === 'permission') {
-      state.manualAuthenticationRequired = true;
-      Object.assign(state, {
-        status: 'error', message: result.message, metrics: null,
-        smsPermissionBlocked: true, scannedAt: Date.now(), nextScanAt: null
-      });
-      broadcastSnapshot(id);
-      return;
-    } else if (result.kind === 'auth') {
-      handleAPIAuthenticationRequired(id, result, '平台登录已失效。');
-      return;
-    } else if (result.kind === 'sessionChanged') {
-      updateModule(id, {
-        status: 'starting', metrics: null, dailyFinancial: null,
-        message: '账号会话已变化，已丢弃旧数据', nextScanAt: Date.now() + SCAN_INTERVAL_MS
-      });
-      return;
-    } else if (result.kind === 'ok') {
-      state.apiAuthenticationValidationAttempted = false;
-      const currentPath = (() => {
-        try { return new URL(page.view.webContents.getURL()).pathname; } catch (_) { return ''; }
-      })();
-      const canRestorePage = result.tokenSource === 'page' || result.restoredPageSession === true;
-      if (currentPath === '/login') {
-        if (!state.pageSessionRecoveryAttempted && canRestorePage) {
-          state.pageSessionRecoveryAttempted = true;
-          Object.assign(state, {
-            status: 'starting',
-            message: '已恢复本机 Token，正在打开短信记录页',
-            nextScanAt: null
-          });
-          broadcastSnapshot(id);
-          await page.view.webContents.loadURL(state.url);
-        } else {
-          if (result.tokenSource === 'page') state.manualAuthenticationRequired = true;
-          handleAuthenticationRequired(id, '页面登录态无法通过有效 Token 恢复。');
-        }
-        return;
-      }
-      const metrics = calculateMetrics(result.statuses, activeSampleLimit);
-      Object.assign(state, {
-        status: isAlert(metrics, ALERT_THRESHOLD) ? 'alert' : 'healthy',
-        message: metrics.sampleCount === 0
-          ? '短信接口正常，当前暂无记录'
-          : (isAlert(metrics, ALERT_THRESHOLD) ? '成功率低于 50%' : '成功率正常'),
-        metrics,
-        consecutiveScanFailures: 0,
-        scannedAt: Date.now(),
-        nextScanAt: Date.now() + SCAN_INTERVAL_MS
-      });
-    } else {
-      handleScanFailure(id, result.message || '短信记录接口扫描失败');
-      return;
-    }
-  } catch (error) {
-    if (!state.monitoringEnabled) return;
-    if (activeSampleLimit !== sampleLimit) {
-      state.scanning = false;
-      state.needsImmediateScan = false;
-      setTimeout(() => scanModule(id), 0);
-      return;
-    }
-    handleScanFailure(id, `扫描失败：${error.message}`);
-    return;
-  }
-  broadcastSnapshot(id);
-  maybeNotify(id);
-}
-
-async function refreshFinancialModule(id) {
   const state = moduleStates.get(id);
-  const page = pages.get(id);
-  if (!state || !page || !state.monitoringEnabled || state.financeRefreshing || state.financePermissionBlocked) return;
-  const currentURL = page.view.webContents.getURL();
-  if (!currentURL || !isConfiguredOrigin(state, currentURL) || requiresInteractiveAuthentication(currentURL)) return;
-  state.financeRefreshing = true;
-  try {
-    const fallbackToken = String(profileFor(id)?.token || '');
-    const result = await page.view.webContents.executeJavaScript(
-      `(async () => { ${financeSource}\nreturn await globalThis.smsMonitorFinance(${JSON.stringify(id)}, ${JSON.stringify(state.name)}, ${JSON.stringify(fallbackToken)}); })()`,
-      true
-    );
-    if (!state.monitoringEnabled) return;
-    if (result?.kind === 'ok') {
-      state.apiAuthenticationValidationAttempted = false;
-      state.dailyFinancial = result.dailyFinancial;
-      state.financeMessage = '';
-    } else {
-      state.dailyFinancial = null;
-      state.financeMessage = result?.message || '今日财务查询失败';
-      if (result?.kind === 'permission') state.financePermissionBlocked = true;
-      if (result?.kind === 'sessionChanged') state.metrics = null;
-      if (result?.kind === 'auth') {
-        handleAPIAuthenticationRequired(id, result, '今日统计登录态已失效，请重新登录。');
-        return;
-      }
-    }
-  } catch (error) {
+  if (!page || !state) return;
+  const url = page.view.webContents.getURL();
+  if (isAuthenticationURL(url)) {
+    handleAuthenticationRequired(id, '平台需要登录。');
+  } else {
+    state.status = 'page';
+    state.message = '后台页面';
+    state.metrics = null;
     state.dailyFinancial = null;
-    state.financeMessage = `今日财务查询失败：${error.message}`;
-  } finally {
-    if (!state.monitoringEnabled) return;
-    state.financeRefreshing = false;
-    broadcastSnapshot(id);
+    broadcastSnapshot();
   }
 }
 
-function refreshAllFinancialModules({ resetPermission = false } = {}) {
-  for (const state of moduleStates.values()) {
-    if (resetPermission) state.financePermissionBlocked = false;
-    refreshFinancialModule(state.id);
-  }
-}
+async function refreshFinancialModule() {}
+
+function refreshAllFinancialModules() {}
 
 function scanAllPages() {
   for (const page of pages.values()) scanModule(page.id);
@@ -1295,76 +1205,28 @@ function pageSnapshot(page) {
 }
 
 function buildSnapshot() {
-  const moduleList = [...pages.values()].map((page) => {
-    const state = moduleStates.get(page.id);
-    return {
-      id: state.id,
-      name: state.name,
-      url: state.url,
-      status: state.status,
-      message: state.message,
-      metrics: state.metrics,
-      scannedAt: state.scannedAt,
-      nextScanAt: state.nextScanAt,
-      alertThreshold: ALERT_THRESHOLD,
-      percentageText: percentageText(state.metrics)
-      ,dailyFinancial: state.dailyFinancial
-      ,financeMessage: state.financeMessage
-      ,smsPermissionBlocked: state.smsPermissionBlocked
-      ,financePermissionBlocked: state.financePermissionBlocked
-      ,monitoringEnabled: state.monitoringEnabled
-    };
-  });
-  const summary = summarize(moduleList);
-  const financialRows = moduleList.map((module) => module.dailyFinancial).filter(Boolean);
-  const dailyFinancialTotals = financialRows.length > 0 ? {
-    rechargeAmount: financialRows.reduce((total, item) => total + Number(item.rechargeAmount || 0), 0),
-    withdrawAmount: financialRows.reduce((total, item) => total + Number(item.withdrawAmount || 0), 0)
-  } : null;
   return {
-    modules: moduleList,
+    modules: [...moduleStates.values()].map(state => ({
+      id: state.id, name: state.name, url: state.url, status: state.status, message: state.message
+    })),
     pages: [...pages.values()].map(pageSnapshot),
     selectedPageId,
-    sampleLimit,
-    minimumSampleLimit: MIN_SAMPLE_LIMIT,
-    maximumSampleLimit: MAX_SAMPLE_LIMIT,
     workbenchZoomPercent: Math.round(workbenchZoomFactor * 100),
     minimumWorkbenchZoomPercent: Math.round(MIN_WORKBENCH_ZOOM_FACTOR * 100),
-    maximumWorkbenchZoomPercent: Math.round(MAX_WORKBENCH_ZOOM_FACTOR * 100),
-    summary: {
-      alertCount: summary.alertCount,
-      healthyCount: summary.healthyCount,
-      authenticationCount: summary.authenticationCount,
-      errorCount: summary.errorCount,
-      disabledCount: moduleList.filter((module) => !module.monitoringEnabled).length,
-      enabledCount: moduleList.filter((module) => module.monitoringEnabled).length,
-      financialCount: financialRows.length,
-      dailyFinancialTotals,
-      focusId: summary.focus?.id || null
-    }
+    maximumWorkbenchZoomPercent: Math.round(MAX_WORKBENCH_ZOOM_FACTOR * 100)
   };
 }
 
 function broadcastSnapshot() {
   const snapshot = buildSnapshot();
-  for (const window of [workbenchWindow, widgetWindow, detailWindow]) {
+  for (const window of [workbenchWindow]) {
     if (window && !window.isDestroyed()) {
       window.webContents.send('snapshot:changed', snapshot);
     }
   }
 }
 
-function maybeNotify(changedId) {
-  const snapshot = buildSnapshot();
-  const focus = snapshot.modules.find((module) => module.id === snapshot.summary.focusId);
-  if (!focus || focus.id !== changedId || focus.status !== 'alert') return;
-  new Notification({
-    title: `${focus.name} 短信成功率报警`,
-    body: `最新 ${focus.metrics.sampleCount} 条成功 ${focus.metrics.successCount} 条，成功率 ${focus.percentageText}，低于 50%。`,
-    urgency: 'critical'
-  }).show();
-  widgetWindow?.flashFrame(true);
-}
+function maybeNotify() {}
 
 function attachSelectedView() {
   if (!workbenchWindow || workbenchWindow.isDestroyed()) return;
@@ -1415,7 +1277,7 @@ function createWorkbenchWindow() {
     height: 800,
     minWidth: 620,
     minHeight: 620,
-    title: '短信后台工作台',
+    title: '后台工作台',
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(currentDirectory, 'preload.cjs'),
@@ -1426,69 +1288,11 @@ function createWorkbenchWindow() {
   });
   workbenchWindow.loadFile(uiPath('workbench.html'));
   workbenchWindow.on('resize', layoutSelectedView);
-  workbenchWindow.on('close', (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    workbenchWindow.hide();
-  });
+  workbenchWindow.on('closed', () => { workbenchWindow = null; app.quit(); });
   workbenchWindow.webContents.on('did-finish-load', () => {
     workbenchModalOpen = false;
     attachSelectedView();
     broadcastSnapshot();
-  });
-}
-
-function createWidgetWindow() {
-  widgetWindow = new BrowserWindow({
-    width: 228,
-    height: 236,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: false,
-    show: false,
-    backgroundColor: '#00000000',
-    webPreferences: {
-      preload: path.join(currentDirectory, 'preload.cjs'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true
-    }
-  });
-  widgetWindow.setAlwaysOnTop(true, 'screen-saver');
-  widgetWindow.loadFile(uiPath('widget.html'));
-  widgetWindow.once('ready-to-show', () => {
-    widgetWindow.showInactive();
-    broadcastSnapshot();
-  });
-  widgetWindow.on('close', (event) => {
-    if (quitting) return;
-    event.preventDefault();
-  });
-}
-
-function createDetailWindow() {
-  detailWindow = new BrowserWindow({
-    width: 780,
-    height: 540,
-    minWidth: 700,
-    minHeight: 440,
-    title: '短信监控总览',
-    show: false,
-    backgroundColor: '#ffffff',
-    webPreferences: {
-      preload: path.join(currentDirectory, 'preload.cjs'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true
-    }
-  });
-  detailWindow.loadFile(uiPath('detail.html'));
-  detailWindow.on('close', (event) => {
-    if (quitting) return;
-    event.preventDefault();
-    detailWindow.hide();
   });
 }
 
@@ -1498,7 +1302,6 @@ function createApplicationMenu() {
       label: '文件',
       submenu: [
         { label: '打开后台工作台', click: () => showWorkbench() },
-        { label: '监控总览', click: () => showDetail() },
         { type: 'separator' },
         { role: 'quit', label: '退出' }
       ]
@@ -1564,12 +1367,6 @@ function showWorkbench(id) {
   attachSelectedView();
   workbenchWindow.show();
   workbenchWindow.focus();
-}
-
-function showDetail() {
-  detailWindow.show();
-  detailWindow.focus();
-  broadcastSnapshot();
 }
 
 async function loadCustomPages() {
@@ -1826,74 +1623,6 @@ function registerIPC() {
     broadcastSnapshot();
     return { ok: true };
   });
-  ipcMain.handle('monitor:scan', (_event, id) => {
-    const targets = id ? [moduleStates.get(id)].filter(Boolean) : [...moduleStates.values()];
-    for (const state of targets) {
-      if (!state.monitoringEnabled) continue;
-      state.smsPermissionBlocked = false;
-      state.financePermissionBlocked = false;
-      scanModule(state.id);
-      refreshFinancialModule(state.id);
-    }
-  });
-  ipcMain.handle('monitor:set-enabled', async (_event, id, enabled) => {
-    const state = moduleStates.get(id);
-    if (!state) return { ok: false, message: '所选平台不存在' };
-    const nextEnabled = Boolean(enabled);
-    if (state.monitoringEnabled === nextEnabled) return { ok: true };
-
-    state.monitoringEnabled = nextEnabled;
-    if (nextEnabled) pausedMonitorIds.delete(id);
-    else pausedMonitorIds.add(id);
-    try {
-      await saveMonitorSettings();
-    } catch (error) {
-      state.monitoringEnabled = !nextEnabled;
-      if (nextEnabled) pausedMonitorIds.add(id);
-      else pausedMonitorIds.delete(id);
-      return { ok: false, message: `无法保存监控开关：${error.message}` };
-    }
-
-    Object.assign(state, nextEnabled ? {
-      status: 'starting', message: '监控已开启，正在连接平台', metrics: null,
-      dailyFinancial: null, scannedAt: null, nextScanAt: null, needsImmediateScan: true
-    } : {
-      status: 'disabled', message: '已停止短信和财务查询，不参与报警及汇总统计',
-      metrics: null, dailyFinancial: null, scannedAt: null, nextScanAt: null,
-      scanning: false, financeRefreshing: false, needsImmediateScan: false
-    });
-    broadcastSnapshot(id);
-    if (nextEnabled) {
-      scanModule(id);
-      refreshFinancialModule(id);
-    }
-    return { ok: true };
-  });
-  ipcMain.handle('settings:set-sample-limit', async (_event, value) => {
-    const parsed = Math.round(Number(value));
-    if (!Number.isFinite(parsed) || parsed < MIN_SAMPLE_LIMIT || parsed > MAX_SAMPLE_LIMIT) {
-      return {
-        ok: false,
-        message: `样本条数必须在 ${MIN_SAMPLE_LIMIT}–${MAX_SAMPLE_LIMIT} 之间`
-      };
-    }
-    if (parsed === sampleLimit) return { ok: true, sampleLimit };
-    sampleLimit = parsed;
-    try {
-      await saveMonitorSettings();
-    } catch (error) {
-      return { ok: false, message: `无法保存本地设置：${error.message}` };
-    }
-    for (const state of moduleStates.values()) {
-      state.metrics = null;
-      state.needsImmediateScan = true;
-      state.status = state.scanning ? 'scanning' : 'starting';
-      state.message = `样本已改为 ${sampleLimit} 条，正在重新扫描`;
-    }
-    broadcastSnapshot();
-    scanAllPages();
-    return { ok: true, sampleLimit };
-  });
   ipcMain.handle('highlights:get', () => ({
     ok: true,
     settings: persistentHighlightSettings
@@ -1974,24 +1703,15 @@ function registerIPC() {
     }
   });
   ipcMain.handle('window:workbench', (_event, id) => showWorkbench(id));
-  ipcMain.handle('window:detail', () => showDetail());
   ipcMain.handle('app:quit', () => {
     quitting = true;
     app.quit();
   });
-  ipcMain.handle('widget:menu', () => {
-    Menu.buildFromTemplate([
-      { label: '立即扫描全部后台', click: () => scanAllPages() },
-      { label: '监控总览', click: () => showDetail() },
-      { label: '打开后台工作台', click: () => showWorkbench() },
-      { type: 'separator' },
-      { label: '退出', click: () => { quitting = true; app.quit(); } }
-    ]).popup({ window: widgetWindow });
-  });
+
 }
 
 app.whenReady().then(async () => {
-  app.setAppUserModelId('com.local.sms-success-monitor');
+  app.setAppUserModelId('com.local.sms-success-monitor.public');
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
@@ -2029,13 +1749,7 @@ app.whenReady().then(async () => {
   }
   for (const page of await loadCustomPages()) createRemotePage(page);
   createWorkbenchWindow();
-  createWidgetWindow();
-  createDetailWindow();
-  scanTimer = setInterval(() => {
-    scanAllPages();
-  }, SCAN_INTERVAL_MS);
-  refreshAllFinancialModules();
-  financeTimer = setInterval(() => refreshAllFinancialModules(), financialRefreshIntervalMs);
+
 });
 
 app.on('before-quit', () => {
