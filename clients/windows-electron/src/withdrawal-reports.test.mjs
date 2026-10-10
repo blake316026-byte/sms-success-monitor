@@ -78,6 +78,11 @@ const stale=nav.open(pending);const latest=nav.open({...pending,id:'LATEST'});
 await assert.rejects(stale,/新的查询/);await latest;assert.equal(searches.at(-1),'LATEST');
 const mismatch={...pending,identity:'wrong'};await assert.rejects(nav.open(mismatch),/商户已变化/);
 assert.equal(service.locked.size,0);
+let bootstrap=0;
+const coldNav=new WithdrawalNavigation({reports:service,source:id=>options.sources().find(s=>s.id===id),
+  execute:async(source,key,args)=>key==='probe'&&bootstrap++===0?{kind:'error',message:'需登录或账号会话不一致'}:navExecute(source,key,args),
+  show:id=>{selected=id;},selected:()=>selected,load:async()=>{loads++;},now:()=>now,pause:async()=>{}});
+await coldNav.open(pending);assert(bootstrap>=2,'wait for the first application session bootstrap');
 calls=[];
 for(let i=2;i<=40;i++)sources.push({...sources[0],id:'platform-'+i});
 gate=new Promise(resolve=>{globalThis.releaseQuery=resolve;});

@@ -41,7 +41,7 @@ export class WithdrawalNavigation {
         if(!source.ready){await this.pause(250);continue;}
         const probe=await this.execute(source,'probe',args);check();
         if(probe.kind!=='ok') {
-          if(/未就绪|尚未加载|页面验证/.test(probe.message)){await this.pause(500);continue;}
+          if(/未就绪|尚未加载|页面验证|需登录|账号会话/.test(probe.message)){await this.pause(500);continue;}
           throw new Error(probe.message);
         }
         if(target.identity && probe.identity!==target.identity)throw new Error('账号、国家或商户已变化，请重新获取');
