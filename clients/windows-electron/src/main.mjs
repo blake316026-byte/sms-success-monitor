@@ -14,6 +14,8 @@ import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WithdrawalReports, reportKinds } from './withdrawal-reports.mjs';
+import { WithdrawalNavigation } from './withdrawal-navigation.mjs';
 import {
   ALERT_THRESHOLD,
   calculateMetrics,
@@ -87,6 +89,97 @@ let localAutomationError;
 let scanTimer;
 let financeTimer;
 let workbenchModalOpen = false;
+const reportWindows = new Map();
+let reports, withdrawalNavigation, reportTimer;
+
+function reportSources() {
+  return [...pages.values()].map(page => {
+    const wc=page.view.webContents;
+    let currentURL='',ready=false;
+    try {
+      currentURL=wc.getURL();
+      ready=!wc.isDestroyed()&&!wc.isLoadingMainFrame()&&new URL(currentURL).origin===new URL(page.url).origin;
+    } catch {}
+    return {id:page.id,name:page.name,url:page.url,currentURL,ready,account:profileFor(page.id)?.username||'',
+      allowNPG:!/^okbet$/i.test(page.name),wc};
+  });
+}
+
+function initializeReports() {
+  if(reports)return;
+  const scripts=JSON.parse(fs.readFileSync(path.join(clientRoot,'build/query-scripts.json'),'utf8'));
+  const cachePath=path.join(app.getPath('userData'),'withdrawal-reviewers-v1.encrypted');
+  const test=process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK==='1';
+  const execute=async(source,key,args={})=>{
+    const page=pages.get(source.id);
+    if(!page||page.view.webContents!==source.wc||source.wc.isDestroyed())throw new Error('页面未就绪，就绪后自动补查');
+    if(key==='cancel')return source.wc.executeJavaScript(args.kind==='pending'
+      ?'window.__smsPendingOrdersRun=null;window.__smsPendingOrdersAbort?.abort();void 0'
+      :'window.__smsReviewerRun=null;window.__smsReviewerAbort?.abort();void 0');
+    if(key==='invalidateNavigation')return source.wc.executeJavaScript(`window.__workbenchNavigationID=${JSON.stringify(args.navID)};void 0`);
+    if(new URL(source.wc.getURL()).origin!==new URL(source.url).origin)throw new Error('平台地址已变化');
+    let code=scripts[key];
+    if(!code)throw new Error('不支持的查询');
+    if(args.navID) {
+      const guard=`if(window.__workbenchNavigationID!==${JSON.stringify(args.navID)})throw new Error('已切换到新的查询');`;
+      code=code.replace('const capture = () => {','const capture = () => {'+guard)
+        .replace('const pause = () => new Promise(resolve => setTimeout(resolve, 160));',
+          'const pause = async () => {await new Promise(resolve => setTimeout(resolve,160));'+guard+'};');
+    }
+    const names=Object.keys(args),values=Object.values(args);
+    let timer;
+    try {
+      return await Promise.race([
+        source.wc.executeJavaScript(`(async (${names.join(',')})=>{${code}\n})(...${JSON.stringify(values)})`),
+        new Promise((_,reject)=>{timer=setTimeout(()=>{
+          if(['pending','reviewers'].includes(key))void execute(source,'cancel',{kind:key}).catch(()=>{});
+          reject(new Error('页面查询超时，请稍后重试'));
+        },['pending','reviewers'].includes(key)?195000:key==='search'?22000:6000);})
+      ]);
+    } finally {clearTimeout(timer);}
+  };
+  reports=new WithdrawalReports({sources:reportSources,execute,scripts,
+    load:()=>test?{}:JSON.parse(safeStorage.decryptString(fs.readFileSync(cachePath))),
+    save:data=>{
+      if(test)return;
+      if(!safeStorage.isEncryptionAvailable())throw new Error('系统加密不可用');
+      fs.mkdirSync(path.dirname(cachePath),{recursive:true});
+      fs.writeFileSync(cachePath+'.tmp',safeStorage.encryptString(JSON.stringify(data)),{mode:0o600});
+      fs.renameSync(cachePath+'.tmp',cachePath);
+    },
+    changed:(kind,snapshot)=>{
+      const window=reportWindows.get(kind);
+      if(window&&!window.isDestroyed())window.webContents.send('reports:changed',snapshot);
+    }});
+  reports.persist();
+  withdrawalNavigation=new WithdrawalNavigation({reports,source:id=>reportSources().find(s=>s.id===id),execute,
+    show:id=>showWorkbench(id),selected:()=>selectedPageId,load:(source,url)=>source.wc.loadURL(url)});
+  reportTimer=setInterval(()=>void reports.tick().catch(error=>console.warn('Report maintenance: '+error.message)),1000);
+  reportTimer.unref();
+}
+
+function showReport(kind) {
+  if(!reportKinds.includes(kind))throw new Error('未知查询');
+  initializeReports();
+  let window=reportWindows.get(kind);
+  if(!window||window.isDestroyed()) {
+    window=new BrowserWindow({width:1050,height:700,minWidth:620,minHeight:440,title:kind==='pending'?'全平台待处理订单':'提现审核人员查询',
+      backgroundColor:'#ffffff',webPreferences:{preload:path.join(currentDirectory,'reports-preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+    reportWindows.set(kind,window);
+    window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+    window.webContents.on('will-navigate',event=>event.preventDefault());
+    window.on('closed',()=>{reportWindows.delete(kind);reports.close(kind);});
+    void window.loadFile(uiPath('reports.html'));
+  }
+  void reports.open(kind);
+  window.show();window.focus();return true;
+}
+
+function reportSender(event) {
+  if(event.senderFrame!==event.sender.mainFrame)throw new Error('无权访问查询');
+  for(const [kind,window] of reportWindows)if(!window.isDestroyed()&&window.webContents===event.sender)return kind;
+  throw new Error('无权访问查询');
+}
 
 for (const module of modules) {
   moduleStates.set(module.id, {
@@ -323,6 +416,7 @@ async function verifyPublicWorkbench() {
   const valid = await workbenchWindow.webContents.executeJavaScript(`(() => {
     const api = window.smsApi;
     return !!document.querySelector('#add') && !!document.querySelector('#credentials')
+      && !!document.querySelector('#pending-orders') && !!document.querySelector('#withdrawal-reviewers')
       && document.querySelectorAll('.tab-button').length === 1
       && !document.querySelector('#detail, #scan, #sample-limit')
       && !api.showDetail && !api.showWidgetMenu && !api.setMonitoringEnabled;
@@ -332,10 +426,92 @@ async function verifyPublicWorkbench() {
   })));
   if (!valid || errors.length || /监控总览|国家总计|扫描全部/.test(menus)
       || scanTimer || financeTimer) throw new Error('Public workbench UI or renderer check failed: ' + errors.join('; '));
+  await verifyWithdrawalRuntime();
+  showWorkbench(id);
   workbenchWindow.contentView.removeChildView(view);
   view.webContents.close();
   pages.delete(id);
   console.log('PASS: public workbench renderer, retained controls, menu and removed IPC');
+}
+
+async function verifyWithdrawalRuntime() {
+  const server=http.createServer((_request,response)=>response.writeHead(200,{'Content-Type':'text/html'}).end('<html><body></body></html>'));
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const origin=`http://127.0.0.1:${server.address().port}`,id='__withdrawal-runtime-test__';
+  const view=createRemotePage({id,name:'Example NPG / TC',url:origin+'/20008',monitored:false});
+  try {
+    await new Promise(resolve=>view.webContents.once('did-finish-load',resolve));
+    showWorkbench(id);
+    const fixture=fs.readFileSync(path.join(clientRoot,'build/query-fixture.js'),'utf8').replaceAll('https://orders-test.invalid',origin);
+    const valid=await view.webContents.executeJavaScript(`(async()=>{${fixture}})()`);
+    if(!valid)throw new Error('Withdrawal search fixture failed at '+await view.webContents.executeJavaScript('window.fixtureStep'));
+    console.log('PASS: Electron NPG/TC sequential order, reviewer and platform searches, exact dates, authoritative totals and no reload');
+    showReport('reviewers');
+    const reviewerWindow=reportWindows.get('reviewers');
+    await new Promise(resolve=>reviewerWindow.webContents.once('did-finish-load',resolve));
+    await new Promise(resolve=>setTimeout(resolve,250));
+    // Populate the host model, then exercise the actual isolated renderer/IPC.
+    const source=reportSources().find(s=>s.id===id),s=reports.states.reviewers;
+    reports.reconcile('reviewers');
+    Object.assign(s.rows.get(id),{people:Array.from({length:23},(_,n)=>({id:String(n),name:'Auditor '+n,count:n+1})),
+      total:355,savedAt:Date.now(),message:'已获取'});
+    reports.notify('reviewers');
+    await new Promise(resolve=>setTimeout(resolve,100));
+    const ui=await reviewerWindow.webContents.executeJavaScript(`(async()=>{
+      if(document.querySelectorAll('tbody tr').length!==10 || !document.querySelector('#column-three').textContent.includes('276'))return false;
+      document.querySelector('#next').click();
+      if(!document.querySelector('#pagination').textContent.includes('2 / 3'))return false;
+      document.querySelector('#filter').value='Auditor 22';document.querySelector('#filter').dispatchEvent(new Event('input'));
+      if(document.querySelectorAll('tbody tr').length!==1 || !document.querySelector('#column-three').textContent.includes('23'))return false;
+      document.querySelector('#filter').value='';document.querySelector('#filter').dispatchEvent(new Event('input'));
+      document.querySelector('#status-tab').click();
+      return document.querySelector('tbody .link')!==null && document.querySelector('#column-three').textContent.includes('355') && !window.smsApi;
+    })()`);
+    if(!ui)throw new Error('Reviewer pagination, filter, platform total or IPC isolation failed');
+    // Drive the production host navigation and generated script, not only the fixture body.
+    await view.webContents.executeJavaScript(`(() => {
+      sessionStorage.setItem('environment','');
+      window.fetch=async()=>new Response(JSON.stringify({success:true,totalPageCount:412,value:[]}));
+      document.querySelector('button').onclick=()=>{
+        const state=document.querySelector('form').__reactFiber$fixture.memoizedProps.form.getFieldsValue();
+        return fetch(location.origin+'/tac/api/relay/get/mcs-v3-player-withdraw-search?'+new URLSearchParams({
+          merchantCode:'m',reviewOperator:state.reviewOperator||'',searchDateMode:state.searchDateMode,
+          startDate:state.date[0].format().replaceAll('/','-'),endDate:state.date[1].format().replaceAll('/','-')}),{});
+      };
+    })()`);
+    for(const all of [true,false]) {
+      const result=await reviewerWindow.webContents.executeJavaScript(`window.reportApi.navigate(${JSON.stringify({platformID:id,all,id:'0'})})`);
+      if(!result.ok)throw new Error('Host query navigation failed: '+result.message);
+      if(await view.webContents.executeJavaScript('window.reuseSentinel')!==12345)throw new Error('Host query navigation reloaded a warm page');
+    }
+    if(s.rows.get(id).total!==412||s.rows.get(id).people[0].count!==412)throw new Error('Server total did not reach report model');
+    const previous=s.settings;
+    await reviewerWindow.webContents.executeJavaScript(`window.reportApi.configure({start:${JSON.stringify(s.start)},end:${JSON.stringify(s.end)},settings:{auto:false,interval:17}})`);
+    if(reports.states.reviewers.settings.interval!==17||reports.states.reviewers.settings.auto)throw new Error('Reviewer settings IPC failed');
+    s.settings=previous;
+    // Assert layout at the minimum window width and save a native screenshot.
+    for(const width of [1050,640]) {
+      reviewerWindow.setSize(width,700);
+      await new Promise(resolve=>setTimeout(resolve,150));
+      const fits=await reviewerWindow.webContents.executeJavaScript('document.documentElement.scrollWidth<=innerWidth && document.querySelector("footer").getBoundingClientRect().bottom<=innerHeight');
+      if(!fits)throw new Error('Query window overflows at '+width);
+      if(process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT) {
+        const picture=await reviewerWindow.webContents.capturePage();
+        await fsPromises.writeFile(path.join(path.dirname(process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT),`reviewers-${width}.png`),picture.toPNG());
+      }
+    }
+    reviewerWindow.destroy();
+    showReport('pending');
+    const pendingWindow=reportWindows.get('pending');
+    await new Promise(resolve=>pendingWindow.webContents.once('did-finish-load',resolve));
+    const pendingUI=await pendingWindow.webContents.executeJavaScript('!!window.reportApi && !window.smsApi && !!document.querySelector("#fetch")');
+    if(!pendingUI)throw new Error('Pending window IPC or controls missing');
+    pendingWindow.destroy();
+    console.log('PASS: Windows query windows, pagination, filtering, totals, refresh settings, responsive layout and isolated IPC');
+  } finally {
+    if(attachedView===view){workbenchWindow.contentView.removeChildView(view);attachedView=null;}
+    view.webContents.close();pages.delete(id);moduleStates.delete(id);server.close();
+  }
 }
 
 async function runPackagedLocalAutomationCheck() {
@@ -345,8 +521,8 @@ async function runPackagedLocalAutomationCheck() {
       performPackagedLocalAutomationCheck(),
       new Promise((_, reject) => {
         timeout = setTimeout(
-          () => reject(new Error('Packaged Windows local automation check exceeded 90 seconds')),
-          90_000
+          () => reject(new Error('Packaged Windows local automation check exceeded 150 seconds')),
+          150_000
         );
       })
     ]);
@@ -1302,6 +1478,8 @@ function createApplicationMenu() {
       label: '文件',
       submenu: [
         { label: '打开后台工作台', click: () => showWorkbench() },
+        { label: '全平台待处理订单', click: () => showReport('pending') },
+        { label: '提现审核人员查询', click: () => showReport('reviewers') },
         { type: 'separator' },
         { role: 'quit', label: '退出' }
       ]
@@ -1439,6 +1617,28 @@ function waitForPageReload(webContents, timeoutMs = 15_000) {
 }
 
 function registerIPC() {
+  ipcMain.handle('reports:show',(event,kind)=>{
+    if(event.sender!==workbenchWindow?.webContents||event.senderFrame!==event.sender.mainFrame)throw new Error('无权访问');
+    return showReport(kind);
+  });
+  ipcMain.handle('reports:get',event=>reports.snapshot(reportSender(event)));
+  ipcMain.handle('reports:configure',async(event,input)=>{
+    try{return await reports.configure(reportSender(event),input);}catch(e){return {ok:false,message:e.message};}
+  });
+  ipcMain.handle('reports:fetch',event=>{
+    const kind=reportSender(event);
+    void reports.fetch(kind).catch(error=>{reports.states[kind].message=error.message;reports.notify(kind);});
+    return {ok:true};
+  });
+  ipcMain.handle('reports:cancel',event=>{const kind=reportSender(event);reports.cancel(kind);return {ok:true};});
+  ipcMain.handle('reports:navigate',async(event,input)=>{
+    try {
+      const kind=reportSender(event);
+      if(!input||typeof input.platformID!=='string'||(input.all&&kind!=='reviewers'))throw new Error('查询参数无效');
+      const target=reports.target(kind,input.platformID,input.id,input.all===true);
+      return await withdrawalNavigation.open(target);
+    } catch(e){return {ok:false,message:e.message};}
+  });
   ipcMain.handle('snapshot:get', () => buildSnapshot());
   ipcMain.handle('page:select', (_event, id) => {
     if (!pages.has(id)) return false;
@@ -1715,7 +1915,7 @@ app.whenReady().then(async () => {
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
-    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP, zoom, page find and persistent highlighting checks passed';
+    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP, workbench, NPG/TC withdrawal queries, repeated navigation, pagination, cache and totals checks passed';
     try {
       await runPackagedLocalAutomationCheck();
     } catch (error) {
@@ -1754,6 +1954,8 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   quitting = true;
+  clearInterval(reportTimer);
+  reports?.dispose();
   if (scanTimer) clearInterval(scanTimer);
   if (financeTimer) clearInterval(financeTimer);
   for (const state of moduleStates.values()) {

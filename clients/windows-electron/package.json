@@ -1,6 +1,6 @@
 {
   "name": "sms-success-monitor-windows",
-  "version": "0.3.83",
+  "version": "0.3.84",
   "description": "Public platform workbench without monitoring dashboards",
   "main": "src/main.mjs",
   "type": "module",
@@ -8,7 +8,7 @@
   "scripts": {
     "build:ui": "node scripts/build-ui.mjs",
     "start": "npm run build:ui && electron .",
-    "test": "node ../shared/test-shared.mjs && node src/workbench-zoom.test.mjs && node src/persistent-highlight-settings.test.mjs && node scripts/check-package.mjs",
+    "test": "node ../shared/test-shared.mjs && node src/workbench-zoom.test.mjs && node src/persistent-highlight-settings.test.mjs && node src/withdrawal-reports.test.mjs && node scripts/check-package.mjs && node ../../scripts/check-pending-orders.mjs && node ../../scripts/check-withdrawal-reviewers.mjs",
     "test:local-automation": "electron scripts/check-local-automation.mjs",
     "package:windows": "npm run build:ui && node scripts/package-windows.mjs"
   },

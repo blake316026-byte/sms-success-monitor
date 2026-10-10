@@ -58,6 +58,9 @@ let findTimer;
 let lastFindQuery = '';
 let openingDialog = false;
 
+document.querySelector('#pending-orders').onclick = () => window.smsApi.showReport('pending');
+document.querySelector('#withdrawal-reviewers').onclick = () => window.smsApi.showReport('reviewers');
+
 const tabs = document.querySelector('#tabs');
 const workbenchShell = document.querySelector('.workbench-shell');
 const address = document.querySelector('#address');

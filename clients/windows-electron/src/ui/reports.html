@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self' data:">
+  <title>提现查询</title>
+  <link rel="stylesheet" href="reports.css">
+</head>
+<body>
+  <header>
+    <h1 id="title">提现查询</h1>
+    <div class="filters">
+      <label>日期 <input id="from" type="date"></label><span>至</span><input id="through" type="date" aria-label="结束日期">
+      <select id="platform" aria-label="平台"><option value="">全部平台</option></select>
+      <input id="filter" type="search" placeholder="平台 / 订单号 / 状态" aria-label="搜索">
+      <button id="fetch" class="primary"><i data-lucide="download"></i><span>获取</span></button>
+    </div>
+    <div class="options">
+      <div role="tablist" aria-label="查询视图"><button role="tab" id="data-tab" aria-selected="true">订单</button><button role="tab" id="status-tab" aria-selected="false">平台状态</button></div>
+      <label><input id="auto" type="checkbox"><span id="auto-label">自动刷新</span></label>
+      <label>刷新间隔 <input id="interval" type="number" min="5" max="3600" step="1"><span id="unit">秒</span></label>
+    </div>
+    <p id="summary" aria-live="polite"></p><p id="message" role="status"></p>
+  </header>
+  <main><table><thead><tr><th>对应平台</th><th id="column-two">订单号</th><th id="column-three">订单状态 / 查询结果</th></tr></thead><tbody id="rows"></tbody></table><p id="empty" hidden>暂无数据</p></main>
+  <footer><button id="previous" title="上一页" aria-label="上一页"><i data-lucide="chevron-left"></i></button><span id="pagination"></span><button id="next" title="下一页" aria-label="下一页"><i data-lucide="chevron-right"></i></button></footer>
+  <script src="reports.js"></script>
+</body>
+</html>

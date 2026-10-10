@@ -38,6 +38,14 @@ jobs:
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
           if (-not (Test-Path $resultPath)) { throw "Missing runtime check result" }
       - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-runtime-checks
+          path: |
+            dist/windows-self-test/result.txt
+            dist/windows-self-test/reviewers-*.png
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
         with:
           name: windows-client
           path: dist/windows/SMS-Success-Monitor-Windows-x64.zip
@@ -59,7 +67,7 @@ jobs:
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
           "$AAPT" dump badging "$APK" > /tmp/badging.txt
           cat /tmp/badging.txt
-          grep -q "package: name='com.local.smssuccessmonitor.publicworkbench'.*versionCode='104'.*versionName='0.3.83'" /tmp/badging.txt
+          grep -q "package: name='com.local.smssuccessmonitor.publicworkbench'.*versionCode='105'.*versionName='0.3.84'" /tmp/badging.txt
           ! grep -E "SYSTEM_ALERT_WINDOW|POST_NOTIFICATIONS|FOREGROUND_SERVICE|RECEIVE_BOOT_COMPLETED" /tmp/badging.txt
           mkdir -p dist/android
           cp "$APK" dist/android/SMS-Success-Monitor-Android.apk

@@ -1,0 +1,22 @@
+:root {font-family:"Segoe UI",system-ui,sans-serif;color:#242424;background:#fff;font-size:14px;letter-spacing:0;color-scheme:light}
+* {box-sizing:border-box} body {margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header {padding:16px 18px 10px;border-bottom:1px solid #ddd} h1 {font-size:19px;margin:0 0 16px;font-weight:600}
+.filters,.options {display:flex;align-items:center;gap:10px;flex-wrap:wrap}.options {margin-top:12px}
+label {display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+input,select,button {font:inherit;color:inherit;border:1px solid #ccc;background:#fff;border-radius:4px;height:34px;padding:5px 9px}
+input[type=date] {width:146px} input[type=search] {width:220px;flex:1;min-width:165px} select {width:165px}
+input[type=number] {width:72px} input[type=checkbox] {width:17px;height:17px;accent-color:#076ad7}
+button {display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;flex-shrink:0}
+button:hover {background:#eef4fb} button:disabled {opacity:.4;cursor:default} button svg {height:18px;width:18px;flex-shrink:0}
+.primary,[aria-selected=true] {background:#076ad7;color:white;border-color:#076ad7}
+[role=tablist] {display:flex;margin-right:10px} [role=tab] {min-width:95px;border-radius:0} [role=tab]:first-child {border-radius:4px 0 0 4px} [role=tab]:last-child {border-radius:0 4px 4px 0}
+#summary {margin:12px 0 0;color:#626262;min-height:20px} #message {margin:4px 0 0;color:#8a4500;overflow-wrap:anywhere} #message:empty {display:none}
+main {margin:0 18px;flex:1;min-height:0;overflow:auto} table {width:100%;table-layout:fixed;border-collapse:collapse}
+th {position:sticky;top:0;background:white;border-bottom:1px solid #ccc;text-align:left;padding:12px 10px;font-weight:600;z-index:1}
+th:first-child {width:23%} th:nth-child(2) {width:39%} th:nth-child(3) {width:38%}
+td {padding:9px 10px;height:42px;vertical-align:middle;overflow-wrap:anywhere;border-bottom:1px solid #eee} tr:nth-child(even) {background:#f5f5f5}
+td .link {display:inline;text-align:left;color:#066bd8;background:none;border:0;padding:0;height:auto;overflow-wrap:anywhere;max-width:100%;white-space:normal}
+td .link:hover {text-decoration:underline} #empty {color:#777;padding:32px;text-align:center}
+footer {display:flex;align-items:center;justify-content:center;gap:20px;padding:12px;border-top:1px solid #ddd;min-height:60px} footer button {width:36px} #pagination {text-align:center;min-width:220px}
+:focus-visible {outline:2px solid #1379db;outline-offset:2px}
+@media(max-width:700px) {header {padding:12px} main {margin:0 12px} .filters {gap:7px} input[type=search] {width:180px} .options {gap:8px} h1 {font-size:17px} th,td {padding:8px} footer {gap:8px} #pagination {min-width:190px}}

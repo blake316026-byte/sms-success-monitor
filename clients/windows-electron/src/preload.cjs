@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('smsApi', {
   addPage: (page) => ipcRenderer.invoke('page:add', page),
   renamePage: (id, name) => ipcRenderer.invoke('page:rename', id, name),
   closePage: (id) => ipcRenderer.invoke('page:close', id),
-  setFinancialMonitoringEnabled: (id, enabled) => ipcRenderer.invoke('monitor:set-finance-enabled', id, Boolean(enabled)),
+  showReport: kind => ipcRenderer.invoke('reports:show', kind),
   changeWorkbenchZoom: (direction) => ipcRenderer.invoke('workbench:zoom', direction),
   setWorkbenchModalOpen: (open) => ipcRenderer.invoke('workbench:modal', Boolean(open)),
   setWorkbenchShellHeight: (height) => ipcRenderer.send('workbench:shell-height', height),
