@@ -37,6 +37,9 @@ const waitService=new WithdrawalReports(options);ready=false;await waitService.o
 ready=true;await waitService.tick();await flush();assert(calls.every(c=>c.key==='probe'),'first open does not fetch when a page becomes ready');
 ready=false;
 await waitService.fetch('reviewers');assert.equal(waitService.snapshot('reviewers').platforms[0].total,null);
+assert.equal(stored.waiting.length,1,'persist unfinished readiness retry');
+const recoveredWait=new WithdrawalReports(options);await recoveredWait.open('reviewers');
+assert.equal(recoveredWait.states.reviewers.rows.get('one').waiting,true,'restore unfinished readiness retry');
 ready=true;now+=5000;await waitService.tick();await flush();await flush();
 assert.equal(waitService.snapshot('reviewers').platforms[0].total,350,'ready source is filled without 30 minute wait');
 calls=[];now+=5000;await waitService.tick();await flush();assert(calls.every(c=>c.key==='probe'),'healthy sources only receive readiness checks');

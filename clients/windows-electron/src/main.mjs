@@ -430,6 +430,10 @@ async function verifyPublicWorkbench() {
   })));
   if (!valid || errors.length || /监控总览|国家总计|扫描全部/.test(menus)
       || scanTimer || financeTimer) throw new Error('Public workbench UI or renderer check failed: ' + errors.join('; '));
+  workbenchWindow.setSize(640,800);
+  await new Promise(resolve=>setTimeout(resolve,200));
+  if(!await workbenchWindow.webContents.executeJavaScript('document.querySelector(".browser-toolbar").scrollWidth<=innerWidth'))throw new Error('Workbench query controls overflow');
+  workbenchWindow.setSize(1260,800);
   await verifyWithdrawalRuntime();
   showWorkbench(id);
   workbenchWindow.contentView.removeChildView(view);

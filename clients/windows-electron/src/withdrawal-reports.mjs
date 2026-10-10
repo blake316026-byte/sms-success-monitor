@@ -27,6 +27,7 @@ export class WithdrawalReports {
     let stored;
     try { stored = load() || {}; } catch { stored = {}; }
     this.cache = (Array.isArray(stored.cache) ? stored.cache : []).filter(e => this.validCache(e));
+    this.waiting=(Array.isArray(stored.waiting)?stored.waiting:[]).filter(e=>this.validWaiting(e));
     for (const kind of reportKinds) {
       const end = day(now()), start = kind === 'pending' ? day(new Date(end + 'T12:00:00').getTime() - 6 * 86400000) : end;
       this.states[kind] = {kind, start, end, today: end, followsToday: true, settings: normalizeSettings(kind, stored.settings?.[kind]),
@@ -39,10 +40,14 @@ export class WithdrawalReports {
       && count(e.total) && this.now() - e.savedAt >= 0 && this.now() - e.savedAt < CACHE_TTL
       && Array.isArray(e.people) && e.people.every(p => typeof p.id === 'string' && typeof p.name === 'string' && count(p.count));
   }
+  validWaiting(e) {
+    return e&&typeof e.scope==='string'&&validDates(e.start,e.end)&&this.now()-e.at>=0&&this.now()-e.at<CACHE_TTL;
+  }
   persist() {
     this.cache = this.cache.filter(e => this.validCache(e));
+    this.waiting=this.waiting.filter(e=>this.validWaiting(e));
     try {
-      this.save({cache: this.cache, settings: Object.fromEntries(reportKinds.map(k => [k, this.states[k].settings]))});
+      this.save({cache:this.cache,waiting:this.waiting,settings:Object.fromEntries(reportKinds.map(k => [k, this.states[k].settings]))});
       this.writeError = '';
     } catch { this.writeError = '本地缓存保存失败'; }
   }
@@ -72,11 +77,15 @@ export class WithdrawalReports {
   }
   async open(kind) {
     const s = this.states[kind];
+    const wasVisible=s.visible;
     s.visible = true;
     if (!s.active) {
       s.active = true; this.schedule(s); this.reconcile(kind);
       if (kind === 'pending') void this.fetch(kind);
       else await this.restore();
+    } else if(kind==='pending'&&!wasVisible) {
+      await Promise.all([...s.jobs.values()].map(job=>job.done));
+      if(s.visible)void this.fetch(kind);
     }
     this.notify(kind);
     return this.snapshot(kind);
@@ -114,9 +123,10 @@ export class WithdrawalReports {
     this.reconcile('reviewers');
     await Promise.all(this.sources().map(async source => {
       try {
+        const row=s.rows.get(source.id);
+        row.waiting=this.waiting.some(e=>this.validWaiting(e)&&e.scope===scope(source)&&e.start===s.start&&e.end===s.end);
         const identity = await this.probe(source, s);
         if (generation !== s.generation || !this.current(source)) return;
-        const row = s.rows.get(source.id);
         if (identity.kind !== 'ok') { row.restorePending=true; row.message=identity.message; return; }
         const entry = this.cache.find(e => this.validCache(e) && e.scope === scope(source) && e.identity === identity.identity && e.start === s.start && e.end === s.end);
         if (entry) Object.assign(row, {identity:entry.identity, family:entry.family, people:entry.people, total:entry.total,
@@ -184,6 +194,7 @@ export class WithdrawalReports {
       else {
         if (!count(result.platformTotal)) throw new Error('接口总条数无效');
         row.people = result.reviewers; row.total = result.platformTotal;
+        this.rememberWait(source,s,false);
         this.storeRow(s, row);
       }
     } catch (error) {
@@ -191,6 +202,7 @@ export class WithdrawalReports {
         row.waiting = retryable(error.message);
         row.message = (kind === 'reviewers' && row.savedAt ? '刷新失败，保留上次结果：' : '未获取：') + error.message;
         if (kind === 'pending') {row.orders=[];row.contextID='';}
+        else {this.rememberWait(source,s,row.waiting);this.persist();}
       }
     } finally {
       if (s.jobs.get(source.id) === job) s.jobs.delete(source.id);
@@ -204,6 +216,10 @@ export class WithdrawalReports {
     this.cache.push({scope:row.scope,identity:row.identity,start:s.start,end:s.end,family:row.family,
       people:row.people,total:row.total,savedAt:row.savedAt});
     this.persist();
+  }
+  rememberWait(source,s,waiting) {
+    this.waiting=this.waiting.filter(e=>!(e.scope===scope(source)&&e.start===s.start&&e.end===s.end));
+    if(waiting)this.waiting.push({scope:scope(source),start:s.start,end:s.end,at:this.now()});
   }
   async tick() {
     for (const kind of reportKinds) {
@@ -242,7 +258,7 @@ export class WithdrawalReports {
       }
       this.notify(kind);
     }
-    if (this.cache.some(e => !this.validCache(e))) this.persist();
+    if (this.cache.some(e => !this.validCache(e))||this.waiting.some(e=>!this.validWaiting(e))) this.persist();
   }
   target(kind, platformID, id, all = false) {
     this.reconcile(kind);
