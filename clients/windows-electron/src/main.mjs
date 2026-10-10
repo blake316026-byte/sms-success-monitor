@@ -90,6 +90,7 @@ let scanTimer;
 let financeTimer;
 let workbenchModalOpen = false;
 const reportWindows = new Map();
+const reportSnapshots = new Map();
 let reports, withdrawalNavigation, reportTimer;
 
 function reportSources() {
@@ -149,7 +150,10 @@ function initializeReports() {
     },
     changed:(kind,snapshot)=>{
       const window=reportWindows.get(kind);
-      if(window&&!window.isDestroyed())window.webContents.send('reports:changed',snapshot);
+      const signature=JSON.stringify(snapshot);
+      if(window&&!window.isDestroyed()&&reportSnapshots.get(kind)!==signature) {
+        reportSnapshots.set(kind,signature);window.webContents.send('reports:changed',snapshot);
+      }
     }});
   reports.persist();
   withdrawalNavigation=new WithdrawalNavigation({reports,source:id=>reportSources().find(s=>s.id===id),execute,

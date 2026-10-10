@@ -1,13 +1,17 @@
 import {createIcons,Download,RefreshCw,Square,ChevronLeft,ChevronRight} from 'lucide';
 const $=selector=>document.querySelector(selector);
 const icons=()=>createIcons({icons:{Download,RefreshCw,Square,ChevronLeft,ChevronRight}});
-let state,tab='data',page=0,message='',working=false;
+let state,tab='data',page=0,message='',working=false,navigation=0;
 const number=n=>n.toLocaleString('zh-CN');
 function button(text,target) {
   const b=document.createElement('button');b.className='link';b.textContent=text;
   b.addEventListener('click',async()=>{
+    const request=++navigation;
     message='正在打开对应平台…';render();
-    const result=await window.reportApi.navigate(target);message=result.message||'';render();
+    try {
+      const result=await window.reportApi.navigate(target);
+      if(request===navigation){message=result.message||'';render();}
+    } catch(e){if(request===navigation){message=e.message;render();}}
   });return b;
 }
 function render() {
