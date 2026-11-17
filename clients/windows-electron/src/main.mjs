@@ -568,6 +568,24 @@ async function verifyPendingOrderWindow(window, id) {
     document.querySelector('#data-tab').click();
     return document.querySelector('tbody tr').cells.length===5;
   })()`))throw new Error('Pending pagination, filter or platform status columns failed');
+  if(!await window.webContents.executeJavaScript(`(() => {
+    const wait=document.querySelector('#minimum-wait'),filter=document.querySelector('#filter');
+    document.querySelector('#next').click();
+    wait.value='5';wait.dispatchEvent(new Event('input'));
+    if(document.querySelectorAll('tbody tr').length!==1||!document.querySelector('#pagination').textContent.includes('1 / 1'))return false;
+    filter.value='fixture-order-22';filter.dispatchEvent(new Event('input'));
+    if(document.querySelectorAll('tbody tr').length!==0)return false;
+    filter.value='';filter.dispatchEvent(new Event('input'));
+    document.querySelector('#status-tab').click();
+    if(!document.querySelector('#wait-filter').hidden||document.querySelectorAll('tbody tr').length===0)return false;
+    document.querySelector('#data-tab').click();
+    if(document.querySelectorAll('tbody tr').length!==1)return false;
+    for(const value of ['0','']) {
+      wait.value=value;wait.dispatchEvent(new Event('input'));
+      if(document.querySelectorAll('tbody tr').length!==10)return false;
+    }
+    return !document.querySelector('#wait-filter').hidden;
+  })()`))throw new Error('Pending minimum-wait filter, reset, combined filters or status view failed');
   row.pendingConfirmed=false;reports.notify('pending');
   await new Promise(resolve=>setTimeout(resolve,100));
   if(!await window.webContents.executeJavaScript(`!document.querySelector('tr.overdue')
@@ -581,7 +599,7 @@ async function verifyPendingOrderWindow(window, id) {
   await new Promise(resolve=>setTimeout(resolve,100));
   if(!await window.webContents.executeJavaScript(`!document.querySelector('tr.overdue')
     && !document.querySelector('#summary').classList.contains('alert')`))throw new Error('Removed pending orders still alert');
-  console.log('PASS: pending order creation times, overdue rows, stale suppression, age timer and 1050/640px layout');
+  console.log('PASS: pending order times, minimum-wait filter, overdue rows, stale suppression, age timer and 1050/640px layout');
 }
 
 async function runPackagedLocalAutomationCheck() {

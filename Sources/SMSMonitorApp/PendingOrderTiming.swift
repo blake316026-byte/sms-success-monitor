@@ -22,6 +22,12 @@ enum PendingOrderTiming {
     return now.timeIntervalSince(createdAt) > limit
   }
 
+  static func matchesMinimumWait(createdAt: Date?, minutes: Int, now: Date) -> Bool {
+    guard minutes > 0 else { return true }
+    guard let createdAt else { return false }
+    return now.timeIntervalSince(createdAt) >= Double(minutes) * 60
+  }
+
   static func waitingText(createdAt: Date?, now: Date, confirmed: Bool) -> String {
     guard let createdAt else { return "时间未获取" }
     let elapsed = now.timeIntervalSince(createdAt)

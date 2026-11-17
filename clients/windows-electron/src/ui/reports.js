@@ -1,5 +1,5 @@
 import {createIcons,Download,RefreshCw,Square,ChevronLeft,ChevronRight} from 'lucide';
-import {creationText,pendingTiming} from '../pending-order-timing.mjs';
+import {creationText,pendingTiming,minimumWaitMinutes,matchesMinimumWait} from '../pending-order-timing.mjs';
 const $=selector=>document.querySelector(selector);
 const icons=()=>createIcons({icons:{Download,RefreshCw,Square,ChevronLeft,ChevronRight}});
 let state,tab='data',page=0,message='',working=false,navigation=0;
@@ -19,6 +19,8 @@ function render() {
   if(!state)return;
   const reviewers=state.kind==='reviewers',status=tab==='status';
   const pending=!reviewers&&!status,now=Date.now();
+  $('#wait-filter').hidden=!pending;
+  const minimumWait=minimumWaitMinutes($('#minimum-wait').value);
   $('#created-column').hidden=!pending;$('#age-column').hidden=!pending;
   $('table').classList.toggle('pending',pending);
   $('#title').textContent=document.title=reviewers?'提现审核人员查询':'全平台待处理订单';
@@ -36,7 +38,8 @@ function render() {
     $('#platform').value=platform;$('#platform').dataset.options=options;
   }
   const list=(status?state.platforms:state.rows).filter(r=>(!platform||(r.platformID||r.id)===platform)
-    && [r.platform,r.name,r.id,r.status,r.message].filter(Boolean).join(' ').toLowerCase().includes(filter));
+    && [r.platform,r.name,r.id,r.status,r.message].filter(Boolean).join(' ').toLowerCase().includes(filter)
+    && (!pending||matchesMinimumWait(r,minimumWait,now)));
   const pages=Math.max(1,Math.ceil(list.length/10));page=Math.min(page,pages-1);
   const total=reviewers?list.reduce((n,r)=>n+(status?(r.total||0):r.count),0):0;
   $('#column-two').textContent=status?'查询结果':reviewers?'审核人员名称':'订单号';
@@ -78,6 +81,7 @@ async function configure(){
 }
 for(const id of ['from','through','auto','interval'])$('#'+id).addEventListener('change',configure);
 for(const id of ['filter','platform'])$('#'+id).addEventListener(id==='filter'?'input':'change',()=>{page=0;render();});
+$('#minimum-wait').addEventListener('input',()=>{page=0;render();});
 $('#data-tab').onclick=()=>{tab='data';page=0;render();};$('#status-tab').onclick=()=>{tab='status';page=0;render();};
 $('#previous').onclick=()=>{page--;render();};$('#next').onclick=()=>{page++;render();};
 $('#fetch').onclick=async()=>{

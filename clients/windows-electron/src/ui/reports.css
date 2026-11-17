@@ -1,5 +1,6 @@
 :root {font-family:"Segoe UI",system-ui,sans-serif;color:#242424;background:#fff;font-size:14px;letter-spacing:0;color-scheme:light}
 * {box-sizing:border-box} body {margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+[hidden] {display:none!important}
 header {padding:16px 18px 10px;border-bottom:1px solid #ddd} h1 {font-size:19px;margin:0 0 16px;font-weight:600}
 .filters,.options {display:flex;align-items:center;gap:10px;flex-wrap:wrap}.options {margin-top:12px}
 label {display:inline-flex;align-items:center;gap:8px;white-space:nowrap}

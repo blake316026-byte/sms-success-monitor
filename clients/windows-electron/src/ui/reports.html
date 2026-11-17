@@ -20,6 +20,7 @@
       <div role="tablist" aria-label="查询视图"><button role="tab" id="data-tab" aria-selected="true">订单</button><button role="tab" id="status-tab" aria-selected="false">平台状态</button></div>
       <label><input id="auto" type="checkbox"><span id="auto-label">自动刷新</span></label>
       <label>刷新间隔 <input id="interval" type="number" min="5" max="3600" step="1"><span id="unit">秒</span></label>
+      <label id="wait-filter" hidden>等待时长 ≥ <input id="minimum-wait" type="number" min="0" step="1" placeholder="不限" aria-label="最少等待分钟数">分钟</label>
     </div>
     <p id="summary" aria-live="polite"></p><p id="message" role="status"></p>
   </header>

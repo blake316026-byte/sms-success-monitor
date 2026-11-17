@@ -48,6 +48,9 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   private let views = NSSegmentedControl(labels: ["订单", "平台状态"], trackingMode: .selectOne, target: nil, action: nil)
   private let intervalField = NSTextField(string: "60")
   private let intervalStepper = NSStepper()
+  private let minimumWaitField = NSTextField(string: "")
+  private let minimumWaitControls = NSStackView()
+  private var minimumWaitMinutes = 0
   private let previousPage = NSButton()
   private let nextPage = NSButton()
   private let pageLabel = NSTextField(labelWithString: "")
@@ -117,7 +120,18 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     intervalStepper.integerValue = refreshSeconds; intervalStepper.target = self; intervalStepper.action = #selector(intervalStepped)
     views.selectedSegment = 0; views.target = self; views.action = #selector(filterChanged)
     views.setWidth(90, forSegment: 0); views.setWidth(110, forSegment: 1)
-    let options = NSStackView(views: [views, NSTextField(labelWithString: "刷新间隔"), intervalField, intervalStepper, NSTextField(labelWithString: "秒")])
+    let minutesFormatter = NumberFormatter()
+    minutesFormatter.numberStyle = .none; minutesFormatter.allowsFloats = false; minutesFormatter.minimum = 0
+    minimumWaitField.formatter = minutesFormatter; minimumWaitField.placeholderString = "不限"
+    minimumWaitField.alignment = .right
+    minimumWaitField.widthAnchor.constraint(equalToConstant: 65).isActive = true
+    minimumWaitField.delegate = self; minimumWaitField.target = self; minimumWaitField.action = #selector(minimumWaitEdited)
+    minimumWaitField.setAccessibilityLabel("最少等待分钟数")
+    minimumWaitControls.orientation = .horizontal; minimumWaitControls.spacing = 8
+    for item in [NSTextField(labelWithString: "等待时长 ≥"), minimumWaitField, NSTextField(labelWithString: "分钟")] {
+      minimumWaitControls.addArrangedSubview(item)
+    }
+    let options = NSStackView(views: [views, NSTextField(labelWithString: "刷新间隔"), intervalField, intervalStepper, NSTextField(labelWithString: "秒"), minimumWaitControls])
     options.orientation = .horizontal; options.spacing = 8
     for (button, symbol, label, action) in [(previousPage, "chevron.left", "上一页", #selector(previousClicked)), (nextPage, "chevron.right", "下一页", #selector(nextClicked))] {
       button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
@@ -147,6 +161,7 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
       bar.topAnchor.constraint(equalTo: content.topAnchor, constant: 14), bar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
       bar.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -14),
       options.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: 12), options.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+      options.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -14),
       summary.topAnchor.constraint(equalTo: options.bottomAnchor, constant: 10), summary.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
       summary.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
       scroll.topAnchor.constraint(equalTo: summary.bottomAnchor, constant: 12), scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
@@ -169,6 +184,11 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
       PendingOrderTiming.date(milliseconds: .nan) == nil,
       PendingOrderTiming.formatter.string(from: Date(timeIntervalSince1970: 0)) == "1970-01-01 08:00:00"
       else { return false }
+    guard PendingOrderTiming.matchesMinimumWait(createdAt: now.addingTimeInterval(-300), minutes: 5, now: now),
+      !PendingOrderTiming.matchesMinimumWait(createdAt: now.addingTimeInterval(-299.999), minutes: 5, now: now),
+      !PendingOrderTiming.matchesMinimumWait(createdAt: nil, minutes: 5, now: now),
+      !PendingOrderTiming.matchesMinimumWait(createdAt: now.addingTimeInterval(1), minutes: 5, now: now),
+      PendingOrderTiming.matchesMinimumWait(createdAt: nil, minutes: 0, now: now) else { return false }
     controller.rows = [PendingOrderRow(platformID: "fixture", platform: "Example TC", orderID: "100000000001",
       status: "待审核", contextID: "test", family: "TC", startDate: "2026-10-04", endDate: "2026-10-10")]
     controller.names = ["fixture": "Example TC", "unavailable": "NPG"]
@@ -205,6 +225,22 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     controller.search.stringValue = "10024"; controller.filterChanged()
     guard controller.displayed.count == 1, controller.pageIndex == 0 else { return false }
     controller.search.stringValue = ""; controller.filterChanged()
+    controller.nextClicked()
+    controller.minimumWaitField.stringValue = "5"; controller.minimumWaitEdited()
+    guard controller.pageIndex == 0, controller.pageCount == 3, controller.pageLabel.stringValue.contains("共 23 条"),
+      controller.displayed.allSatisfy({ $0.createdAt != nil && $0.createdAt! <= now }) else { return false }
+    controller.minimumWaitField.stringValue = "20"; controller.minimumWaitEdited()
+    guard controller.displayed.count == 1, controller.displayed[0].orderID == "10000" else { return false }
+    controller.search.stringValue = "10024"; controller.filterChanged()
+    guard controller.displayed.isEmpty else { return false }
+    controller.search.stringValue = ""
+    controller.views.selectedSegment = 1; controller.filterChanged()
+    guard controller.displayed.count == 2, controller.minimumWaitControls.isHidden else { return false }
+    controller.views.selectedSegment = 0; controller.filterChanged()
+    controller.minimumWaitField.stringValue = "0"; controller.minimumWaitEdited()
+    guard controller.pageLabel.stringValue.contains("共 25 条") else { return false }
+    controller.minimumWaitField.stringValue = ""; controller.minimumWaitEdited()
+    guard controller.pageLabel.stringValue.contains("共 25 条"), !controller.minimumWaitControls.isHidden else { return false }
     guard normalizedInterval(1) == 5, normalizedInterval(5) == 5, normalizedInterval(60) == 60, normalizedInterval(9999) == 3600 else { return false }
     controller.window?.contentView?.layoutSubtreeIfNeeded()
     if let path = ProcessInfo.processInfo.environment["SMS_MONITOR_ORDERS_PREVIEW_PATH"], let view = controller.window?.contentView,
@@ -248,7 +284,14 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     UserDefaults.standard.set(refreshSeconds, forKey: Self.intervalKey); scheduleRefresh()
   }
   @objc private func intervalStepped() { intervalField.integerValue = intervalStepper.integerValue; intervalEdited() }
-  func controlTextDidEndEditing(_ obj: Notification) { if obj.object as? NSTextField === intervalField { intervalEdited() } }
+  @objc private func minimumWaitEdited() {
+    minimumWaitMinutes = max(0, Int(minimumWaitField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
+    filterChanged()
+  }
+  func controlTextDidEndEditing(_ obj: Notification) {
+    if obj.object as? NSTextField === intervalField { intervalEdited() }
+    if obj.object as? NSTextField === minimumWaitField { minimumWaitEdited() }
+  }
 
   func windowWillClose(_ notification: Notification) {
     ageTimer?.invalidate(); ageTimer = nil
@@ -268,7 +311,10 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   @objc private func filterChanged() { pageIndex = 0; render() }
   @objc private func previousClicked() { pageIndex = max(0, pageIndex - 1); render() }
   @objc private func nextClicked() { pageIndex = min(pageCount - 1, pageIndex + 1); render() }
-  func controlTextDidChange(_ obj: Notification) { if obj.object as? NSTextField === search { filterChanged() } }
+  func controlTextDidChange(_ obj: Notification) {
+    if obj.object as? NSTextField === search { filterChanged() }
+    if obj.object as? NSTextField === minimumWaitField { minimumWaitEdited() }
+  }
 
   private func beginRefresh() {
     cancel(); navigationMessage = nil
@@ -342,6 +388,7 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
 
   private func render() {
     let now = Date()
+    minimumWaitControls.isHidden = views.selectedSegment != 0
     let id = filterIDs.indices.contains(platformFilter.indexOfSelectedItem) ? filterIDs[platformFilter.indexOfSelectedItem] : ""
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     var all = views.selectedSegment == 0 ? rows : []
@@ -351,7 +398,9 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
           status: status, contextID: "", family: "", startDate: "", endDate: ""))
       }
     }
-    let filtered = all.filter { (id.isEmpty || $0.platformID == id) && (query.isEmpty || "\($0.platform) \($0.orderID) \($0.status)".localizedCaseInsensitiveContains(query)) }
+    let filtered = all.filter { (id.isEmpty || $0.platformID == id)
+      && (query.isEmpty || "\($0.platform) \($0.orderID) \($0.status)".localizedCaseInsensitiveContains(query))
+      && (views.selectedSegment != 0 || PendingOrderTiming.matchesMinimumWait(createdAt: $0.createdAt, minutes: minimumWaitMinutes, now: now)) }
       .sorted { ($0.platform, $0.orderID) < ($1.platform, $1.orderID) }
     pageCount = max(1, (filtered.count + pageSize - 1) / pageSize); pageIndex = min(pageIndex, pageCount - 1)
     displayed = Array(filtered.dropFirst(pageIndex * pageSize).prefix(pageSize))

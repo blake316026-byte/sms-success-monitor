@@ -1,4 +1,11 @@
 export const overdueLimit = 20 * 60 * 1000;
+export const minimumWaitMinutes = value => {
+  const minutes=Number(value);
+  return Number.isSafeInteger(minutes)&&minutes>0?minutes:0;
+};
+export function matchesMinimumWait(row, minutes, now=Date.now()) {
+  return minutes<=0 || (validCreatedAt(row.createdAt)&&now-row.createdAt>=minutes*60000);
+}
 const formatter = new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Shanghai', hourCycle:'h23',
   year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
 export const validCreatedAt = value => typeof value === 'number' && Number.isSafeInteger(value)

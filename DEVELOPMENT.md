@@ -31,6 +31,7 @@ This branch contains the public, reduced edition. The private/full working copy 
 ## v0.3.86 Scope
 
 - Only pending-order creation time, elapsed time and visual overdue alerts change. No new payment, SMS channel, retention or AI configuration modules are included.
+- The minimum-wait filter is inclusive in minutes, combines with platform/text filters, resets pagination, and is ignored on platform status/reviewer views. Blank or zero disables it; unknown/future times do not match a positive minimum. Filtering makes no backend request.
 - NPG creation time comes from `created`; TC uses `requestTime`. Numeric epoch milliseconds and explicit timestamp offsets are preserved. Naive TC timestamps use the backend environment timezone (S1/S3 UTC-4, otherwise UTC+8); ambiguous NPG strings remain unknown.
 - Display times in Asia/Shanghai. Alert only when the elapsed time is strictly greater than 20 minutes and the order is confirmed pending. Invalid/future/missing timestamps and unconfirmed previous results do not alert. Failed queries remove previous rows.
 - Native AppKit, WebKit, shared query fixtures, Windows host state tests and packaged Electron rendering cover the new fields, threshold, cancellation/stale results and layout. No production order is processed by these checks.
