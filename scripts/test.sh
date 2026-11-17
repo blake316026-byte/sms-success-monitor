@@ -24,5 +24,10 @@ swiftc "${ROOT_DIR}/Sources/SMSMonitorApp/PendingOrdersScript.swift" \
   "${ROOT_DIR}/Sources/SMSMonitorApp/PendingOrderNavigationScript.swift" \
   "${SCRIPT_DIR}/PendingOrdersWebKitCheck.swift" -o "${CHECK_DIR}/orders-check"
 "${CHECK_DIR}/orders-check"
+swiftc "${ROOT_DIR}/Sources/SMSMonitorApp/PendingOrdersScript.swift" \
+  "${ROOT_DIR}/Sources/SMSMonitorApp/PendingOrderTiming.swift" \
+  "${ROOT_DIR}/Sources/SMSMonitorApp/PendingOrdersWindowController.swift" \
+  "${SCRIPT_DIR}/PendingOrdersLayoutCheck.swift" -o "${CHECK_DIR}/orders-layout-check"
+"${CHECK_DIR}/orders-layout-check"
 node "${ROOT_DIR}/clients/shared/test-shared.mjs"
 npm --prefix "${ROOT_DIR}/clients/windows-electron" test

@@ -44,6 +44,7 @@ jobs:
           path: |
             dist/windows-self-test/result.txt
             dist/windows-self-test/reviewers-*.png
+            dist/windows-self-test/pending-*.png
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:

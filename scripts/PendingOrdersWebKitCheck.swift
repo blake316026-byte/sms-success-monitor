@@ -26,11 +26,12 @@ import WebKit
         for (const [name,method] of [['date','setUTCDate'],['year','setUTCFullYear'],['month','setUTCMonth'],['hour','setUTCHours'],['minute','setUTCMinutes'],['second','setUTCSeconds'],['millisecond','setUTCMilliseconds']]) obj[name]=v=>{d[method](v);return obj};
         return obj;
       };
-      window.fetch = async (url, options) => { requests.push(url); return new Response(JSON.stringify({status:0,page:{totalElements:355},success:true,totalPageCount:1,value:[{id:123,status:'NEW',merchantCode:'m'}]}),{status:200}); };
+      window.fetch = async (url, options) => { requests.push(url); return new Response(JSON.stringify({status:0,page:{totalElements:355},success:true,totalPageCount:1,value:[{id:123,status:'NEW',merchantCode:'m',requestTime:'2026-10-10 12:00:00'}]}),{status:200}); };
       const expectedUsername='fixture',allowNPG=true,requestID='fixture',contextID='fixture',startDate='2026-10-04',endDate='2026-10-10';
       window.fixtureStep='pending';
       """# + "\nconst result = await (async()=> {\(PendingOrdersScript.query)})();\n" + #"""
       if(result.kind!=='ok'||result.orders.length!==1||requests.length!==3) return false;
+      if(result.orders[0].createdAt!==Date.UTC(2026,9,10,4)||!Number.isSafeInteger(result.orders[0].observedAt))return false;
       document.body.innerHTML='<form><div class="player-withdraw-action-bar"><input id="id"></div><div class="ant-picker-range"><input><input></div><button type="button">搜 索</button></form><div id="player-withdraw-list"></div>';
       let activeEndpoint='search';
       for(const [title,endpoint] of [['全部','search'],['待处理','searchPendingApproval'],['待审核','searchPending2ndApproval'],['支付','searchPendingPayment']]) {

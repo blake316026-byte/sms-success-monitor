@@ -514,12 +514,74 @@ async function verifyWithdrawalRuntime() {
     await new Promise(resolve=>pendingWindow.webContents.once('did-finish-load',resolve));
     const pendingUI=await pendingWindow.webContents.executeJavaScript('!!window.reportApi && !window.smsApi && !!document.querySelector("#fetch")');
     if(!pendingUI)throw new Error('Pending window IPC or controls missing');
+    await verifyPendingOrderWindow(pendingWindow,id);
     pendingWindow.destroy();
     console.log('PASS: Windows query windows, pagination, filtering, totals, refresh settings, responsive layout and isolated IPC');
   } finally {
     if(attachedView===view){workbenchWindow.contentView.removeChildView(view);attachedView=null;}
     view.webContents.close();pages.delete(id);moduleStates.delete(id);server.close();
   }
+}
+
+async function verifyPendingOrderWindow(window, id) {
+  const state=reports.states.pending;
+  reports.cancel('pending');
+  await Promise.all([...state.jobs.values()].map(job=>job.done));
+  state.settings={auto:false,interval:5};
+  reports.reconcile('pending');
+  const row=state.rows.get(id),now=Date.now();
+  const orders=Array.from({length:23},(_,n)=>({
+    id:'fixture-order-'+n,status:'待处理',observedAt:now,
+    createdAt:n===0?now-21*60000:n===1?null:n===2?now+60000:now-60000
+  }));
+  Object.assign(row,{orders,pendingConfirmed:true,savedAt:now,message:'已获取'});
+  reports.notify('pending');
+  await new Promise(resolve=>setTimeout(resolve,150));
+  if(!await window.webContents.executeJavaScript(`(() => {
+    const rows=[...document.querySelectorAll('tbody tr')];
+    return rows.length===10 && rows.every(r=>r.cells.length===5)
+      && rows[0].classList.contains('overdue') && !rows[1].classList.contains('overdue')
+      && rows[1].cells[2].textContent==='未获取' && rows[2].cells[3].textContent==='时间异常'
+      && document.querySelector('#summary').textContent.includes('超时 1 条')
+      && /\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}/.test(rows[0].cells[2].textContent);
+  })()`))throw new Error('Pending creation time, waiting duration or alert rendering failed');
+  for(const width of [1050,640]) {
+    window.setSize(width,700);
+    await new Promise(resolve=>setTimeout(resolve,150));
+    if(!await window.webContents.executeJavaScript(`document.documentElement.scrollWidth<=innerWidth
+      && document.querySelector('footer').getBoundingClientRect().bottom<=innerHeight
+      && document.querySelector('main').scrollWidth>=900`))throw new Error('Pending window overflows at '+width);
+    if(process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT) {
+      const picture=await window.webContents.capturePage();
+      await fsPromises.writeFile(path.join(path.dirname(process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT),`pending-${width}.png`),picture.toPNG());
+    }
+  }
+  if(!await window.webContents.executeJavaScript(`(() => {
+    document.querySelector('#next').click();
+    if(!document.querySelector('#pagination').textContent.includes('2 / 3'))return false;
+    const filter=document.querySelector('#filter');
+    filter.value='fixture-order-22';filter.dispatchEvent(new Event('input'));
+    if(document.querySelectorAll('tbody tr').length!==1)return false;
+    filter.value='';filter.dispatchEvent(new Event('input'));
+    document.querySelector('#status-tab').click();
+    if(!document.querySelector('#created-column').hidden||!document.querySelector('#age-column').hidden)return false;
+    document.querySelector('#data-tab').click();
+    return document.querySelector('tbody tr').cells.length===5;
+  })()`))throw new Error('Pending pagination, filter or platform status columns failed');
+  row.pendingConfirmed=false;reports.notify('pending');
+  await new Promise(resolve=>setTimeout(resolve,100));
+  if(!await window.webContents.executeJavaScript(`!document.querySelector('tr.overdue')
+    && document.querySelector('tbody tr').textContent.includes('待核实')`))throw new Error('Stale pending orders still alert');
+  row.pendingConfirmed=true;
+  row.orders[0].createdAt=Date.now()-20*60000+1000;
+  reports.notify('pending');
+  await new Promise(resolve=>setTimeout(resolve,6000));
+  if(!await window.webContents.executeJavaScript(`!!document.querySelector('tr.overdue')`))throw new Error('Pending age timer did not cross the threshold');
+  row.orders=[];reports.notify('pending');
+  await new Promise(resolve=>setTimeout(resolve,100));
+  if(!await window.webContents.executeJavaScript(`!document.querySelector('tr.overdue')
+    && !document.querySelector('#summary').classList.contains('alert')`))throw new Error('Removed pending orders still alert');
+  console.log('PASS: pending order creation times, overdue rows, stale suppression, age timer and 1050/640px layout');
 }
 
 async function runPackagedLocalAutomationCheck() {

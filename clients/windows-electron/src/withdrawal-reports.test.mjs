@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import {WithdrawalReports,normalizeSettings,validDates,CACHE_TTL,day} from './withdrawal-reports.mjs';
 import {WithdrawalNavigation} from './withdrawal-navigation.mjs';
+import {pendingTiming,creationText} from './pending-order-timing.mjs';
+const timingNow=Date.parse('2026-11-17T12:00:00+08:00');
+assert.equal(creationText(timingNow),'2026-11-17 12:00:00');
+for(const createdAt of [null,undefined,0,true,'bad',NaN,Infinity,timingNow+1])assert.equal(pendingTiming({createdAt,confirmed:true},timingNow).overdue,false);
+assert.equal(pendingTiming({createdAt:timingNow-1200000,confirmed:true},timingNow).overdue,false);
+assert.equal(pendingTiming({createdAt:timingNow-1200001,confirmed:true},timingNow).overdue,true);
+assert.equal(pendingTiming({createdAt:timingNow-1200001,confirmed:false},timingNow).overdue,false);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 let now=new Date('2026-10-10T12:00:00').getTime(),stored={},calls=[],ready=true,identity='identity',gate=null;
 const sources=[{id:'one',name:'Example NPG',url:'https://example.invalid',account:'tester',currentURL:'https://example.invalid/reports',allowNPG:true}];
@@ -10,7 +17,7 @@ const execute=async(source,key,args)=>{
   if(key==='cancel')return;
   if(gate)await gate;
   if(args.totalsOnly)return {kind:'ok',platformTotal:350};
-  return key==='pending'?{kind:'ok',family:'NPG',contextID:'ctx',orders:[{id:'W1',status:'待审核'}]}
+  return key==='pending'?{kind:'ok',family:'NPG',contextID:'ctx',orders:[{id:'W1',status:'待审核',createdAt:now-1800000,observedAt:now}]}
     :{kind:'ok',family:'NPG',contextID:'ctx',platformTotal:350,reviewers:[{id:'a',name:'Auditor A',count:12}]};
 };
 const options={sources:()=>sources.map(s=>({...s,ready})),execute,now:()=>now,load:()=>stored,save:data=>{stored=structuredClone(data);}};
@@ -53,6 +60,18 @@ assert.equal(calls.filter(c=>c.key==='pending').length,1,'no overlapping per-pla
 service.cancel('pending');globalThis.releaseQuery();await first;gate=null;
 assert.equal(service.snapshot('pending').rows.length,0,'cancelled result discarded');
 await service.fetch('pending');assert.equal(service.snapshot('pending').rows.length,1);
+assert.equal(service.snapshot('pending').rows[0].createdAt,now-1800000);
+assert.equal(service.snapshot('pending').rows[0].confirmed,true);
+gate=new Promise(resolve=>{globalThis.releaseQuery=resolve;});
+const refreshPending=service.fetch('pending');await flush();
+assert.equal(service.snapshot('pending').rows[0].confirmed,false,'old rows during refresh must not raise fresh alarms');
+service.cancel('pending');globalThis.releaseQuery();await refreshPending;gate=null;
+assert.equal(service.snapshot('pending').rows[0].confirmed,false,'cancelled old result is unconfirmed');
+await service.fetch('pending');assert.equal(service.snapshot('pending').rows[0].confirmed,true);
+const failureService=new WithdrawalReports({...options,execute:async(s,k,a)=>k==='pending'?{kind:'error',message:'offline'}:execute(s,k,a)});
+failureService.states.pending.rows=service.states.pending.rows;
+await failureService.fetch('pending');assert.equal(failureService.snapshot('pending').rows.length,0,'failed refresh removes old pending orders');
+await service.fetch('pending');
 sources[0].account='different';assert.equal(service.snapshot('pending').rows.length,0,'account switch drops old rows');
 sources[0].account='tester';
 await service.fetch('reviewers');

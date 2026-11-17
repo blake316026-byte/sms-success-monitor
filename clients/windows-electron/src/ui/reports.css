@@ -19,4 +19,10 @@ td .link {display:inline;text-align:left;color:#066bd8;background:none;border:0;
 td .link:hover {text-decoration:underline} #empty {color:#777;padding:32px;text-align:center}
 footer {display:flex;align-items:center;justify-content:center;gap:20px;padding:12px;border-top:1px solid #ddd;min-height:60px} footer button {width:36px} #pagination {text-align:center;min-width:220px}
 :focus-visible {outline:2px solid #1379db;outline-offset:2px}
+.pending {min-width:900px}
+.pending th:first-child {width:15%} .pending th:nth-child(2) {width:19%}
+.pending th:nth-child(3) {width:23%} .pending th:nth-child(4) {width:21%} .pending th:nth-child(5) {width:22%}
+tr.overdue {background:#fff0f0;color:#b42318} tr.overdue .age {font-weight:600}
+.age {font-variant-numeric:tabular-nums}
+#summary.alert {color:#b42318}
 @media(max-width:700px) {header {padding:12px} main {margin:0 12px} .filters {gap:7px} input[type=search] {width:180px} .options {gap:8px} h1 {font-size:17px} th,td {padding:8px} footer {gap:8px} #pagination {min-width:190px}}

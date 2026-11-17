@@ -102,6 +102,27 @@ enum PendingOrdersScript {
         return lo;
       };
       const start = boundary(dayNumber(startDate)), finish = boundary(dayNumber(endDate) + 1) - 1;
+      // Native columns: NPG created (epoch milliseconds), TC requestTime (server wall time).
+      // Never substitute modified/approval/payment timestamps or the dtCreated query filter.
+      const creationTime = row => {
+        const raw = current.family === 'TC' ? row.requestTime : row.created;
+        let ms = null;
+        if (typeof raw === 'number' || (typeof raw === 'string' && /^\d{13}$/.test(raw))) {
+          ms = Number(raw);
+        } else if (typeof raw === 'string') {
+          const value = raw.trim();
+          const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d{1,3})?(Z|[+-]\d{2}:?\d{2})?$/.exec(value);
+          if (match) {
+            const wall = match[1] + 'T' + match[2] + (match[3] || '');
+            const wallMS = Date.parse(wall + 'Z');
+            const offset = match[4] || (current.family === 'TC'
+              ? (['S1', 'S3'].includes(current.environment) ? '-04:00' : '+08:00') : null);
+            if (Number.isFinite(wallMS) && new Date(wallMS).toISOString().slice(0, 19) === wall.slice(0, 19) && offset)
+              ms = Date.parse(wall + offset);
+          }
+        }
+        return Number.isSafeInteger(ms) && ms >= Date.UTC(2000, 0, 1) && ms < Date.UTC(2100, 0, 1) ? ms : null;
+      };
       const serverDate = timestamp => {
         const serverZone = ['S1', 'S3'].includes(current.environment) ? 'Etc/GMT+4' : 'Etc/GMT-8';
         const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: serverZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(timestamp)).map(x => [x.type, x.value]));
@@ -144,7 +165,8 @@ enum PendingOrdersScript {
               if (current.family === 'NPG' && row.status !== status) fail('接口返回非指定状态');
               if (current.family === 'TC' && row.merchantCode && row.merchantCode !== current.merchant) fail('接口返回其他商户订单');
               if (current.family === 'TC' && ['PAID', 'REJECT', 'REJECT_PAID', 'CANCELLED'].includes(row.status)) fail('待处理接口返回已结束订单');
-              orders.set(String(orderID), { id: String(orderID), status: label, rawStatus: String(row.status || status) });
+              orders.set(String(orderID), { id: String(orderID), status: label, rawStatus: String(row.status || status),
+                createdAt: creationTime(row), observedAt: Date.now() });
             }
             if (fetched >= Number(total)) { done = true; break; }
             if (!rows.length) fail('订单数量变化，请刷新核对');

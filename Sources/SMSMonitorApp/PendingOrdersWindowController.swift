@@ -11,10 +11,23 @@ struct PendingOrderRow {
   let family: String
   let startDate: String
   let endDate: String
+  var createdAt: Date? = nil
+  var observedAt: Date? = nil
   var reviewerName: String? = nil
   var allReviewers = false
   var isReviewQuery: Bool { reviewerName != nil || allReviewers }
   var usesNPGAudit: Bool { isReviewQuery || (family == "NPG" && status == "待审核") }
+}
+
+private final class PendingOrderTableRowView: NSTableRowView {
+  var overdue = false
+  override func drawBackground(in dirtyRect: NSRect) {
+    super.drawBackground(in: dirtyRect)
+    if overdue && !isSelected {
+      NSColor.systemRed.withAlphaComponent(0.10).setFill()
+      dirtyRect.fill()
+    }
+  }
 }
 
 final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
@@ -52,6 +65,8 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   private var active = 0
   private var generation = UUID()
   private var timer: Timer?
+  private var ageTimer: Timer?
+  private var confirmedPlatforms = Set<String>()
   private var queriedViews: [WKWebView] = []
   private var completed = 0
   private var succeeded = 0
@@ -117,9 +132,10 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     bar.orientation = .horizontal; bar.spacing = 8
     summary.font = .systemFont(ofSize: 12); summary.textColor = .secondaryLabelColor
     summary.lineBreakMode = .byTruncatingTail
-    for (id, title, width) in [("platform", "对应平台", 180.0), ("order", "订单号", 300.0), ("status", "订单状态 / 查询结果", 410.0)] {
+    for (id, title, width) in [("platform", "对应平台", 125.0), ("order", "订单号", 160.0),
+      ("created", "订单创建时间（北京时间）", 200.0), ("age", "等待时长", 175.0), ("status", "订单状态 / 查询结果", 240.0)] {
       let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); c.title = title
-      c.width = width; c.minWidth = 140; table.addTableColumn(c)
+      c.width = width; c.minWidth = id == "created" ? 195 : 110; table.addTableColumn(c)
     }
     table.dataSource = self; table.delegate = self; table.rowHeight = 30
     table.usesAlternatingRowBackgroundColors = true; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
@@ -143,6 +159,16 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
 
   static func verifyLayoutAndFiltering() -> Bool {
     let controller = PendingOrdersWindowController()
+    let now = Date()
+    let old = now.addingTimeInterval(-1200.001), boundary = now.addingTimeInterval(-1200)
+    guard PendingOrderTiming.isOverdue(createdAt: old, now: now, confirmed: true),
+      !PendingOrderTiming.isOverdue(createdAt: boundary, now: now, confirmed: true),
+      !PendingOrderTiming.isOverdue(createdAt: old, now: now, confirmed: false),
+      !PendingOrderTiming.isOverdue(createdAt: nil, now: now, confirmed: true),
+      !PendingOrderTiming.isOverdue(createdAt: now.addingTimeInterval(1), now: now, confirmed: true),
+      PendingOrderTiming.date(milliseconds: .nan) == nil,
+      PendingOrderTiming.formatter.string(from: Date(timeIntervalSince1970: 0)) == "1970-01-01 08:00:00"
+      else { return false }
     controller.rows = [PendingOrderRow(platformID: "fixture", platform: "Example TC", orderID: "100000000001",
       status: "待审核", contextID: "test", family: "TC", startDate: "2026-10-04", endDate: "2026-10-10")]
     controller.names = ["fixture": "Example TC", "unavailable": "NPG"]
@@ -157,8 +183,22 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     guard controller.displayed.count == 1, controller.displayed.first?.platform == "Example TC" else { return false }
     controller.search.stringValue = ""
     let fixture = controller.rows[0]
-    controller.rows = (0..<25).map { PendingOrderRow(platformID: fixture.platformID, platform: fixture.platform, orderID: String(10000 + $0), status: fixture.status, contextID: fixture.contextID, family: fixture.family, startDate: fixture.startDate, endDate: fixture.endDate) }
+    controller.rows = (0..<25).map { index -> PendingOrderRow in
+      let offset: TimeInterval = index == 3 ? 60 : (index == 0 ? -1800 : -300)
+      let createdAt: Date? = index == 2 ? nil : now.addingTimeInterval(offset)
+      return PendingOrderRow(platformID: fixture.platformID, platform: fixture.platform,
+        orderID: String(10000 + index), status: fixture.status, contextID: fixture.contextID,
+        family: fixture.family, startDate: fixture.startDate, endDate: fixture.endDate,
+        createdAt: createdAt, observedAt: now)
+    }
+    controller.confirmedPlatforms.insert(fixture.platformID)
     controller.render()
+    guard controller.isOverdue(controller.rows[0]), !controller.isOverdue(controller.rows[1]),
+      controller.summary.stringValue.contains("超时 1 条"),
+      controller.tableView(controller.table, rowViewForRow: 0) is PendingOrderTableRowView else { return false }
+    controller.confirmedPlatforms.removeAll(); controller.render()
+    guard !controller.isOverdue(controller.rows[0]), controller.summary.stringValue.contains("超时 0 条") else { return false }
+    controller.confirmedPlatforms.insert(fixture.platformID); controller.render()
     guard controller.displayed.count == 10, controller.pageCount == 3, !controller.previousPage.isEnabled, controller.nextPage.isEnabled else { return false }
     controller.nextClicked(); controller.nextClicked()
     guard controller.displayed.count == 5, controller.displayed[0].orderID == "10020", !controller.nextPage.isEnabled else { return false }
@@ -173,12 +213,18 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
       guard let data = bitmap.representation(using: .png, properties: [:]) else { return false }
       do { try data.write(to: URL(fileURLWithPath: path)) } catch { return false }
     }
-    return controller.table.tableColumns.count == 3
+    return controller.table.tableColumns.count == 5
   }
 
   func present() {
     if window?.isVisible != true { window?.center() }
     showWindow(nil); window?.makeKeyAndOrderFront(nil)
+    if ageTimer == nil {
+      ageTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        guard let self, self.window?.isVisible == true, !self.pendingNavigation else { return }
+        self.render()
+      }
+    }
     if !running { beginRefresh() }
   }
 
@@ -205,10 +251,12 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   func controlTextDidEndEditing(_ obj: Notification) { if obj.object as? NSTextField === intervalField { intervalEdited() } }
 
   func windowWillClose(_ notification: Notification) {
+    ageTimer?.invalidate(); ageTimer = nil
     timer?.invalidate(); timer = nil; cancel()
   }
 
   private func cancel() {
+    confirmedPlatforms.removeAll()
     timer?.invalidate(); timer = nil
     generation = UUID(); queue = []; active = 0; running = false
     for view in queriedViews { view.evaluateJavaScript("window.__smsPendingOrdersRun = null; window.__smsPendingOrdersAbort?.abort()", completionHandler: nil) }
@@ -260,10 +308,14 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
             guard let id = item["id"] as? String, let status = item["status"] as? String,
               let contextID = result["contextID"] as? String, let family = result["family"] as? String else { return nil }
             return PendingOrderRow(platformID: page.credentialID, platform: page.displayName, orderID: id,
-              status: status, contextID: contextID, family: family, startDate: first, endDate: last)
+              status: status, contextID: contextID, family: family, startDate: first, endDate: last,
+              createdAt: PendingOrderTiming.date(milliseconds: item["createdAt"] as? Double),
+              observedAt: PendingOrderTiming.date(milliseconds: item["observedAt"] as? Double))
           }
           self.rows += validRows
-          Logger(subsystem: "com.local.sms-success-monitor", category: "PendingOrders").notice("Pending orders for \(page.credentialID, privacy: .public): kind=\(kind, privacy: .public) count=\(validRows.count)")
+          if kind == "ok" || kind == "partial" { self.confirmedPlatforms.insert(page.credentialID) }
+          let timedCount = validRows.filter { $0.createdAt != nil }.count
+          Logger(subsystem: "com.local.sms-success-monitor", category: "PendingOrders").notice("Pending orders for \(page.credentialID, privacy: .public): kind=\(kind, privacy: .public) count=\(validRows.count) createdTimeCount=\(timedCount)")
           if kind == "ok" { self.succeeded += 1; self.statuses[page.credentialID] = validRows.isEmpty ? "无待处理订单" : "已获取 \(validRows.count) 条" }
           else { self.statuses[page.credentialID] = (kind == "partial" ? "部分结果：" : "未获取：") + (result["message"] as? String ?? "查询失败") }
         } else { self.statuses[page.credentialID] = "页面已替换或关闭，请刷新" }
@@ -289,6 +341,7 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   }
 
   private func render() {
+    let now = Date()
     let id = filterIDs.indices.contains(platformFilter.indexOfSelectedItem) ? filterIDs[platformFilter.indexOfSelectedItem] : ""
     let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     var all = views.selectedSegment == 0 ? rows : []
@@ -305,10 +358,23 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     previousPage.isEnabled = pageIndex > 0; nextPage.isEnabled = pageIndex + 1 < pageCount
     pageLabel.stringValue = "共 \(filtered.count) 条 · 第 \(pageIndex + 1) / \(pageCount) 页 · 每页 10 条"
     table.reloadData()
-    summary.stringValue = navigationMessage ?? "待处理 \(rows.count) 条 · 查询 \(completed)/\(total) 平台 · 成功 \(succeeded) · \(running ? "刷新中" : "查询完成")"
+    let overdue = rows.filter { isOverdue($0, now: now) }.count
+    let missing = rows.filter { $0.createdAt == nil }.count
+    summary.stringValue = navigationMessage ?? "待处理 \(rows.count) 条 · 超时 \(overdue) 条（>20 分钟） · 时间未获取 \(missing) 条 · 查询 \(completed)/\(total) 平台 · \(running ? "刷新中" : "查询完成")"
+    summary.textColor = overdue > 0 ? .systemRed : .secondaryLabelColor
+  }
+
+  private func isOverdue(_ row: PendingOrderRow, now: Date = Date()) -> Bool {
+    !row.orderID.isEmpty && PendingOrderTiming.isOverdue(createdAt: row.createdAt, now: now,
+      confirmed: confirmedPlatforms.contains(row.platformID))
   }
 
   func numberOfRows(in tableView: NSTableView) -> Int { displayed.count }
+  func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+    let view = PendingOrderTableRowView()
+    view.overdue = displayed.indices.contains(row) && isOverdue(displayed[row])
+    return view
+  }
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
     guard displayed.indices.contains(row) else { return nil }
     let item = displayed[row]
@@ -318,10 +384,21 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
       button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular); button.tag = row
       button.toolTip = "在 \(item.platform) 查询此订单"; return button
     }
-    let label = NSTextField(labelWithString: tableColumn?.identifier.rawValue == "platform" ? item.platform : tableColumn?.identifier.rawValue == "status" ? item.status : "--")
+    let column = tableColumn?.identifier.rawValue
+    let label = NSTextField(labelWithString: column == "platform" ? item.platform : column == "status" ? item.status : "--")
+    if !item.orderID.isEmpty {
+      if column == "created" { label.stringValue = item.createdAt.map(PendingOrderTiming.formatter.string(from:)) ?? "未获取" }
+      if column == "age" { label.stringValue = PendingOrderTiming.waitingText(createdAt: item.createdAt, now: Date(),
+        confirmed: confirmedPlatforms.contains(item.platformID)) }
+      if isOverdue(item) { label.textColor = .systemRed }
+      if column == "age" { label.font = .monospacedDigitSystemFont(ofSize: 12, weight: isOverdue(item) ? .semibold : .regular) }
+    }
     if tableColumn?.identifier.rawValue == "status", !item.orderID.isEmpty,
-      statuses[item.platformID] == "等待查询" || statuses[item.platformID] == "查询中" { label.stringValue += "（上次结果）" }
+      !confirmedPlatforms.contains(item.platformID) { label.stringValue += "（上次结果）" }
     label.lineBreakMode = .byTruncatingTail; label.toolTip = label.stringValue
+    if column == "age", let observedAt = item.observedAt {
+      label.toolTip = label.stringValue + "；最近查询：" + PendingOrderTiming.formatter.string(from: observedAt) + "（北京时间）"
+    }
     if item.orderID.isEmpty { label.textColor = .secondaryLabelColor }
     return label
   }

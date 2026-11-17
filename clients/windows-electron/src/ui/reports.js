@@ -1,4 +1,5 @@
 import {createIcons,Download,RefreshCw,Square,ChevronLeft,ChevronRight} from 'lucide';
+import {creationText,pendingTiming} from '../pending-order-timing.mjs';
 const $=selector=>document.querySelector(selector);
 const icons=()=>createIcons({icons:{Download,RefreshCw,Square,ChevronLeft,ChevronRight}});
 let state,tab='data',page=0,message='',working=false,navigation=0;
@@ -17,6 +18,9 @@ function button(text,target) {
 function render() {
   if(!state)return;
   const reviewers=state.kind==='reviewers',status=tab==='status';
+  const pending=!reviewers&&!status,now=Date.now();
+  $('#created-column').hidden=!pending;$('#age-column').hidden=!pending;
+  $('table').classList.toggle('pending',pending);
   $('#title').textContent=document.title=reviewers?'提现审核人员查询':'全平台待处理订单';
   $('#data-tab').textContent=reviewers?'审核人员':'订单';
   $('#data-tab').setAttribute('aria-selected',String(!status));$('#status-tab').setAttribute('aria-selected',String(status));
@@ -46,12 +50,23 @@ function render() {
       cells[1].textContent=(r.savedAt?new Date(r.savedAt).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})+' · ':'')+(r.busy?'查询中 · ':'')+r.message;
       cells[2].textContent=reviewers?(r.total===null?'--':number(r.total)):'--';
     } else if(reviewers) {cells[1].textContent=r.name;cells[2].append(button(number(r.count),{platformID,id:r.id}));}
-    else {cells[1].append(button(r.id,{platformID,id:r.id}));cells[2].textContent=r.status;}
+    else {
+      cells[1].append(button(r.id,{platformID,id:r.id}));
+      cells[2].textContent=r.status+(r.confirmed?'':'（上次结果）');
+      const created=document.createElement('td'),age=document.createElement('td'),timing=pendingTiming(r,now);
+      created.textContent=creationText(r.createdAt);age.textContent=timing.text;age.className='age';
+      age.title='最近查询：'+creationText(r.observedAt)+'（北京时间）';
+      cells.splice(2,0,created,age);
+      tr.classList.toggle('overdue',timing.overdue);
+    }
     tr.append(...cells);rows.push(tr);
   }
   $('#rows').replaceChildren(...rows);$('#empty').hidden=list.length>0;
   const acquired=state.platforms.filter(p=>p.savedAt).length;
   $('#summary').textContent=`${reviewers?'审核人员':'待处理订单'} ${number(state.rows.length)} ${reviewers?'位':'条'} · 已获取 ${acquired}/${state.platforms.length} 平台 · ${state.running?'查询中':state.message||'未获取'}`;
+  const overdue=reviewers?0:state.rows.filter(r=>pendingTiming(r,now).overdue).length;
+  if(!reviewers)$('#summary').textContent+=' · 超时 '+overdue+' 条（>20 分钟） · 时间未获取 '+state.rows.filter(r=>creationText(r.createdAt)==='未获取').length+' 条';
+  $('#summary').classList.toggle('alert',overdue>0);
   $('#message').textContent=message;
   $('#pagination').textContent=`共 ${number(list.length)} 条 · 第 ${page+1} / ${pages} 页 · 每页 10 条`;
   $('#previous').disabled=page===0;$('#next').disabled=page>=pages-1;
@@ -71,4 +86,5 @@ $('#fetch').onclick=async()=>{
   catch(e){message=e.message;}finally{working=false;render();}
 };
 window.reportApi.onChange(data=>{state=data;render();});
+setInterval(()=>{if(state?.kind==='pending'&&!document.hidden)render();},5000);
 window.reportApi.get().then(data=>{state=data;render();}).catch(e=>{$('#message').textContent=e.message;});

@@ -54,6 +54,28 @@ assert.equal(f.calls[1].body.query.invitedCountType, -1);
 assert.equal(f.calls[1].body.query.dtCreated.start, Date.parse('2026-10-03T16:00:00Z'));
 assert.equal(f.calls[1].body.query.dtCreated.finish, Date.parse('2026-10-10T15:59:59.999Z'));
 assert.equal(f.calls[1].options.headers.Auth, 'token');
+// The response field is created, not the dtCreated request filter or modified.
+for (const value of [1794888000000, '1794888000000', '2026-11-17T12:00:00+08:00']) {
+  f=fixture();f.respond=body=>({status:0,page:{totalElements:1,content:[
+    {id:'record-'+body.query.status,withdrawOrderId:'withdrawal',status:body.query.status,created:value,modified:1,dtCreated:2}
+  ]}});
+  result=await f.run();
+  assert(result.orders.every(r=>r.createdAt===1794888000000 && r.observedAt>0));
+}
+for(const family of ['NPG','TC']) for(const value of [null,undefined,true,0,-1,1794888000,'bad','2026-02-30 00:00:00','2026-11-17 24:00:00',{},[]]) {
+  f=fixture(family);f.respond=body=>family==='TC'
+    ?{success:true,totalPageCount:1,value:[{id:'time',merchantCode:'m',status:'NEW',requestTime:value,updatedAt:1794888000000}]}
+    :{status:0,page:{totalElements:1,content:[{id:'time-'+body.query.status,withdrawOrderId:'withdrawal',status:body.query.status,created:value,dtCreated:1794888000000}]}};
+  result=await f.run();assert.equal(result.kind,'ok');
+  assert(result.orders.every(r=>r.createdAt===null),'invalid time is unknown, never inferred from other fields');
+}
+for(const environment of ['S1','S3','S2','']) for(const value of ['2026-11-17 00:00:00','2026-11-17T12:00:00+08:00','2026-11-17T04:00:00Z']) {
+  f=fixture('TC');f.ss.setItem('environment',environment);
+  f.respond=()=>({success:true,totalPageCount:1,value:[{id:'time',merchantCode:'m',status:'NEW',requestTime:value}]});
+  result=await f.run();
+  const expected=value.includes('T')?1794888000000:Date.parse('2026-11-17T00:00:00'+(['S1','S3'].includes(environment)?'-04:00':'+08:00'));
+  assert.equal(result.orders[0].createdAt,expected,'TC server wall time must not use the computer timezone');
+}
 f = fixture('TC'); result = await f.run();
 assert.equal(result.kind, 'ok'); assert.equal(result.orders.length, 3);
 assert.deepEqual(f.calls.map(c => c.url.pathname.split('-').at(-1)), ['searchPendingApproval', 'searchPending2ndApproval', 'searchPendingPayment']);

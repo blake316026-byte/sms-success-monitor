@@ -73,7 +73,8 @@ export class WithdrawalReports {
       message: [s.message, this.writeError].filter(Boolean).join(' · '),
       platforms: [...s.rows.values()].map(r => ({id:r.id, name:r.name, message:r.message, total:r.total,
         savedAt:r.savedAt || null, cached:!!r.cached, busy:s.jobs.has(r.id)})),
-      rows: [...s.rows.values()].flatMap(r => (kind === 'pending' ? r.orders : r.people).map(item => ({...item, platformID:r.id, platform:r.name}))) };
+      rows: [...s.rows.values()].flatMap(r => (kind === 'pending' ? r.orders : r.people).map(item => ({...item, platformID:r.id, platform:r.name,
+        ...(kind === 'pending' ? {confirmed:r.pendingConfirmed===true&&!s.jobs.has(r.id)} : {})}))) };
   }
   async open(kind) {
     const s = this.states[kind];
@@ -142,6 +143,7 @@ export class WithdrawalReports {
   current(source) { return this.sources().some(s => s.id === source.id && scope(s) === scope(source)); }
   cancel(kind, id) {
     const s = this.states[kind];
+    if (kind === 'pending') for (const row of s.rows.values()) if (!id || row.id === id) row.pendingConfirmed=false;
     if (!id) {s.generation++;s.message='已停止获取，保留已有结果';for(const row of s.rows.values())row.waiting=false;}
     for (const [key, job] of s.jobs) if (!id || key === id) {
       job.cancelled = true;
@@ -169,6 +171,7 @@ export class WithdrawalReports {
     s.jobs.set(source.id, job);
     const valid = () => !job.cancelled && generation === s.generation && this.current(source);
     let row = s.rows.get(source.id);
+    if (kind === 'pending') row.pendingConfirmed=false;
     try {
       this.notify(kind);
       const p = await this.probe(source, s);
@@ -189,6 +192,7 @@ export class WithdrawalReports {
         message: result.kind === 'partial' ? '结果不完整：' + result.message : '已获取'});
       if (kind === 'pending') {
         row.orders = result.orders;
+        row.pendingConfirmed=true;
         if(result.kind==='ok'&&!row.orders.length)row.message='无待处理订单';
       }
       else {

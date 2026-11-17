@@ -26,4 +26,12 @@ This branch contains the public, reduced edition. The private/full working copy 
 - Release CI builds and checks Windows/Android from the candidate source. macOS is built locally and its packaged runtime and signature are verified before publication.
 - Never reuse an old full-edition seed or attach an older Windows/Android package.
 - Do not include local credentials, cookies, module overrides, query caches, screenshots, operational logs or internal validation notes in Git.
-- After all checks pass, tag the tested commit, upload the three packages and SHA256SUMS, then verify the published asset hashes and latest Release.
+- After all checks pass, tag the tested commit, upload the changed platform packages and SHA256SUMS, then verify the published asset hashes and latest Release. Pin unchanged platform downloads to their last release.
+
+## v0.3.86 Scope
+
+- Only pending-order creation time, elapsed time and visual overdue alerts change. No new payment, SMS channel, retention or AI configuration modules are included.
+- NPG creation time comes from `created`; TC uses `requestTime`. Numeric epoch milliseconds and explicit timestamp offsets are preserved. Naive TC timestamps use the backend environment timezone (S1/S3 UTC-4, otherwise UTC+8); ambiguous NPG strings remain unknown.
+- Display times in Asia/Shanghai. Alert only when the elapsed time is strictly greater than 20 minutes and the order is confirmed pending. Invalid/future/missing timestamps and unconfirmed previous results do not alert. Failed queries remove previous rows.
+- Native AppKit, WebKit, shared query fixtures, Windows host state tests and packaged Electron rendering cover the new fields, threshold, cancellation/stale results and layout. No production order is processed by these checks.
+- macOS and Windows versions become 0.3.86; application identities and data locations are unchanged. Android stays at 0.3.85 and its download link is pinned.
