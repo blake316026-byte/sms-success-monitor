@@ -7,6 +7,7 @@
 - [macOS（Apple Silicon / Intel）](https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-macOS-universal.zip)
 - [Windows x64](https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SMS-Success-Monitor-Windows-x64.zip)
 - [Android（保持 v0.3.85）](https://github.com/blake316026-byte/sms-success-monitor/releases/download/v0.3.85/SMS-Success-Monitor-Android.apk)
+- [macOS / Windows SHA-256 校验值](https://github.com/blake316026-byte/sms-success-monitor/releases/latest/download/SHA256SUMS.txt)
 
 ## 本次更新
 
