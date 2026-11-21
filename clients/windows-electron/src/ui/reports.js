@@ -1,7 +1,8 @@
-import {createIcons,Download,RefreshCw,Square,ChevronLeft,ChevronRight} from 'lucide';
+import {createIcons,Download,RefreshCw,Square,ChevronLeft,ChevronRight,BellRing,Save,X} from 'lucide';
+import './report-alert-ui.mjs';
 import {creationText,pendingTiming,minimumWaitMinutes,matchesMinimumWait} from '../pending-order-timing.mjs';
 const $=selector=>document.querySelector(selector);
-const icons=()=>createIcons({icons:{Download,RefreshCw,Square,ChevronLeft,ChevronRight}});
+const icons=()=>createIcons({icons:{Download,RefreshCw,Square,ChevronLeft,ChevronRight,BellRing,Save,X}});
 let state,tab='data',page=0,message='',working=false,navigation=0;
 const number=n=>n.toLocaleString('zh-CN');
 function button(text,target) {
@@ -18,6 +19,7 @@ function button(text,target) {
 function render() {
   if(!state)return;
   const reviewers=state.kind==='reviewers',status=tab==='status';
+  $('#alerts-open').hidden=reviewers;
   const pending=!reviewers&&!status,now=Date.now();
   $('#wait-filter').hidden=!pending;
   const minimumWait=minimumWaitMinutes($('#minimum-wait').value);

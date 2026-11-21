@@ -4,10 +4,12 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { windowsSigningPlan, verifyWindowsPackage } from './windows-signing.mjs';
 
+const signing = windowsSigningPlan();
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const clientRoot = path.resolve(projectRoot, '../..');
-const outputRoot = path.join(clientRoot, 'dist/windows');
+const outputRoot = path.join(clientRoot, 'dist', signing.outputDirectory);
 const packageOutput = path.join(projectRoot, '.package-output');
 const sharedRoot = path.resolve(projectRoot, '../shared');
 
@@ -24,16 +26,20 @@ const appPaths = await packager({
   overwrite: true,
   asar: true,
   prune: true,
+  windowsSign: signing.windowsSign,
   extraResource: [sharedRoot],
   ignore: [
     /^\/\.package-output($|\/)/,
     /^\/scripts($|\/)/,
     /^\/src\/ui($|\/)/,
+    /\.test\.mjs$/,
     /^\/package-lock\.json$/
   ]
 });
 
-const zipPath = path.join(outputRoot, 'SMS-Success-Monitor-Windows-x64.zip');
+const signatureReport = verifyWindowsPackage(appPaths[0], signing);
+await fsPromises.writeFile(path.join(appPaths[0], 'WINDOWS-SIGNATURE.json'), JSON.stringify(signatureReport, null, 2));
+const zipPath = path.join(outputRoot, 'SMS-Success-Monitor-Windows-x64' + signing.suffix + '.zip');
 await fsPromises.rm(zipPath, { force: true });
 await new Promise((resolve, reject) => {
   const output = fs.createWriteStream(zipPath);
@@ -42,6 +48,7 @@ await new Promise((resolve, reject) => {
   archive.on('error', reject);
   archive.pipe(output);
   archive.directory(appPaths[0], 'SMS Success Monitor');
+  archive.file(path.join(clientRoot, 'WINDOWS.md'), {name:'README-Windows.txt'});
   archive.finalize();
 });
 

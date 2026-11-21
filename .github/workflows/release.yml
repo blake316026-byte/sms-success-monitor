@@ -22,27 +22,34 @@ jobs:
       - run: npm ci --prefix clients/windows-electron
       - run: node scripts/check-public-edition.mjs
       - run: npm test --prefix clients/windows-electron
-      - run: npm run package:windows --prefix clients/windows-electron
+      - run: npm run package:windows --prefix clients/windows-electron -- --unsigned-release
       - name: Verify packaged Windows runtime
-        timeout-minutes: 3
+        timeout-minutes: 6
         shell: pwsh
         run: |
           $checkRoot = Join-Path $PWD "dist/windows-self-test"
           $resultPath = Join-Path $checkRoot "result.txt"
           Expand-Archive -Path "dist/windows/SMS-Success-Monitor-Windows-x64.zip" -DestinationPath $checkRoot -Force
+          ./clients/windows-electron/scripts/verify-unsigned-release.ps1 -AppDirectory (Join-Path $checkRoot 'SMS Success Monitor')
           $exePath = Join-Path $checkRoot "SMS Success Monitor/SMS Success Monitor.exe"
           $env:SMS_MONITOR_LOCAL_AUTOMATION_CHECK = "1"
           $env:SMS_MONITOR_LOCAL_AUTOMATION_RESULT = $resultPath
-          $process = Start-Process -FilePath $exePath -Wait -PassThru
-          if (Test-Path $resultPath) { Get-Content $resultPath }
-          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
-          if (-not (Test-Path $resultPath)) { throw "Missing runtime check result" }
+          foreach ($pass in 1..2) {
+            Remove-Item $resultPath -ErrorAction SilentlyContinue
+            $process = Start-Process -FilePath $exePath -PassThru
+            if (!$process.WaitForExit(180000)) { $process.Kill(); throw 'Runtime timed out' }
+            if (Test-Path $resultPath) { Get-Content $resultPath }
+            if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
+            if (-not (Test-Path $resultPath)) { throw "Missing runtime check result" }
+            if (!(Get-Content $resultPath -Raw).StartsWith('PASS:')) { throw "Runtime checks did not pass" }
+            Copy-Item $resultPath (Join-Path $checkRoot "result-$pass.txt")
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-runtime-checks
           path: |
-            dist/windows-self-test/result.txt
+            dist/windows-self-test/result*.txt
             dist/windows-self-test/reviewers-*.png
             dist/windows-self-test/pending-*.png
           if-no-files-found: ignore

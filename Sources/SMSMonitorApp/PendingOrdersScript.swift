@@ -1,4 +1,6 @@
 enum PendingOrdersScript {
+  static var alertQuery: String { query.replacingOccurrences(of: "__smsPendingOrders", with: "__smsPendingAlerts") }
+  static var alertValidate: String { validate.replacingOccurrences(of: "__smsPendingOrders", with: "__smsPendingAlerts") }
   static let context = #"""
     const read = (store, key) => { const v = store.getItem(key); try { return JSON.parse(v); } catch (_) { return v; } };
     const text = v => typeof v === 'string' ? v.trim() : '';

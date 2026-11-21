@@ -13,6 +13,8 @@ export function queryScripts() {
   const [route, search] = blocks('PendingOrderNavigationScript', 2);
   return {
     pending: context + pending, reviewers: context + reviewers,
+    alerts: (context + pending).replaceAll('__smsPendingOrders','__smsPendingAlerts'),
+    alertValidate: (context + validate).replaceAll('__smsPendingOrders','__smsPendingAlerts'),
     validate: context + validate, prepare: context + prepare,
     route: context + route, search: context + search,
     probe: context + `try { const c = capture(); return {kind:'ok', family:c.family,

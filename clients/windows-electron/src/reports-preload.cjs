@@ -1,6 +1,9 @@
 const {contextBridge, ipcRenderer} = require('electron');
 contextBridge.exposeInMainWorld('reportApi', {
   get: () => ipcRenderer.invoke('reports:get'),
+  alerts: () => ipcRenderer.invoke('reports:alerts'),
+  saveAlerts: input => ipcRenderer.invoke('reports:saveAlerts',input),
+  selectAlertPlatform: (id,selected) => ipcRenderer.invoke('reports:selectAlertPlatform',{id,selected}),
   configure: input => ipcRenderer.invoke('reports:configure', input),
   fetch: () => ipcRenderer.invoke('reports:fetch'),
   cancel: () => ipcRenderer.invoke('reports:cancel'),

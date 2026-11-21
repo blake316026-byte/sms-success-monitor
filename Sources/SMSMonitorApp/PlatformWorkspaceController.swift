@@ -648,8 +648,27 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private let defaultInitialURL: URL
   private let orderCredentialStore: LocalCredentialStore
+  private var orderAlerts: PendingOrderAlertService?
+  private var orderAlertWindow: PendingOrderAlertWindowController?
+  private func startOrderAlerts() {
+    guard orderAlerts == nil, ProcessInfo.processInfo.environment["SMS_MONITOR_LOCAL_AUTOMATION_CHECK"] != "1" else { return }
+    let service = PendingOrderAlertService(directory: orderCredentialStore.alertStorageDirectory)
+    service.sources = { [weak self] in self?.pageDescriptors() ?? [] }
+    service.expectedUsername = { [weak self] id in self?.orderCredentialStore.profile(for: id)?.username ?? "" }
+    service.allowsNPG = { page in
+      page.displayName.lowercased() != "okbet" && PlatformRoutingPolicy.shouldUseNPGMonitoring(configurationID: page.credentialID, targetURL: page.startURL)
+    }
+    orderAlerts = service; service.start()
+  }
+  private func showOrderAlerts() {
+    startOrderAlerts()
+    guard let service = orderAlerts else { return }
+    if orderAlertWindow == nil { orderAlertWindow = PendingOrderAlertWindowController(service: service) }
+    orderAlertWindow?.present()
+  }
   private lazy var ordersController: PendingOrdersWindowController = {
     let controller = PendingOrdersWindowController()
+    controller.showAlerts = { [weak self] in self?.showOrderAlerts() }
     controller.sources = { [weak self] in self?.pageDescriptors() ?? [] }
     controller.expectedUsername = { [weak self] id in self?.orderCredentialStore.profile(for: id)?.username ?? "" }
     controller.allowsNPG = { page in
@@ -727,6 +746,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     updateWindowSubtitle()
     updateToolbar()
     applySelectedPagePerformanceMode()
+    startOrderAlerts()
   }
 
   func show(moduleID: String? = nil) {
@@ -771,6 +791,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   func stopAll() {
+    orderAlerts?.stop()
     ordersController.close()
     for page in pages {
       page.webView.stopLoading()
@@ -1956,6 +1977,17 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     default:
       return nil
     }
+  }
+
+  func webView(
+    _ webView: WKWebView,
+    runOpenPanelWith parameters: WKOpenPanelParameters,
+    initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping ([URL]?) -> Void
+  ) {
+    PlatformFileUploadPanel.present(
+      for: webView, parameters: parameters, completionHandler: completionHandler
+    )
   }
 
   func webView(

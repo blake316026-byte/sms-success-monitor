@@ -1,10 +1,12 @@
 import {
   app,
+  dialog,
   BrowserWindow,
   ipcMain,
   Menu,
   Notification,
   safeStorage,
+  session,
   shell,
   WebContentsView
 } from 'electron';
@@ -16,6 +18,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WithdrawalReports, reportKinds } from './withdrawal-reports.mjs';
 import { WithdrawalNavigation } from './withdrawal-navigation.mjs';
+import { PendingOrderAlerts, validateAlerts } from './pending-order-alerts.mjs';
+import { openAlertStore, telegramSend } from './pending-order-alert-runtime.mjs';
 import {
   ALERT_THRESHOLD,
   calculateMetrics,
@@ -92,6 +96,7 @@ let workbenchModalOpen = false;
 const reportWindows = new Map();
 const reportSnapshots = new Map();
 let reports, withdrawalNavigation, reportTimer;
+let pendingAlerts, alertStore, alertTimer;
 
 function reportSources() {
   return [...pages.values()].map(page => {
@@ -114,6 +119,7 @@ function initializeReports() {
   const execute=async(source,key,args={})=>{
     const page=pages.get(source.id);
     if(!page||page.view.webContents!==source.wc||source.wc.isDestroyed())throw new Error('页面未就绪，就绪后自动补查');
+    if(key==='cancelAlerts')return source.wc.executeJavaScript('window.__smsPendingAlertsRun=null;window.__smsPendingAlertsAbort?.abort();void 0');
     if(key==='cancel')return source.wc.executeJavaScript(args.kind==='pending'
       ?'window.__smsPendingOrdersRun=null;window.__smsPendingOrdersAbort?.abort();void 0'
       :'window.__smsReviewerRun=null;window.__smsReviewerAbort?.abort();void 0');
@@ -134,8 +140,9 @@ function initializeReports() {
         source.wc.executeJavaScript(`(async (${names.join(',')})=>{${code}\n})(...${JSON.stringify(values)})`),
         new Promise((_,reject)=>{timer=setTimeout(()=>{
           if(['pending','reviewers'].includes(key))void execute(source,'cancel',{kind:key}).catch(()=>{});
+          if(key==='alerts')void execute(source,'cancelAlerts').catch(()=>{});
           reject(new Error('页面查询超时，请稍后重试'));
-        },['pending','reviewers'].includes(key)?195000:key==='search'?22000:6000);})
+        },['pending','reviewers','alerts'].includes(key)?195000:key==='search'?22000:6000);})
       ]);
     } finally {clearTimeout(timer);}
   };
@@ -160,6 +167,17 @@ function initializeReports() {
     show:id=>showWorkbench(id),selected:()=>selectedPageId,load:(source,url)=>source.wc.loadURL(url)});
   reportTimer=setInterval(()=>void reports.tick().catch(error=>console.warn('Report maintenance: '+error.message)),1000);
   reportTimer.unref();
+  if(!test) {
+    let loadError;
+    try {
+      if(!app.requestSingleInstanceLock())throw new Error('另一个客户端正在运行');
+      alertStore=openAlertStore(app.getPath('userData'),safeStorage);
+    } catch { loadError=true; }
+    pendingAlerts=new PendingOrderAlerts({sources:reportSources,execute,
+      load:()=>{if(loadError)throw new Error('无法取得报警存储');return alertStore.load();},
+      save:data=>alertStore.save(data),send:telegramSend});
+    alertTimer=setInterval(()=>pendingAlerts.tick(),1000);alertTimer.unref();
+  }
 }
 
 function showReport(kind) {
@@ -313,6 +331,22 @@ async function performPackagedLocalAutomationCheck() {
   const encrypted = safeStorage.encryptString('local-only');
   if (safeStorage.decryptString(encrypted) !== 'local-only') {
     throw new Error('Windows DPAPI safeStorage round trip failed');
+  }
+  if (!modules.every(module => new URL(module.url).hostname.endsWith('.example.invalid'))) {
+    throw new Error('Unexpected non-placeholder platform in public package');
+  }
+  const fixtureDirectory = path.join(app.getPath('userData'), 'release-check');
+  const marker = path.join(fixtureDirectory, 'credential.encrypted');
+  const persisted = session.fromPartition('persist:release-check');
+  await fsPromises.mkdir(fixtureDirectory, {recursive:true});
+  if (fs.existsSync(marker)) {
+    if (safeStorage.decryptString(await fsPromises.readFile(marker)) !== 'restart-fixture') throw new Error('Credential did not survive restart');
+    const cookies = await persisted.cookies.get({url:'https://fixture.invalid'});
+    if (!cookies.some(cookie => cookie.name === 'release-check' && cookie.value === 'preserved')) throw new Error('Cookie did not survive restart');
+  } else {
+    await fsPromises.writeFile(marker, safeStorage.encryptString('restart-fixture'));
+    await persisted.cookies.set({url:'https://fixture.invalid', name:'release-check', value:'preserved', expirationDate:Date.now()/1000+86400, secure:true});
+    await persisted.cookies.flushStore();
   }
   if (
     nextWorkbenchZoomFactor(1, 'in') !== 1.1
@@ -1710,6 +1744,36 @@ function registerIPC() {
     return showReport(kind);
   });
   ipcMain.handle('reports:get',event=>reports.snapshot(reportSender(event)));
+  ipcMain.handle('reports:alerts',event=>{
+    if(reportSender(event)!=='pending'||!pendingAlerts)throw new Error('无权访问报警设置');
+    return pendingAlerts.snapshot();
+  });
+  ipcMain.handle('reports:saveAlerts',async(event,input)=>{
+    try {
+      if(reportSender(event)!=='pending'||!pendingAlerts)throw new Error('无权访问报警设置');
+      if(!input||typeof input!=='object')throw new Error('报警设置格式错误');
+      const previous=pendingAlerts.data.settings;
+      const next={enabled:input.enabled,minutes:input.minutes,lookbackDays:input.lookbackDays,
+        chatID:String(input.chatID||'').trim(),token:typeof input.token==='string'&&input.token.trim()?input.token.trim():previous.token,
+        selectedPlatformIDs:previous.selectedPlatformIDs};
+      validateAlerts(next);
+      if(next.enabled&&JSON.stringify(next)!==JSON.stringify(previous)) {
+        const response=await dialog.showMessageBox(reportWindows.get('pending'),{type:'warning',title:'启用真实群报警？',
+          message:'保存后会向该群发送超时提现订单。',
+          detail:'请只在一台电脑、一个客户端中启用，不同客户端不共享提醒记录。关闭订单窗口不停止报警。发送结果不明当天不重发，次日仍未处理可再次提醒。',
+          buttons:['取消','启用并保存'],defaultId:0,cancelId:0});
+        if(response.response!==1)return {ok:false,message:'未保存'};
+      }
+      reportSender(event);
+      return pendingAlerts.configure(next);
+    } catch(e){return {ok:false,message:e.message};}
+  });
+  ipcMain.handle('reports:selectAlertPlatform',(event,input)=>{
+    try {
+      if(reportSender(event)!=='pending'||!pendingAlerts)throw new Error('无权访问报警设置');
+      return pendingAlerts.selectPlatform(input?.id,input?.selected);
+    } catch(e){return {ok:false,message:e.message};}
+  });
   ipcMain.handle('reports:configure',async(event,input)=>{
     try{return await reports.configure(reportSender(event),input);}catch(e){return {ok:false,message:e.message};}
   });
@@ -2003,7 +2067,7 @@ app.whenReady().then(async () => {
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
-    let message = 'PASS: packaged Windows DPAPI, OCR, TOTP, workbench, NPG/TC withdrawal queries, repeated navigation, pagination, cache and totals checks passed';
+    let message = 'PASS: packaged Windows placeholder-only seed, DPAPI and Cookie restart, OCR, TOTP, workbench, NPG/TC withdrawal queries, repeated navigation, pagination, cache and totals checks passed';
     try {
       await runPackagedLocalAutomationCheck();
     } catch (error) {
@@ -2037,10 +2101,14 @@ app.whenReady().then(async () => {
   }
   for (const page of await loadCustomPages()) createRemotePage(page);
   createWorkbenchWindow();
+  initializeReports();
 
 });
 
 app.on('before-quit', () => {
+  clearInterval(alertTimer);
+  pendingAlerts?.stop();
+  alertStore?.close();
   quitting = true;
   clearInterval(reportTimer);
   reports?.dispose();
