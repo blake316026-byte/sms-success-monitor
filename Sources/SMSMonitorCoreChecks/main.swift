@@ -216,17 +216,17 @@ check(
 )
 check(
   PlatformRoutingPolicy.shouldUseNPGMonitoring(
-    configurationID: "custom-pisoking",
-    targetURL: URL(string: "https://c2-gyk2yh.npgqwe.com/login")!
+    configurationID: "custom-npgqwe",
+    targetURL: URL(string: "https://fixture.npgqwe.com/login")!
   ),
-  "monitors the verified PisoKing host"
+  "routes NPG vendor domains without a private site allowlist"
 )
 check(
   !PlatformRoutingPolicy.shouldUseNPGMonitoring(
-    configurationID: "custom-unverified-npgqwe",
-    targetURL: URL(string: "https://other.npgqwe.com/login")!
+    configurationID: "custom-spoofed-npgqwe",
+    targetURL: URL(string: "https://npgqwe.com.example.invalid/login")!
   ),
-  "keeps other npgqwe hosts in browser-only mode"
+  "rejects lookalike NPG domain suffixes"
 )
 check(
   !PlatformRoutingPolicy.shouldUseNPGMonitoring(
