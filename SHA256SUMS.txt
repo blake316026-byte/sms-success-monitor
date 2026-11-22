@@ -1,0 +1,2 @@
+9389cd7938b2a59d9b252c320020613d95860f3a2b8e0e6d7f78174e41e72704  SMS-Success-Monitor-macOS-universal.zip
+1dc28c5771e0a4b462298c9eb0e142f8cbbaf46a0f167943a8710fac1365ea88  SMS-Success-Monitor-Windows-x64.zip
