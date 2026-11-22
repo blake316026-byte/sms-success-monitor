@@ -367,7 +367,7 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
           self.rows += validRows
           if kind == "ok" || kind == "partial" { self.confirmedPlatforms.insert(page.credentialID) }
           let timedCount = validRows.filter { $0.createdAt != nil }.count
-          Logger(subsystem: "com.local.sms-success-monitor", category: "PendingOrders").notice("Pending orders for \(page.credentialID, privacy: .public): kind=\(kind, privacy: .public) count=\(validRows.count) createdTimeCount=\(timedCount)")
+          Logger(subsystem: "com.local.sms-success-monitor.public", category: "PendingOrders").notice("Pending orders for \(page.credentialID, privacy: .public): kind=\(kind, privacy: .public) count=\(validRows.count) createdTimeCount=\(timedCount)")
           if kind == "ok" { self.succeeded += 1; self.statuses[page.credentialID] = validRows.isEmpty ? "无待处理订单" : "已获取 \(validRows.count) 条" }
           else { self.statuses[page.credentialID] = (kind == "partial" ? "部分结果：" : "未获取：") + (result["message"] as? String ?? "查询失败") }
         } else { self.statuses[page.credentialID] = "页面已替换或关闭，请刷新" }

@@ -13,6 +13,7 @@ await fs.mkdir(outputDirectory, { recursive: true });
 await build({
   entryPoints: [
     path.join(root, 'src/ui/workbench.js'),
+    path.join(root, 'src/ui/detached.js'),
     path.join(root, 'src/ui/reports.js')
   ],
   bundle: true,
@@ -24,7 +25,7 @@ await build({
   sourcemap: false
 });
 
-for (const file of ['workbench.html', 'styles.css', 'reports.html', 'reports.css']) {
+for (const file of ['workbench.html', 'styles.css', 'reports.html', 'reports.css', 'detached.html', 'detached.css']) {
   await fs.copyFile(path.join(root, 'src/ui', file), path.join(outputDirectory, file));
 }
 await fs.writeFile(path.join(outputDirectory, 'query-scripts.json'), JSON.stringify(queryScripts()));

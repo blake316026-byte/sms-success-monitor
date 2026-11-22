@@ -34,6 +34,8 @@ jobs:
           $exePath = Join-Path $checkRoot "SMS Success Monitor/SMS Success Monitor.exe"
           $env:SMS_MONITOR_LOCAL_AUTOMATION_CHECK = "1"
           $env:SMS_MONITOR_LOCAL_AUTOMATION_RESULT = $resultPath
+          $env:SMS_DISTRIBUTION_TEST_DIR = Join-Path $checkRoot 'isolated-profile'
+          New-Item -ItemType Directory -Force $env:SMS_DISTRIBUTION_TEST_DIR | Out-Null
           foreach ($pass in 1..2) {
             Remove-Item $resultPath -ErrorAction SilentlyContinue
             $process = Start-Process -FilePath $exePath -PassThru
@@ -42,6 +44,7 @@ jobs:
             if ($process.ExitCode -ne 0) { throw "Runtime exit code $($process.ExitCode)" }
             if (-not (Test-Path $resultPath)) { throw "Missing runtime check result" }
             if (!(Get-Content $resultPath -Raw).StartsWith('PASS:')) { throw "Runtime checks did not pass" }
+            if (!(Get-Content $resultPath -Raw).Contains('memory compaction, detached platform tabs, periodic GA')) { throw 'Missing lifecycle checks' }
             Copy-Item $resultPath (Join-Path $checkRoot "result-$pass.txt")
           }
       - uses: actions/upload-artifact@v4
@@ -52,6 +55,7 @@ jobs:
             dist/windows-self-test/result*.txt
             dist/windows-self-test/reviewers-*.png
             dist/windows-self-test/pending-*.png
+            dist/windows-self-test/isolated-profile/detached-*.png
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:

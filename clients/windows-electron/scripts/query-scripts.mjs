@@ -11,7 +11,13 @@ export function queryScripts() {
   const [context, pending, validate] = blocks('PendingOrdersScript', 3);
   const [reviewers, prepare] = blocks('WithdrawalReviewersScript', 2);
   const [route, search] = blocks('PendingOrderNavigationScript', 2);
+  const [memoryActivity,memoryContext,memoryGuard,memoryProbe] = blocks('TianchengMemoryScript', 4);
+  const [moveCapture,moveRestore,moveDiscard] = blocks('PlatformPagePresentationScript', 3);
   return {
+    moveCapture,moveRestore,moveDiscard,
+    memoryActivity,
+    memorySnapshot: context + `if(!await (async()=>{${memoryContext}\n${memoryGuard}\nreturn true;})())return null; const c=capture(); return {family:c.family,identity:JSON.stringify([c.origin,c.family,c.username,c.country,c.merchant])};`,
+    memoryProbe: memoryContext + memoryProbe,
     pending: context + pending, reviewers: context + reviewers,
     alerts: (context + pending).replaceAll('__smsPendingOrders','__smsPendingAlerts'),
     alertValidate: (context + validate).replaceAll('__smsPendingOrders','__smsPendingAlerts'),

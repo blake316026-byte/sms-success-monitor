@@ -49,12 +49,18 @@ import {
   normalizePersistentHighlightSettings
 } from './persistent-highlight-settings.mjs';
 
+import {PlatformMemory} from './platform-memory.mjs';
+import {DetachedPlatforms} from './detached-platforms.mjs';
+import {nativePlatformCheck} from './native-platform-check.mjs';
+import {TianchengAuthentication, mayMaintainAuthentication, withDeadline, currentTotpExpression} from './background-authentication.mjs';
+
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.resolve(currentDirectory, '..');
 const sharedRoot = app.isPackaged
   ? path.join(process.resourcesPath, 'shared')
   : path.resolve(clientRoot, '../shared');
 app.setPath('userData', path.join(app.getPath('appData'), 'SMS Platform Workbench'));
+if(process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK==='1'&&process.env.SMS_DISTRIBUTION_TEST_DIR)app.setPath('userData',process.env.SMS_DISTRIBUTION_TEST_DIR);
 const modules = JSON.parse(fs.readFileSync(path.join(sharedRoot, 'modules.json'), 'utf8'));
 const loginAutomationSource = fs.readFileSync(
   path.join(sharedRoot, 'auto-login/login-page.js'),
@@ -64,6 +70,9 @@ const persistentHighlightSource = fs.readFileSync(
   path.join(sharedRoot, 'auto-login/persistent-highlight.js'),
   'utf8'
 );
+const pageScripts = JSON.parse(fs.readFileSync(path.join(clientRoot,'build/query-scripts.json'),'utf8'));
+const tianchengLoginSource = fs.readFileSync(path.join(sharedRoot,'auto-login/tiancheng-login.js'),'utf8');
+const tianchengSessionSource = fs.readFileSync(path.join(sharedRoot,'auto-login/tiancheng-session.js'),'utf8');
 let shellHeight = 112;
 const autoLoginCooldownMs = 5 * 60_000;
 const financialRefreshIntervalMs = 20_000;
@@ -93,6 +102,30 @@ let localAutomationError;
 let scanTimer;
 let financeTimer;
 let workbenchModalOpen = false;
+let authenticationTimer;
+const tianchengAuthentications=new Map();
+let memory,detached,memoryTimer;
+
+function pageBusy(id){
+  const s=moduleStates.get(id),a=tianchengAuthentications.get(id);
+  return Boolean(s?.scanning||s?.financeRefreshing||s?.authenticationChecking||s?.autoLoginInProgress||a?.busy||a?.stage);
+}
+function initializePlatformLifecycle(){
+  memory=new PlatformMemory({pages,scripts:pageScripts,profile:profileFor,family:id=>moduleStates.get(id)?.loginFamily,
+    active:id=>id===selectedPageId||detached?.active(id),busy:pageBusy,changed:broadcastSnapshot,
+    canSuspend:id=>{const s=moduleStates.get(id),a=tianchengAuthentications.get(id);return Boolean(s&&!s.manualAuthenticationRequired
+      &&!s.autoLoginStage&&s.status!=='auth'&&(s.loginFamily!=='TC'||(a&&!a.stopped&&!a.paused&&!a.busy&&!a.stage)));}});
+  detached=new DetachedPlatforms({pages,mainWindow:()=>workbenchWindow,memory,busy:pageBusy,scripts:pageScripts,directory:currentDirectory,
+    metadata:()=>({country:''}),changed:broadcastSnapshot,
+    removeMain:id=>{const page=pages.get(id);if(attachedView===page?.view){workbenchWindow.contentView.removeChildView(attachedView);attachedView=null;}
+      if(selectedPageId===id)selectedPageId=[...pages.keys()].find(key=>key!==id&&!detached.windows.has(key))||null;attachSelectedView();},
+    returned:id=>{selectedPageId=id;attachSelectedView();workbenchWindow.show();workbenchWindow.focus();}});
+  detached.install();
+  ipcMain.on('platform:activity',event=>{const page=[...pages.values()].find(p=>p.view.webContents===event.sender);if(page)memory.touch(page.id);});
+  memoryTimer=setInterval(()=>{for(const id of pages.keys())void memory.tick(id).catch(()=>{});},10000);
+}
+
+
 const reportWindows = new Map();
 const reportSnapshots = new Map();
 let reports, withdrawalNavigation, reportTimer;
@@ -116,7 +149,7 @@ function initializeReports() {
   const scripts=JSON.parse(fs.readFileSync(path.join(clientRoot,'build/query-scripts.json'),'utf8'));
   const cachePath=path.join(app.getPath('userData'),'withdrawal-reviewers-v1.encrypted');
   const test=process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK==='1';
-  const execute=async(source,key,args={})=>{
+  const executeRaw=async(source,key,args={})=>{
     const page=pages.get(source.id);
     if(!page||page.view.webContents!==source.wc||source.wc.isDestroyed())throw new Error('页面未就绪，就绪后自动补查');
     if(key==='cancelAlerts')return source.wc.executeJavaScript('window.__smsPendingAlertsRun=null;window.__smsPendingAlertsAbort?.abort();void 0');
@@ -146,6 +179,7 @@ function initializeReports() {
       ]);
     } finally {clearTimeout(timer);}
   };
+  const execute=(source,...args)=>memory?memory.withLease(source.id,()=>executeRaw(source,...args)):executeRaw(source,...args);
   reports=new WithdrawalReports({sources:reportSources,execute,scripts,
     load:()=>test?{}:JSON.parse(safeStorage.decryptString(fs.readFileSync(cachePath))),
     save:data=>{
@@ -636,7 +670,52 @@ async function verifyPendingOrderWindow(window, id) {
   console.log('PASS: pending order times, minimum-wait filter, overdue rows, stale suppression, age timer and 1050/640px layout');
 }
 
+async function generateCurrentTotp(secret, offsetMs = 0) {
+  if (!localAutomationReady || !localAutomationWindow || localAutomationWindow.isDestroyed()) {
+    throw new Error('本地自动登录组件尚未就绪');
+  }
+  await localAutomationReady;
+  if (localAutomationError) throw localAutomationError;
+  return withDeadline(() => localAutomationWindow.webContents.executeJavaScript(currentTotpExpression(secret, offsetMs)));
+}
+
+async function maintainAuthentication(id) {
+  const page = pages.get(id), state = moduleStates.get(id);
+  if (!page || !state || quitting || page.view.webContents.isDestroyed()) return false;
+  if(memory?.transitioning(id)||memory?.inUse(id))return true;
+  if(memory?.compacted(id)){await memory.tick(id);return true;}
+  const wc = page.view.webContents;
+  if (!mayMaintainAuthentication({profile: profileFor(id), blocked: state.manualAuthenticationRequired,
+    loading: wc.isLoadingMainFrame(), configuredURL: page.url, currentURL: wc.getURL()})) return state.loginFamily === 'TC';
+  if (state.authenticationChecking || state.autoLoginInProgress) return state.loginFamily === 'TC';
+  state.authenticationChecking = true;
+  const profile = profileFor(id);
+  const valid = () => pages.get(id) === page && moduleStates.get(id) === state && !wc.isDestroyed()
+    && !quitting && !memory?.transitioning(id) && !memory?.inUse(id) && mayMaintainAuthentication({profile: profileFor(id), blocked: state.manualAuthenticationRequired,
+      loading: wc.isLoadingMainFrame(), configuredURL: page.url, currentURL: wc.getURL()});
+  const call = (action, args) => wc.executeJavaScript(`(async()=>{${tianchengLoginSource}\nreturn await globalThis.smsTianchengLogin[${JSON.stringify(action)}](${JSON.stringify(args)});})()`);
+  try {
+    const detected = state.loginFamily === 'TC' || await withDeadline(() => call('detect'));
+    if (!valid() || profileFor(id) !== profile) return false;
+    if (detected) {
+      state.loginFamily = 'TC';
+      if (!tianchengAuthentications.has(id)) {
+        const sessionCall = (action, args) => wc.executeJavaScript(`(async()=>{${tianchengLoginSource}\n${tianchengSessionSource}\nreturn await globalThis.smsTianchengSession[${JSON.stringify(action)}](${JSON.stringify(args)});})()`);
+        tianchengAuthentications.set(id, new TianchengAuthentication({call, sessionCall, profile: () => profileFor(id), valid,
+          generateCode: generateCurrentTotp, changed: (status, message) => updateModule(id, {status, message})}));
+      }
+      await tianchengAuthentications.get(id).tick();
+      return true;
+    }
+    if (isAuthenticationURL(wc.getURL())) await attemptAutoLogin(id, wc.getURL());
+  } catch {
+    // A failed read never triggers a credential submission or navigation replay.
+  } finally { state.authenticationChecking = false; }
+  return false;
+}
+
 async function runPackagedLocalAutomationCheck() {
+  await nativePlatformCheck({scripts:pageScripts,directory:currentDirectory,loginSource:tianchengLoginSource,sessionSource:tianchengSessionSource});
   let timeout;
   try {
     await Promise.race([
@@ -913,6 +992,8 @@ function createRemotePage(page) {
   const view = new WebContentsView({
     webPreferences: {
       partition: `persist:sms-monitor-${page.id}`,
+      preload:path.join(currentDirectory,'platform-preload.cjs'),
+      backgroundThrottling: false,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -931,7 +1012,8 @@ function createRemotePage(page) {
   view.webContents.on('did-finish-load', () => {
     applyPageZoom({ id: page.id, view });
     void applyPersistentHighlights({ id: page.id, view });
-    handlePageFinished(page.id);
+    if(memory?.compacted(page.id)||memory?.transitioning(page.id))return;
+    void handlePageFinished(page.id);
     if (moduleStates.get(page.id)?.financeEnabled) {
       setTimeout(() => refreshFinancialModule(page.id), 900);
     }
@@ -961,7 +1043,9 @@ function createRemotePage(page) {
       nextScanAt: Date.now() + SCAN_INTERVAL_MS
     });
     setTimeout(() => {
-      if (!view.webContents.isDestroyed()) view.webContents.reload();
+      if (!view.webContents.isDestroyed()&&!memory?.inUse(page.id)) {
+        if(memory?.compacted(page.id))void memory.restore(page.id);else view.webContents.reload();
+      }
     }, 500);
   });
   view.webContents.on('did-fail-load', (_event, code, description, validatedURL, isMainFrame) => {
@@ -970,6 +1054,7 @@ function createRemotePage(page) {
     if (!recovering && !validatedURL) view.webContents.loadURL(page.url);
   });
   pages.set(page.id, { ...page, view });
+  memory?.attach(pages.get(page.id));
   view.webContents.loadURL(page.url);
   return view;
 }
@@ -1006,6 +1091,7 @@ function configureDownloads(targetSession) {
 }
 
 async function handlePageFinished(id) {
+  if(await maintainAuthentication(id))return;
   const page = pages.get(id);
   if (!page) return;
   const state = moduleStates.get(id);
@@ -1334,7 +1420,7 @@ async function attemptAutoLogin(id, currentURL) {
         await new Promise((resolve) => setTimeout(resolve, 6500));
         if (!state.autoLoginInProgress) return;
       }
-      const code = await callLocalAutomation('generateTotp', secret, Date.now() + offsetMs);
+      const code = await generateCurrentTotp(secret, offsetMs);
       const submitted = await runLoginPageAction(
         page,
         `globalThis.smsLoginAutomation.submitTotp(${JSON.stringify({ code })})`
@@ -1490,6 +1576,7 @@ function pageSnapshot(page) {
   const state = moduleStates.get(page.id);
   const history = page.view.webContents.navigationHistory;
   return {
+    ...detached?.info(page.id),
     id: page.id,
     name: page.name,
     url: page.url,
@@ -1516,6 +1603,7 @@ function buildSnapshot() {
 }
 
 function broadcastSnapshot() {
+  detached?.notify();
   const snapshot = buildSnapshot();
   for (const window of [workbenchWindow]) {
     if (window && !window.isDestroyed()) {
@@ -1529,9 +1617,13 @@ function maybeNotify() {}
 function attachSelectedView() {
   if (!workbenchWindow || workbenchWindow.isDestroyed()) return;
   if (workbenchModalOpen) return;
-  const selected = pages.get(selectedPageId) || pages.values().next().value;
-  if (!selected) return;
+  const selected = pages.get(selectedPageId) || [...pages.values()].find(p=>!detached?.windows.has(p.id));
+  if (!selected || detached?.windows.has(selected.id)) {
+    if(attachedView){workbenchWindow.contentView.removeChildView(attachedView);attachedView=null;}
+    broadcastSnapshot();return;
+  }
   selectedPageId = selected.id;
+  if(memory?.compacted(selected.id))void memory.restore(selected.id);
   if (attachedView && attachedView !== selected.view) {
     workbenchWindow.contentView.removeChildView(attachedView);
   }
@@ -1663,6 +1755,7 @@ function showWorkbenchFind() {
 }
 
 function showWorkbench(id) {
+  if(id&&detached?.focus(id))return;
   if (id && pages.has(id)) selectedPageId = id;
   attachSelectedView();
   workbenchWindow.show();
@@ -1700,6 +1793,9 @@ function credentialSummary(id) {
 }
 
 function restartAutoLoginFor(id) {
+  const tc=tianchengAuthentications.get(id);
+  if(tc)void tc.reset().then(()=>maintainAuthentication(id));
+  else void maintainAuthentication(id);
   const state = moduleStates.get(id);
   const page = pages.get(id);
   if (!state || !page) return;
@@ -1794,6 +1890,7 @@ function registerIPC() {
   ipcMain.handle('snapshot:get', () => buildSnapshot());
   ipcMain.handle('page:select', (_event, id) => {
     if (!pages.has(id)) return false;
+    if(detached?.focus(id))return true;
     pages.get(selectedPageId)?.view.webContents.stopFindInPage('clearSelection');
     selectedPageId = id;
     attachSelectedView();
@@ -1944,6 +2041,8 @@ function registerIPC() {
     return { ok: true };
   });
   ipcMain.handle('page:close', async (_event, id) => {
+    if(detached?.windows.has(id))return {ok:await detached.returnPage(id)};
+    if(memory?.inUse(id)||memory?.transitioning(id)||detached?.moving.has(id))return {ok:false,message:'平台任务进行中，未删除平台'};
     const page = pages.get(id);
     if (!page) return { ok: false, message: '所选平台已经不存在' };
     if (page.monitored) {
@@ -1962,6 +2061,7 @@ function registerIPC() {
     const state = moduleStates.get(id);
     if (state?.autoLoginTimer) clearTimeout(state.autoLoginTimer);
     moduleStates.delete(id);
+    tianchengAuthentications.get(id)?.stop();tianchengAuthentications.delete(id);
     pages.delete(id);
     await page.view.webContents.session.clearStorageData();
     page.view.webContents.close();
@@ -2067,7 +2167,7 @@ app.whenReady().then(async () => {
   if (process.env.SMS_MONITOR_LOCAL_AUTOMATION_CHECK === '1') {
     const resultPath = process.env.SMS_MONITOR_LOCAL_AUTOMATION_RESULT || '';
     let exitCode = 0;
-    let message = 'PASS: packaged Windows placeholder-only seed, DPAPI and Cookie restart, OCR, TOTP, workbench, NPG/TC withdrawal queries, repeated navigation, pagination, cache and totals checks passed';
+    let message = 'PASS: packaged Windows placeholder-only seed, DPAPI and Cookie restart, OCR, TOTP, workbench, NPG/TC withdrawal queries, repeated navigation, pagination, cache, memory compaction, detached platform tabs, periodic GA and totals checks passed';
     try {
       await runPackagedLocalAutomationCheck();
     } catch (error) {
@@ -2093,6 +2193,7 @@ app.whenReady().then(async () => {
     console.error(`Local automation runtime failed to start: ${error.message}`);
   }
   createApplicationMenu();
+  initializePlatformLifecycle();
   registerIPC();
   for (const module of modules) {
     if (!disabledModuleIds.has(module.id)) {
@@ -2102,10 +2203,12 @@ app.whenReady().then(async () => {
   for (const page of await loadCustomPages()) createRemotePage(page);
   createWorkbenchWindow();
   initializeReports();
-
+  authenticationTimer = setInterval(()=>{for(const id of pages.keys())void maintainAuthentication(id);},5000);
 });
 
 app.on('before-quit', () => {
+  clearInterval(memoryTimer);detached?.dispose();
+  clearInterval(authenticationTimer);for(const a of tianchengAuthentications.values())a.stop();
   clearInterval(alertTimer);
   pendingAlerts?.stop();
   alertStore?.close();

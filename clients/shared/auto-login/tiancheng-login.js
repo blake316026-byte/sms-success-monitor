@@ -16,8 +16,12 @@
       if (event.isTrusted && event.target?.closest('.admin-login input, .admin-login button')) pause();
     }, true);
   }
-  const detect = () => Boolean(root()) || [...document.querySelectorAll('script:not([src])')]
-    .some((script) => (script.textContent || '').includes('/tac/api/theme_domain/theme'));
+  const detect = () => Boolean(root())
+    // Newer TAC builds move the theme request into an external module.
+    || (typeof globalThis.__tacLoader?.showError === 'function'
+      && typeof globalThis.__tacLoader?.waitForThemeRetry === 'function')
+    || [...document.querySelectorAll('script:not([src])')]
+      .some((script) => (script.textContent || '').includes('/tac/api/theme_domain/theme'));
   const frame = () => new Promise((resolve) => {
     requestAnimationFrame(resolve);
     setTimeout(resolve, 100);
@@ -54,21 +58,23 @@
   const submitPassword = async ({ username, password }) => {
     if (snapshot().kind !== 'password' || submitted) return { submitted: false };
     const toggle = root().querySelector('.admin-login-footer button[role="switch"]');
-    if (!visible(toggle)) return { submitted: false };
+    if (!visible(toggle)) return { submitted: false, retryable: true };
     if (toggle.getAttribute('aria-checked') === 'false') {
       toggle.click();
       await frame();
       await frame();
     }
-    if (toggle.getAttribute('aria-checked') !== 'true' || snapshot().kind !== 'password') return { submitted: false };
+    if (snapshot().kind !== 'password') return { submitted: false };
+    if (toggle.getAttribute('aria-checked') !== 'true') return { submitted: false, retryable: true };
     const user = field('operatorName');
     const pass = field('password');
     setValue(user, username);
     setValue(pass, password);
     await frame();
-    if (snapshot().kind !== 'password' || user.value !== username || pass.value !== password) return { submitted: false };
+    if (snapshot().kind !== 'password') return { submitted: false };
+    if (user.value !== username || pass.value !== password) return { submitted: false, retryable: true };
     const button = user.closest('form')?.querySelector('button[type="submit"]');
-    if (!visible(button) || button.disabled) return { submitted: false };
+    if (!visible(button) || button.disabled) return { submitted: false, retryable: true };
     submitted = 'password';
     button.click();
     return { submitted: true };
@@ -78,9 +84,10 @@
     const otp = field('otp');
     setValue(otp, code);
     await frame();
-    if (snapshot().kind !== 'totp' || otp.value !== code) return { submitted: false };
+    if (snapshot().kind !== 'totp') return { submitted: false };
+    if (otp.value !== code) return { submitted: false, retryable: true };
     const button = otp.closest('form')?.querySelector('button[type="submit"]');
-    if (!visible(button) || button.disabled) return { submitted: false };
+    if (!visible(button) || button.disabled) return { submitted: false, retryable: true };
     submitted = 'totp';
     button.click();
     return { submitted: true };

@@ -33,3 +33,7 @@ swiftc "${ROOT_DIR}/Sources/SMSMonitorApp/PendingOrdersScript.swift" \
 "${CHECK_DIR}/orders-layout-check"
 node "${ROOT_DIR}/clients/shared/test-shared.mjs"
 npm --prefix "${ROOT_DIR}/clients/windows-electron" test
+
+node "${SCRIPT_DIR}/check-tiancheng-memory.mjs"
+zsh "${SCRIPT_DIR}/check-background-authentication-webkit.sh" TianchengMemoryWebKitCheck.swift
+zsh "${SCRIPT_DIR}/check-detached-tabs-webkit.sh"

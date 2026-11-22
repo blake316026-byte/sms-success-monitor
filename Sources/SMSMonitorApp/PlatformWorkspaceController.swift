@@ -120,6 +120,9 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
   var startURL: URL
   var onNavigationStateChange: (() -> Void)?
   private var isPerformanceActive = false
+  private weak var detachedHost: NSView?
+  private var detachedPlaceholder: NSButton?
+  var onShowDetached: (() -> Void)?
 
   var isBuiltIn: Bool { monitorID != nil }
   var credentialID: String {
@@ -190,6 +193,27 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
     ])
   }
 
+  func moveWebView(to host: NSView?) {
+    _ = view
+    (host?.window ?? view.window)?.contentView?.layoutSubtreeIfNeeded()
+    webView.removeFromSuperview()
+    detachedPlaceholder?.removeFromSuperview()
+    detachedPlaceholder = nil
+    detachedHost = host
+    attachWebView(to: host ?? view)
+    (host ?? view).layoutSubtreeIfNeeded()
+    if host != nil {
+      let button=NSButton(title:"显示 " + pageName + " 独立窗口",target:self,action:#selector(showDetached))
+      button.bezelStyle = .rounded
+      button.translatesAutoresizingMaskIntoConstraints = false
+      view.addSubview(button)
+      NSLayoutConstraint.activate([button.centerXAnchor.constraint(equalTo:view.centerXAnchor),
+        button.centerYAnchor.constraint(equalTo:view.centerYAnchor)])
+      detachedPlaceholder = button
+    }
+  }
+  @objc private func showDetached() { onShowDetached?() }
+
   func replaceWebView(_ replacement: WKWebView) {
     observations.forEach { $0.invalidate() }
     observations = []
@@ -197,7 +221,7 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
     webView = replacement
     if isViewLoaded {
       previous.removeFromSuperview()
-      attachWebView(to: view)
+      attachWebView(to: detachedHost ?? view)
     }
     observeWebView()
     applyPerformanceMode()
@@ -368,9 +392,15 @@ private final class WorkspaceTabViewController: NSTabViewController {
   }
 }
 
-private final class WrappingTabBarView: NSView {
+private final class WrappingTabBarView: NSView, NSMenuDelegate {
   var onSelect: ((Int) -> Void)?
   var onMove: ((Int, Int) -> Void)?
+  var onDragEnded: (() -> Void)?
+  var onDetach: ((NSTabViewItem, NSPoint) -> Void)?
+  var onToggleDetached: ((Int) -> Void)?
+  var onReceiveDetached: ((NSDraggingInfo) -> Bool)?
+  var isDetached: ((NSTabViewItem) -> Bool)?
+  var isDragging: Bool { dragStartIndex != nil }
   var items: [NSTabViewItem] = [] {
     didSet {
       if dragStartIndex == nil {
@@ -399,11 +429,13 @@ private final class WrappingTabBarView: NSView {
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(handleTabDrag(_:))))
+    registerForDraggedTypes([DetachedPlatformTitleButton.pasteboardType])
   }
 
   required init?(coder: NSCoder) {
     super.init(coder: coder)
     addGestureRecognizer(NSPanGestureRecognizer(target: self, action: #selector(handleTabDrag(_:))))
+    registerForDraggedTypes([DetachedPlatformTitleButton.pasteboardType])
   }
 
   private func makeButton(for item: NSTabViewItem) -> NSButton {
@@ -414,6 +446,11 @@ private final class WrappingTabBarView: NSView {
     button.font = .systemFont(ofSize: 12)
     button.toolTip = item.toolTip
     button.lineBreakMode = .byClipping
+    let menu=NSMenu()
+    menu.delegate=self
+    let action=NSMenuItem(title:"移出 / 放回主窗口",action:#selector(toggleDetached(_:)),keyEquivalent:"")
+    action.target=self; action.representedObject=item; menu.addItem(action)
+    button.menu=menu
     addSubview(button)
     return button
   }
@@ -496,8 +533,24 @@ private final class WrappingTabBarView: NSView {
     onSelect?(sender.tag)
   }
 
+  @objc private func toggleDetached(_ sender:NSMenuItem) {
+    guard let item=sender.representedObject as? NSTabViewItem,
+      let index=items.firstIndex(where: { $0 === item }) else { return }
+    onToggleDetached?(index)
+  }
+  func menuWillOpen(_ menu:NSMenu) {
+    guard let action=menu.items.first, let item=action.representedObject as? NSTabViewItem else { return }
+    action.title = isDetached?(item) == true ? "放回主窗口" : "在独立窗口打开"
+  }
+  override func draggingEntered(_ sender:NSDraggingInfo) -> NSDragOperation {
+    sender.draggingSource is DetachedPlatformTitleButton ? .move : []
+  }
+  override func performDragOperation(_ sender:NSDraggingInfo) -> Bool {
+    onReceiveDetached?(sender) ?? false
+  }
+
   @objc private func handleTabDrag(_ recognizer: NSPanGestureRecognizer) {
-    guard buttons.count > 1 else { return }
+    guard !buttons.isEmpty else { return }
     switch recognizer.state {
     case .began:
       guard let source = buttonIndex(at: recognizer.location(in: self), nearest: false) else {
@@ -508,6 +561,7 @@ private final class WrappingTabBarView: NSView {
       draggedButton = buttons[source]
       draggedButton?.alphaValue = 0.68
     case .changed:
+      guard bounds.contains(recognizer.location(in:self)) else { return }
       guard let source = draggedIndex,
         let target = buttonIndex(at: recognizer.location(in: self), nearest: true),
         source != target
@@ -515,6 +569,14 @@ private final class WrappingTabBarView: NSView {
       previewMove(from: source, to: target)
       draggedIndex = target
     case .ended:
+      if !bounds.insetBy(dx:-20,dy:-20).contains(recognizer.location(in:self)),
+        let source=dragStartIndex, items.indices.contains(source) {
+        let item=items[source]
+        let point=NSEvent.mouseLocation
+        finishTabDrag(commit:false)
+        onDetach?(item,point)
+        return
+      }
       finishTabDrag(commit: true)
     case .cancelled, .failed:
       finishTabDrag(commit: false)
@@ -536,6 +598,7 @@ private final class WrappingTabBarView: NSView {
     } else {
       synchronizeButtons()
     }
+    onDragEnded?()
   }
 
   private func buttonIndex(at point: NSPoint, nearest: Bool) -> Int? {
@@ -623,6 +686,8 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   var onPageRemoved: ((String) -> Void)?
   var onPageOrderChanged: (([String]) -> Void)?
   var onSelectedPageChanged: ((String?) -> Void)?
+  private var detachedWindows: [String:DetachedPlatformWindowController] = [:]
+  private let isLayoutTest: Bool
 
   private enum ToolbarIdentifier {
     static let pendingOrders = NSToolbarItem.Identifier("SMSMonitorPendingOrders")
@@ -713,11 +778,13 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   init(
     sampleLimit: Int,
     monitoredPages: [MonitoredPlatformPage],
-    credentialStore: LocalCredentialStore
+    credentialStore: LocalCredentialStore,
+    isLayoutTest: Bool = false
   ) {
     self.defaultInitialURL = monitoredPages.first?.configuration.targetURL
       ?? URL(string: "https://example.invalid/login")!
     self.orderCredentialStore = credentialStore
+    self.isLayoutTest = isLayoutTest
     self.sampleLimit = SampleLimitPolicy.normalize(sampleLimit)
     self.window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1260, height: 800),
@@ -742,14 +809,22 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       addPage(page, select: index == 0)
     }
     knownBuiltInIDs = Set(monitoredPages.map(\.configuration.id))
-    restoreWorkspaceLayout()
+    if !isLayoutTest { restoreWorkspaceLayout() }
     updateWindowSubtitle()
     updateToolbar()
     applySelectedPagePerformanceMode()
-    startOrderAlerts()
+    if !isLayoutTest { startOrderAlerts() }
   }
 
   func show(moduleID: String? = nil) {
+    if let moduleID, let detached=detachedWindows[moduleID] {
+      detached.window?.deminiaturize(nil)
+      detached.window?.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps:true)
+      applySelectedPagePerformanceMode()
+      return
+    }
+
     if let moduleID,
       let index = pages.firstIndex(where: { $0.credentialID == moduleID })
     {
@@ -839,11 +914,34 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
     workspaceContainer.tabBar.onSelect = { [weak self] index in
       guard let self, self.pages.indices.contains(index) else { return }
-      self.tabController.selectedTabViewItemIndex = index
+      let id=self.pages[index].credentialID
+      if self.detachedWindows[id] != nil { self.show(moduleID:id); return }
+      self.tabController.selectedTabViewItemIndex=index
     }
+    workspaceContainer.tabBar.onDetach = { [weak self] item,point in
+      guard let self, let page=item.viewController as? PlatformPageViewController else { return }
+      _ = self.detachPage(page,at:point)
+    }
+    workspaceContainer.tabBar.onToggleDetached = { [weak self] index in
+      guard let self, self.pages.indices.contains(index) else { return }
+      let page=self.pages[index]
+      if self.detachedWindows[page.credentialID] != nil { _ = self.returnDetachedPage(page.credentialID) }
+      else { _ = self.detachPage(page) }
+    }
+    workspaceContainer.tabBar.onReceiveDetached = { [weak self] info in
+      guard let self, let source=info.draggingSource as? DetachedPlatformTitleButton,
+        let value=info.draggingPasteboard.string(forType:DetachedPlatformTitleButton.pasteboardType) else { return false }
+      return self.receiveDetachedDrop(source:source,value:value)
+    }
+    workspaceContainer.tabBar.isDetached = { [weak self] item in
+      guard let page=item.viewController as? PlatformPageViewController else { return false }
+      return self?.detachedWindows[page.credentialID] != nil
+    }
+
     workspaceContainer.tabBar.onMove = { [weak self] source, target in
       self?.movePage(from: source, to: target)
     }
+    workspaceContainer.tabBar.onDragEnded = { [weak self] in self?.syncWrappingTabBar() }
     window.contentViewController = workspaceContainer
     window.title = "后台工作台"
     updateWindowSubtitle()
@@ -862,6 +960,12 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
   }
 
   private func syncWrappingTabBar() {
+    guard !workspaceContainer.tabBar.isDragging else { return }
+    for item in tabController.tabViewItems {
+      if let page=item.viewController as? PlatformPageViewController {
+        item.label=page.pageName + (detachedWindows[page.credentialID] == nil ? "" : " ↗")
+      }
+    }
     workspaceContainer.tabBar.items = tabController.tabViewItems
     workspaceContainer.tabBar.selectedIndex = max(0, tabController.selectedTabViewItemIndex)
     workspaceContainer.tabBar.refresh()
@@ -988,8 +1092,9 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private func addPage(_ page: PlatformPageViewController, select: Bool) {
     installPersistentHighlights(in: page.webView)
-    page.onNavigationStateChange = { [weak self] in
+    page.onNavigationStateChange = { [weak self, weak page] in
       self?.updateToolbar()
+      if let page { self?.updateDetachedPage(page) }
     }
     pages.append(page)
 
@@ -1020,7 +1125,10 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
 
   private func attachTab(for page: PlatformPageViewController) {
     installPersistentHighlights(in: page.webView)
-    page.onNavigationStateChange = { [weak self] in self?.updateToolbar() }
+    page.onNavigationStateChange = { [weak self, weak page] in
+      self?.updateToolbar()
+      if let page { self?.updateDetachedPage(page) }
+    }
     let item = NSTabViewItem(identifier: page.monitorID ?? page.id.uuidString)
     item.viewController = page
     item.label = page.pageName
@@ -1074,7 +1182,138 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     selectedPage?.credentialID
   }
 
+  private var movingPlatformIDs = Set<String>()
+
+  var activeCredentialIDs: Set<String> {
+    var ids=Set(detachedWindows.keys).union(movingPlatformIDs)
+    if let page=selectedPage {
+      ids.insert(page.credentialID)
+    }
+    return ids
+  }
+
+  private func isPagePresented(_ id:String) -> Bool { activeCredentialIDs.contains(id) }
+
+  private func updateDetachedPage(_ page:PlatformPageViewController) {
+    detachedWindows[page.credentialID]?.update(name:page.pageName,country:"")
+  }
+
+  private func receiveDetachedDrop(source:DetachedPlatformTitleButton,value:String) -> Bool {
+    guard value == source.dragID,
+      let id=detachedWindows.first(where:{ $0.value.titleButton === source })?.key else { return false }
+    return returnDetachedPage(id)
+  }
+
+  private func movePageSafely(_ page:PlatformPageViewController, perform:@escaping ()->Void) -> Bool {
+    let id=page.credentialID, view=page.webView, token=UUID().uuidString
+    guard !movingPlatformIDs.contains(id), !PlatformPageOperationActivity.isInUse(view),
+      view.window?.attachedSheet == nil else { NSSound.beep(); return false }
+    movingPlatformIDs.insert(id)
+    applySelectedPagePerformanceMode()
+    var finished=false
+    var released=false
+    let finish = { [weak self] in
+      guard let self, !released else { return }
+      released=true
+      self.movingPlatformIDs.remove(id)
+      self.applySelectedPagePerformanceMode()
+    }
+    DispatchQueue.main.asyncAfter(deadline:.now()+5) {
+      guard !finished else { return }
+      finished=true; finish()
+    }
+    view.callAsyncJavaScript(PlatformPagePresentationScript.capture,arguments:["token":token],in:nil,in:.page) { [weak self,weak page] _ in
+      guard !finished else { return }
+      finished=true
+      guard let self, let page, self.pages.contains(where:{$0 === page}), page.webView === view,
+        !PlatformPageOperationActivity.isInUse(view), view.window?.attachedSheet == nil else {
+        view.callAsyncJavaScript(PlatformPagePresentationScript.discard,arguments:["token":token],in:nil,in:.page,completionHandler:nil)
+        finish(); return
+      }
+      perform()
+      view.callAsyncJavaScript(PlatformPagePresentationScript.restore,arguments:["token":token],in:nil,in:.page) { _ in finish() }
+      // A terminated web process must not leave the tab permanently locked.
+      DispatchQueue.main.asyncAfter(deadline:.now()+4) { finish() }
+    }
+    return true
+  }
+
+  @discardableResult private func detachPage(_ page:PlatformPageViewController,at point:NSPoint?=nil) -> Bool {
+    guard pages.contains(where:{ $0 === page }) else { return false }
+    if detachedWindows[page.credentialID] != nil { show(moduleID:page.credentialID); return true }
+    guard !PlatformPageOperationActivity.isInUse(page.webView), page.webView.window?.attachedSheet == nil else {
+      NSSound.beep(); return false
+    }
+    guard detachedWindows.count + movingPlatformIDs.filter({detachedWindows[$0] == nil}).count < 3 else {
+      let alert=NSAlert(); alert.messageText="最多同时打开 3 个独立平台窗口"
+      alert.informativeText="请先将一个平台放回主窗口。"
+      alert.beginSheetModal(for:window)
+      return false
+    }
+    return movePageSafely(page) { [weak self,weak page] in
+      guard let self, let page else { return }
+      self.performDetachPage(page,at:point)
+    }
+  }
+
+  private func performDetachPage(_ page:PlatformPageViewController,at point:NSPoint?) {
+    let detached=DetachedPlatformWindowController(name:page.pageName,country:"")
+    let id=page.credentialID
+    detached.webView = { [weak page] in page?.webView }
+    detached.onReturn = { [weak self] in self?.returnDetachedPage(id) ?? false }
+    detachedWindows[id]=detached
+    page.onShowDetached = { [weak self] in self?.show(moduleID:id) }
+    // Keep the same WKWebView, its JavaScript heap, form values, history and data store.
+    page.moveWebView(to:detached.contentHost)
+    if selectedPage === page,
+      let next=pages.indices.first(where:{ detachedWindows[pages[$0].credentialID] == nil }) {
+      tabController.selectedTabViewItemIndex=next
+    }
+    applySelectedPagePerformanceMode()
+    if !isLayoutTest, page.webView.url == nil, !page.webView.isLoading { page.webView.load(URLRequest(url:page.startURL)) }
+    updateDetachedPage(page)
+    syncWrappingTabBar(); updateToolbar()
+    if let panel=detached.window {
+      if let point, let screen=NSScreen.screens.first(where:{ $0.frame.contains(point) }) {
+        var frame=panel.frame; let visible=screen.visibleFrame
+        frame.size.width=min(frame.width,visible.width); frame.size.height=min(frame.height,visible.height)
+        frame.origin.x=max(visible.minX,min(point.x-180,visible.maxX-frame.width))
+        frame.origin.y=max(visible.minY,min(point.y-frame.height+24,visible.maxY-frame.height))
+        panel.setFrame(frame,display:false)
+      } else { panel.center() }
+      if !isLayoutTest { panel.makeKeyAndOrderFront(nil) }
+    }
+  }
+
+  @discardableResult private func returnDetachedPage(_ id:String) -> Bool {
+    guard let detached=detachedWindows[id], let page=pages.first(where:{ $0.credentialID == id }) else { return false }
+    guard !PlatformPageOperationActivity.isInUse(page.webView), detached.window?.attachedSheet == nil else {
+      NSSound.beep(); return false
+    }
+    return movePageSafely(page) { [weak self,weak page] in
+      guard let self, let page else { return }
+      self.performReturnPage(page,detached:detached,id:id)
+    }
+  }
+
+  private func performReturnPage(_ page:PlatformPageViewController,detached:DetachedPlatformWindowController,id:String) {
+    guard let index=pages.firstIndex(where:{$0 === page}) else { return }
+    // Lay out the destination before moving WebKit; a zero-size hidden tab can reset scroll.
+    tabController.selectedTabViewItemIndex=index
+    syncWrappingTabBar()
+    window.contentView?.layoutSubtreeIfNeeded()
+    page.moveWebView(to:nil)
+    page.onShowDetached=nil
+    detached.onReturn=nil
+    detached.window?.delegate=nil
+    detached.window?.close()
+    detachedWindows[id]=nil
+    syncWrappingTabBar(); updateToolbar(); applySelectedPagePerformanceMode()
+    if !isLayoutTest { window.makeKeyAndOrderFront(nil) }
+  }
+
   private func applySelectedPagePerformanceMode() {
+    guard !isLayoutTest else { return }
     ensureSelectedPageLoaded()
     let activeID = selectedPage?.credentialID
     for page in pages {
@@ -1686,6 +1925,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
     }
 
     let credentialID = page.credentialID
+    if detachedWindows[credentialID] != nil { _ = returnDetachedPage(credentialID); return }
     onPageRemoved?(credentialID)
     page.webView.stopLoading()
     page.webView.configuration.userContentController.removeScriptMessageHandler(
@@ -1715,6 +1955,7 @@ final class PlatformWorkspaceController: NSObject, NSToolbarDelegate, WKUIDelega
       let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !name.isEmpty else { return }
       page.pageName = name
+      self.updateDetachedPage(page)
       if let item = self.tabController.tabViewItems.first(where: { $0.viewController === page }) {
         item.label = name
         item.toolTip = name

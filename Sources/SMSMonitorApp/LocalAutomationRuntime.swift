@@ -180,6 +180,7 @@ final class LocalAutomationRuntime: NSObject, WKNavigationDelegate {
     let body: String
     let arguments: [String: Any]
     let completion: StringCompletion
+    let timeSensitive: Bool
   }
 
   private let server: LocalAutomationHTTPServer?
@@ -251,6 +252,26 @@ final class LocalAutomationRuntime: NSObject, WKNavigationDelegate {
     }
   }
 
+  func generateCurrentTOTP(
+    secret: String,
+    clockOffset: TimeInterval = 0,
+    completion: @escaping StringCompletion
+  ) {
+    runWhenReady { [weak self] in
+      self?.call(
+        body: """
+          // Calculate at execution, not before waiting behind OCR jobs.
+          const position = ((Date.now() + offsetMs) % 30000 + 30000) % 30000;
+          if (position > 24000) await new Promise(resolve => setTimeout(resolve, 31000 - position));
+          return await globalThis.localAutomationRuntime.generateTotp(secret, Date.now() + offsetMs);
+          """,
+        arguments: ["secret": secret, "offsetMs": clockOffset * 1000],
+        timeSensitive: true,
+        completion: completion
+      )
+    } onFailure: { error in completion(.failure(error)) }
+  }
+
   private func runWhenReady(
     _ operation: @escaping () -> Void,
     onFailure: @escaping (Error) -> Void
@@ -269,11 +290,14 @@ final class LocalAutomationRuntime: NSObject, WKNavigationDelegate {
   private func call(
     body: String,
     arguments: [String: Any],
+    timeSensitive: Bool = false,
     completion: @escaping StringCompletion
   ) {
-    queuedCalls.append(
-      QueuedCall(id: UUID(), body: body, arguments: arguments, completion: completion)
-    )
+    let call = QueuedCall(id: UUID(), body: body, arguments: arguments,
+      completion: completion, timeSensitive: timeSensitive)
+    // Preserve FIFO within each priority; do not interrupt an active OCR call.
+    let index = timeSensitive ? queuedCalls.firstIndex(where: { !$0.timeSensitive }) ?? queuedCalls.count : queuedCalls.count
+    queuedCalls.insert(call, at: index)
     runNextCall()
   }
 

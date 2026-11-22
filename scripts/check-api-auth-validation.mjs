@@ -57,7 +57,8 @@ assert.doesNotMatch(macScan, /apiAuthenticationValidationAttempted = false/,
   'successful SMS scans cannot rearm finance-triggered reloads');
 
 const runtime = read('Sources/SMSMonitorApp/LocalAutomationRuntime.swift');
-assert.match(runtime, /queuedCalls\.append[\s\S]*runNextCall\(\)/);
+assert.match(runtime, /queuedCalls\.insert\(call, at: index\)[\s\S]*runNextCall\(\)/);
+assert.match(runtime, /timeSensitive \? queuedCalls\.firstIndex\(where: \{ !\$0\.timeSensitive \}\)/);
 assert.match(runtime, /guard isReady, activeCallID == nil, !queuedCalls\.isEmpty/);
 assert.match(runtime, /operationTimedOut[\s\S]*webView\.reload\(\)[\s\S]*asyncAfter\(deadline: \.now\(\) \+ 20/);
 const loginPage = read('Sources/SMSMonitorApp/LoginPageAutomation.swift');

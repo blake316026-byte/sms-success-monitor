@@ -58,6 +58,7 @@ final class Controller {
   var authenticatedPageRecoveryID: UUID?
   var isScanning = false, isRefreshingFinancial = false, needsImmediateScan = false
   var isMemoryCompacted = false
+  var isPageActive = false
   var isRestoringCompactedPage = false, apiAuthenticationValidationAttempted = false
   var latestDailyFinancialMetrics: String?
   var monitoringEnabled = true, browserOnlyPage = false, platformIdentified = true
@@ -66,7 +67,7 @@ final class Controller {
   func requiresAuthentication(_ url: URL) -> Bool { ["/login", "/ga-auth", "/unlock-ip"].contains(url.path) }
   func requiresInteractiveAuthentication(_ url: URL) -> Bool { requiresAuthentication(url) }
   func isMonitorOrigin(_ url: URL) -> Bool { url.host == "fixture.invalid" }
-  func retryAutoLogin(_ message: String) { logins += 1 }
+  func retryAutoLogin(_ message: String, reason: String = "page-state") { logins += 1 }
   func attemptAutoLogin(profile: Profile, url: URL) { logins += 1 }
   func handleAuthenticationRequired(_ message: String) { logins += 1 }
   func attemptAuthenticatedPageRecovery() { pageRecoveries += 1 }

@@ -145,8 +145,10 @@ function statusIcon(status) {
   }[status] || 'file-text';
 }
 
+let draggingPage=null;
 function render() {
   if (!snapshot) return;
+  if(draggingPage)return;
   tabs.replaceChildren(...snapshot.pages.map((page) => {
     const button = document.createElement('button');
     button.className = `tab-button status-${page.status}`;
@@ -156,7 +158,18 @@ function render() {
     if (page.id === snapshot.selectedPageId) button.classList.add('selected');
     button.innerHTML = `<i data-lucide="${statusIcon(page.status)}"></i><span>${escapeHTML(page.name)}</span>`;
     button.title = `${page.name} · ${statusLabel(page.status)}`;
+    if(page.detached)button.title+=' · 独立窗口';
     button.addEventListener('click', () => window.smsApi.selectPage(page.id));
+    button.addEventListener('contextmenu',e=>{e.preventDefault();void window.smsApi.pageMenu(page.id);});
+    button.draggable=true;
+    button.addEventListener('dragstart',e=>{draggingPage=page.id;e.dataTransfer.setData('application/x-sms-platform',page.id);e.dataTransfer.effectAllowed='move';});
+    button.addEventListener('dragend',e=>{
+      const id=draggingPage;draggingPage=null;
+      if(id&&(e.clientY>workbenchShell.getBoundingClientRect().bottom+20||e.clientY<0||e.clientX<0||e.clientX>innerWidth))
+        void window.smsApi.detachPage(id,{x:e.screenX,y:e.screenY});
+      render();
+    });
+
     return button;
   }));
 
@@ -187,6 +200,12 @@ function render() {
     runFind(true, true);
   }
 }
+
+tabs.addEventListener('dragover',e=>{if([...e.dataTransfer.types].includes('application/x-sms-detached')){e.preventDefault();e.dataTransfer.dropEffect='move';}});
+tabs.addEventListener('drop',e=>{
+  const raw=e.dataTransfer.getData('application/x-sms-detached');if(!raw)return;e.preventDefault();
+  try{const {id,token}=JSON.parse(raw);void window.smsApi.returnPage(id,token);}catch{}
+});
 
 function openFind() {
   findBar.hidden = false;

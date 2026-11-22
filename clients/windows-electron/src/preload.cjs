@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('smsApi', {
   getSnapshot: () => ipcRenderer.invoke('snapshot:get'),
+  detachPage: (id,point) => ipcRenderer.invoke('platform:detach',id,point),
+  returnPage: (id,token) => ipcRenderer.invoke('platform:return',id,token),
+  pageMenu: id => ipcRenderer.invoke('platform:menu',id),
   selectPage: (id) => ipcRenderer.invoke('page:select', id),
   navigate: (url) => ipcRenderer.invoke('page:navigate', url),
   goBack: () => ipcRenderer.invoke('page:back'),

@@ -137,6 +137,21 @@ public enum SampleLimitPolicy {
   }
 }
 
+public enum BackgroundAuthenticationPolicy {
+  public static let compactedSessionCheckInterval: TimeInterval = 120
+
+  public static func shouldRestore(
+    canAutoLogin: Bool, blocked: Bool, cooldownUntil: Date?, compactedAt: Date?,
+    knownExpired: Bool, now: Date
+  ) -> Bool {
+    guard canAutoLogin, !blocked,
+      cooldownUntil.map({ now >= $0 }) ?? true else { return false }
+    return knownExpired || compactedAt.map {
+      now.timeIntervalSince($0) >= compactedSessionCheckInterval
+    } == true
+  }
+}
+
 public struct MonitorConfiguration: Equatable, Sendable {
   public let id: String
   public let displayName: String

@@ -232,7 +232,7 @@ final class WithdrawalReviewersWindowController: NSWindowController, NSWindowDel
             scope.start == self.dateRange.0, scope.end == self.dateRange.1,
             let current = self.sources().first(where: { $0.credentialID == page.credentialID && $0.startURL == scope.sourceURL }),
             current.webView === page.webView, Self.pageReady(current) else { return }
-          Logger(subsystem: "com.local.sms-success-monitor", category: "WithdrawalReviewers").notice("Ready-page retry: \(page.credentialID, privacy: .public)")
+          Logger(subsystem: "com.local.sms-success-monitor.public", category: "WithdrawalReviewers").notice("Ready-page retry: \(page.credentialID, privacy: .public)")
           self.beginFetch(pages: [current], supplemental: true)
         }
       }
@@ -280,7 +280,7 @@ final class WithdrawalReviewersWindowController: NSWindowController, NSWindowDel
             account: account, startDate: first, endDate: last, family: family,
             people: parsed.map { WithdrawalReviewersCache.Person(id: $0.target.orderID, name: $0.target.reviewerName!, count: $0.count) }, savedAt: date))
           self.statuses[page.credentialID] = parsed.isEmpty ? "无人工审核记录" : "已获取 \(parsed.count) 人"
-          Logger(subsystem: "com.local.sms-success-monitor", category: "WithdrawalReviewers").notice("Reviewer query for \(page.credentialID, privacy: .public): people=\(parsed.count)")
+          Logger(subsystem: "com.local.sms-success-monitor.public", category: "WithdrawalReviewers").notice("Reviewer query for \(page.credentialID, privacy: .public): people=\(parsed.count)")
         } else {
           let prefix = self.savedAt[page.credentialID] == nil ? "未获取：" : "刷新失败，保留上次结果："
           let changedView = self.sources().contains { $0.credentialID == page.credentialID && $0.startURL == page.startURL && ($0.webView !== view || !Self.pageReady($0)) }
