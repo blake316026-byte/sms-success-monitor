@@ -19,8 +19,6 @@ export function queryScripts() {
     memorySnapshot: context + `if(!await (async()=>{${memoryContext}\n${memoryGuard}\nreturn true;})())return null; const c=capture(); return {family:c.family,identity:JSON.stringify([c.origin,c.family,c.username,c.country,c.merchant])};`,
     memoryProbe: memoryContext + memoryProbe,
     pending: context + pending, reviewers: context + reviewers,
-    alerts: (context + pending).replaceAll('__smsPendingOrders','__smsPendingAlerts'),
-    alertValidate: (context + validate).replaceAll('__smsPendingOrders','__smsPendingAlerts'),
     validate: context + validate, prepare: context + prepare,
     route: context + route, search: context + search,
     probe: context + `try { const c = capture(); return {kind:'ok', family:c.family,

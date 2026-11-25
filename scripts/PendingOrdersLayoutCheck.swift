@@ -11,8 +11,14 @@ struct PlatformPageDescriptor {
 @main struct PendingOrdersLayoutCheck {
   static func main() {
     _ = NSApplication.shared
-    let passed = PendingOrdersWindowController.verifyLayoutAndFiltering()
-    print(passed ? "PASS: pending order timestamps, >20m boundary, stale rows, pagination and native layout" : "FAIL: pending orders layout")
+    func showsAlertButton(_ view: NSView) -> Bool {
+      if let button = view as? NSButton, button.title.contains("TG 报警") { return true }
+      return view.subviews.contains(where: showsAlertButton)
+    }
+    let controller = PendingOrdersWindowController()
+    let hasOrderOnlyControls = controller.window?.contentView.map { !showsAlertButton($0) } == true
+    let passed = hasOrderOnlyControls && PendingOrdersWindowController.verifyLayoutAndFiltering()
+    print(passed ? "PASS: pending order timestamps, filtering, pagination, native layout and no TG controls" : "FAIL: pending orders layout")
     exit(passed ? 0 : 1)
   }
 }

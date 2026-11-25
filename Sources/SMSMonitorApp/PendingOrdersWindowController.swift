@@ -37,7 +37,6 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   var expectedUsername: (String) -> String = { _ in "" }
   var allowsNPG: (PlatformPageDescriptor) -> Bool = { _ in false }
   var openOrder: ((PendingOrderRow) -> Void)?
-  var showAlerts: (() -> Void)?
   private let table = NSTableView()
   private let search = NSSearchField()
   private let platformFilter = NSPopUpButton()
@@ -134,10 +133,6 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
     }
     let options = NSStackView(views: [views, NSTextField(labelWithString: "刷新间隔"), intervalField, intervalStepper, NSTextField(labelWithString: "秒"), minimumWaitControls])
     options.orientation = .horizontal; options.spacing = 8
-    let alerts = NSButton(title: "TG 报警", target: self, action: #selector(openAlerts))
-    alerts.image = NSImage(systemSymbolName: "bell.badge", accessibilityDescription: "TG 报警")
-    alerts.imagePosition = .imageLeading; alerts.toolTip = "TG 挂单报警设置"
-    alerts.bezelStyle = .texturedRounded; options.addArrangedSubview(alerts)
     for (button, symbol, label, action) in [(previousPage, "chevron.left", "上一页", #selector(previousClicked)), (nextPage, "chevron.right", "下一页", #selector(nextClicked))] {
       button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
       button.bezelStyle = .texturedRounded; button.toolTip = label; button.target = self; button.action = action
@@ -176,7 +171,6 @@ final class PendingOrdersWindowController: NSWindowController, NSWindowDelegate,
   }
 
   required init?(coder: NSCoder) { nil }
-  @objc private func openAlerts() { showAlerts?() }
 
   static func verifyLayoutAndFiltering() -> Bool {
     let controller = PendingOrdersWindowController()

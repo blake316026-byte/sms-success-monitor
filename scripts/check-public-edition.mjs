@@ -5,6 +5,12 @@ const read = file => fs.readFileSync(new URL(file, root), 'utf8');
 for (const file of [
   'Sources/SMSMonitorApp/StatusWidgetController.swift',
   'Sources/SMSMonitorApp/AlertNotifier.swift',
+  'Sources/SMSMonitorApp/PendingOrderAlertCore.swift',
+  'Sources/SMSMonitorApp/PendingOrderAlertService.swift',
+  'Sources/SMSMonitorApp/PendingOrderAlertWindowController.swift',
+  'clients/windows-electron/src/pending-order-alert-runtime.mjs',
+  'clients/windows-electron/src/pending-order-alerts.mjs',
+  'clients/windows-electron/src/ui/report-alert-ui.mjs',
   'clients/windows-electron/src/ui/widget.html',
   'clients/windows-electron/src/ui/detail.html',
   'clients/android/app/src/main/java/com/local/smssuccessmonitor/GaugeView.java',
@@ -20,12 +26,17 @@ const workspace = read('Sources/SMSMonitorApp/PlatformWorkspaceController.swift'
 assert.doesNotMatch(workspace, /case ToolbarIdentifier.sampleLimit:|ToolbarIdentifier.sampleLimit,/);
 assert.match(workspace, /case ToolbarIdentifier.pendingOrders:/);
 assert.match(workspace, /case ToolbarIdentifier.withdrawalReviewers:/);
+assert.doesNotMatch(workspace, /startOrderAlerts|showOrderAlerts|alertStorageDirectory/);
+assert.doesNotMatch(read('Sources/SMSMonitorApp/PendingOrdersWindowController.swift'), /showAlerts|TG 报警/);
 assert.match(read('Resources/Info.plist'), /com.local.sms-success-monitor.public/);
 assert.match(read('Sources/SMSMonitorApp/WithdrawalReviewersCache.swift'), /SMS Platform Workbench\/withdrawal-reviewers/);
 assert.match(read('Sources/SMSMonitorApp/LocalCredentialStore.swift'), /appendingPathComponent\("SMS Platform Workbench"/);
 const windows = read('clients/windows-electron/src/main.mjs');
 assert.doesNotMatch(windows, /createWidgetWindow|createDetailWindow|widgetWindow|detailWindow|dailyFinancialTotals|smsMonitorFinance|smsMonitorScan/);
 assert.doesNotMatch(windows, /scanTimer = setInterval|financeTimer = setInterval/);
+assert.doesNotMatch(windows, /PendingOrderAlerts|pendingAlerts|openAlertStore|telegramSend|reports:(alerts|saveAlerts|selectAlertPlatform)/);
+assert.doesNotMatch(read('clients/windows-electron/src/reports-preload.cjs'), /alerts:|saveAlerts|selectAlertPlatform/);
+assert.doesNotMatch(read('clients/windows-electron/src/ui/reports.html'), /alerts-open|alerts-dialog|TG 报警/);
 assert.match(windows, /setPath\('userData',[^\n]*SMS Platform Workbench/);
 const android = 'clients/android/app/src/main/';
 const manifest = read(android + 'AndroidManifest.xml');

@@ -39,7 +39,7 @@ assert.equal(await f.run(snapshot),null);
 for(const k of ['sms-tiancheng-session-attempt-v1','sms-tiancheng-session-manual-v1','sms-tiancheng-login-paused']){
   f=fixture();f.ss.setItem(k,'1');assert.equal(await f.run(),'blocked');assert.equal(f.calls.length,0);
 }
-for(const k of ['__smsChannelsBusy','__smsProviderManagementBusy','__smsPendingOrdersAbort','__smsPendingAlertsAbort']){
+for(const k of ['__smsChannelsBusy','__smsProviderManagementBusy','__smsPendingOrdersAbort']){
   f=fixture();f.window[k]=true;assert.equal(await f.run(snapshot),null);assert.equal(f.calls.length,0);
 }
 f=fixture();f.modals=[{getClientRects:()=>[1]}];assert.equal(await f.run(),'blocked');assert.equal(f.calls.length,0);

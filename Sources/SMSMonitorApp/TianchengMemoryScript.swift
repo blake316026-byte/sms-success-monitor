@@ -24,7 +24,7 @@ enum TianchengMemoryScript {
     };
     const blockReason = () => {
       if (window.__smsChannelsBusy || window.__smsProviderManagementBusy
-        || window.__smsPendingOrdersAbort || window.__smsPendingAlertsAbort) return 'operation';
+        || window.__smsPendingOrdersAbort) return 'operation';
       if (['sms-tiancheng-session-attempt-v1','sms-tiancheng-session-manual-v1','sms-tiancheng-login-paused']
         .some(k => sessionStorage.getItem(k))) return 'session';
       if ([...document.querySelectorAll('.ga-verify-modal,.ant-modal-wrap,.ant-drawer,[role="dialog"],.el-dialog__wrapper')]

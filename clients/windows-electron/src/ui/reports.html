@@ -21,30 +21,11 @@
       <label><input id="auto" type="checkbox"><span id="auto-label">自动刷新</span></label>
       <label>刷新间隔 <input id="interval" type="number" min="5" max="3600" step="1"><span id="unit">秒</span></label>
       <label id="wait-filter" hidden>等待时长 ≥ <input id="minimum-wait" type="number" min="0" step="1" placeholder="不限" aria-label="最少等待分钟数">分钟</label>
-      <button id="alerts-open" hidden><i data-lucide="bell-ring"></i>TG 报警</button>
     </div>
     <p id="summary" aria-live="polite"></p><p id="message" role="status"></p>
   </header>
   <main><table><thead><tr><th>对应平台</th><th id="column-two">订单号</th><th id="created-column" hidden>订单创建时间（北京时间）</th><th id="age-column" hidden>等待时长</th><th id="column-three">订单状态 / 查询结果</th></tr></thead><tbody id="rows"></tbody></table><p id="empty" hidden>暂无数据</p></main>
   <footer><button id="previous" title="上一页" aria-label="上一页"><i data-lucide="chevron-left"></i></button><span id="pagination"></span><button id="next" title="下一页" aria-label="下一页"><i data-lucide="chevron-right"></i></button></footer>
-  <dialog id="alerts-dialog" aria-labelledby="alerts-title">
-    <div class="alerts-heading"><h2 id="alerts-title">提现挂单 TG 报警</h2><button id="alerts-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
-    <form id="alerts-form">
-      <div class="options">
-        <label><input id="alerts-enabled" type="checkbox">启用报警</label>
-        <label>超过 <input id="alerts-minutes" type="number" required min="1" max="10080" value="20">分钟</label>
-        <button id="alerts-save" class="primary" type="submit"><i data-lucide="save"></i>保存设置</button>
-      </div>
-      <label class="alert-field">机器人 Token <input id="alerts-token" type="password" autocomplete="off" spellcheck="false" maxlength="200"></label>
-      <label class="alert-field">TG 群 ID <input id="alerts-group" type="text" placeholder="例如 -1001234567890" maxlength="30"></label>
-      <div class="options"><span>查询范围：全部平台</span><label>近 <input id="alerts-days" type="number" required min="1" max="30" value="7">天</label><span>每个平台查询间隔 ≥ 60 秒</span></div>
-      <p class="alert-policy">北京时间每天每单最多一次 · 发送待确认不重发 · 记录保留 24 小时 · 仅本机发送</p>
-      <p id="alerts-error" role="alert"></p>
-    </form>
-    <p id="alerts-status" role="status"></p>
-    <div role="tablist" aria-label="报警记录"><button type="button" id="alerts-records" role="tab" aria-selected="true">发送记录（24 小时）</button><button type="button" id="alerts-platforms" role="tab" aria-selected="false">平台查询状态</button></div>
-    <div class="alerts-table"><table><thead id="alerts-columns"><tr><th>平台</th><th>订单号</th><th>时间（北京时间）</th><th>结果</th></tr></thead><tbody id="alerts-rows"></tbody></table><p id="alerts-empty">暂无记录</p></div>
-  </dialog>
   <script src="reports.js"></script>
 </body>
 </html>

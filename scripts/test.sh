@@ -1,7 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
 node "${0:A:h}/check-file-upload.mjs"
-zsh "${0:A:h}/check-order-alerts.sh"
 SCRIPT_DIR="${0:A:h}"
 ROOT_DIR="${SCRIPT_DIR:h}"
 "${SCRIPT_DIR}/check-no-macos-keychain.sh"

@@ -16,7 +16,6 @@ struct LocalLoginProfile: Codable, Equatable {
 }
 
 final class LocalCredentialStore {
-  var alertStorageDirectory: URL { directoryURL }
   private static let lock = NSLock()
 
   private let fileManager = FileManager.default
