@@ -7,7 +7,9 @@ import {PlatformMemory} from './platform-memory.mjs';
 import {DetachedPlatforms} from './detached-platforms.mjs';
 import {TianchengAuthentication} from './background-authentication.mjs';
 
-export async function nativePlatformCheck({scripts,directory,loginSource,sessionSource,npgSource}){
+import {NPGNoticePresentation} from './npg-notice-presentation.mjs';
+
+export async function nativePlatformCheck({scripts,directory,loginSource,sessionSource,npgSource,noticeSource}){
   let expired=false,verifications=0,reads=0,loads=0,forbidden=0,now=100000,active=false,busy=false,family='TC';
   const tcSetup=`
     window.__tacLoader={showError(){},waitForThemeRetry(){}};
@@ -102,6 +104,32 @@ export async function nativePlatformCheck({scripts,directory,loginSource,session
     assert.equal(await run("sessionStorage.getItem('preserved')"),'original-session');assert.equal(loads,beforeLoads);
     assert.equal(forbidden,0);assert.equal(verifications,1);
     family='NPG';active=false;await view.webContents.loadURL(origin+'/npg');now+=61000;
+    const noticePresentation = new NPGNoticePresentation(noticeSource);
+    noticePresentation.sync([page]);
+    await noticePresentation.onLoad(view.webContents);
+    await run(`
+      window.addFixtureNotice = (id, manual) => {
+        const model = { id, title: 'Maintenance', type: 'ADVICE', content: 'Fixture notice' };
+        const panel = document.createElement('div');
+        panel.className = 'ant-modal-content'; panel.id = id;
+        panel.innerHTML = '<div class="ant-modal-header"><div class="ant-modal-title">Maintenance (2026-11-25 00:00:00)</div></div>'
+          + '<div class="ant-modal-body"><pre>Fixture notice</pre></div><button type="button" class="ant-modal-close">Close</button>';
+        panel['__reactFiber$fixture'] = { memoizedProps: manual ? {notice:model} : {m:model} };
+        panel.querySelector('button').onclick = () => panel.remove();
+        document.body.append(panel);
+      };
+      addFixtureNotice('automatic', false);
+      void 0;
+    `);
+    for (let i = 0; i < 50 && await run("Boolean(document.getElementById('automatic'))"); i++) {
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+    assert.equal(await run("Boolean(document.getElementById('automatic'))"), false, 'automatic NPG notice did not close');
+    await run("addFixtureNotice('manual',true);void 0");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(await run("Boolean(document.getElementById('manual'))"), true, 'manual notice center was closed');
+    noticePresentation.sync([]);
+    await run("document.getElementById('manual').remove();void 0");
     for(let i=0;i<100&&view.webContents.isLoadingMainFrame();i++)await new Promise(r=>setTimeout(r,20));
     await memory.tick(page.id);assert.equal(memory.compacted(page.id),true,'NPG did not compact: '+JSON.stringify({state:memory.state(page.id),active:detached.active(page.id),now,guard:await memory.script(page,'memorySnapshot',{tiancheng:false}).catch(e=>String(e))}));
     assert.equal(await run("JSON.parse(sessionStorage.getItem('lt-user')).token"),'npg-fixture-token');

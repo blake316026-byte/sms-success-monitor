@@ -51,6 +51,7 @@ import {
 
 import {PlatformMemory} from './platform-memory.mjs';
 import {DetachedPlatforms} from './detached-platforms.mjs';
+import {NPGNoticePresentation} from './npg-notice-presentation.mjs';
 import {nativePlatformCheck} from './native-platform-check.mjs';
 import {TianchengAuthentication, mayMaintainAuthentication, withDeadline, currentTotpExpression} from './background-authentication.mjs';
 
@@ -83,6 +84,15 @@ const downloadSessions = new WeakSet();
 let workbenchWindow;
 let selectedPageId = modules[0]?.id || null;
 let attachedView;
+const npgNoticeSource = fs.readFileSync(path.join(sharedRoot, 'npg-automatic-notice.js'), 'utf8');
+const npgNoticePresentation = new NPGNoticePresentation(npgNoticeSource);
+
+function syncNPGNoticePresentation() {
+  const selected = pages.get(selectedPageId);
+  const visible = [...(detached?.windows.values() ?? [])].map(entry => entry.page);
+  if (selected?.view && selected.view === attachedView) visible.push(selected);
+  npgNoticePresentation.sync(visible);
+}
 let quitting = false;
 let customPagesPath;
 let credentialsPath;
@@ -715,7 +725,7 @@ async function maintainAuthentication(id) {
 }
 
 async function runPackagedLocalAutomationCheck() {
-  await nativePlatformCheck({scripts:pageScripts,directory:currentDirectory,loginSource:tianchengLoginSource,sessionSource:tianchengSessionSource});
+  await nativePlatformCheck({scripts:pageScripts,directory:currentDirectory,loginSource:tianchengLoginSource,sessionSource:tianchengSessionSource,noticeSource:npgNoticeSource});
   let timeout;
   try {
     await Promise.race([
@@ -1010,6 +1020,7 @@ function createRemotePage(page) {
     return { action: 'deny' };
   });
   view.webContents.on('did-finish-load', () => {
+    void npgNoticePresentation.onLoad(view.webContents);
     applyPageZoom({ id: page.id, view });
     void applyPersistentHighlights({ id: page.id, view });
     if(memory?.compacted(page.id)||memory?.transitioning(page.id))return;
@@ -1603,6 +1614,7 @@ function buildSnapshot() {
 }
 
 function broadcastSnapshot() {
+  syncNPGNoticePresentation();
   detached?.notify();
   const snapshot = buildSnapshot();
   for (const window of [workbenchWindow]) {
@@ -1643,6 +1655,7 @@ function setWorkbenchModalOpen(open) {
       workbenchWindow.contentView.removeChildView(attachedView);
       attachedView = null;
     }
+    syncNPGNoticePresentation();
     workbenchWindow.webContents.focus();
   } else {
     attachSelectedView();

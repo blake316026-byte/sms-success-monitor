@@ -233,11 +233,13 @@ private final class PlatformPageViewController: NSViewController, WKNavigationDe
       return
     }
     isPerformanceActive = active
+    if !active { NPGAutomaticNotice.stop(in: webView) }
     applyPerformanceMode()
   }
 
   private func applyPerformanceMode() {
     let active = isPerformanceActive
+    if active { NPGAutomaticNotice.start(in: webView, source: startURL) }
     if #available(macOS 11.0, *) {
       webView.setAllMediaPlaybackSuspended(!active, completionHandler: nil)
     }
